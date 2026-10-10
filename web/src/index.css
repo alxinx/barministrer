@@ -59,11 +59,69 @@
   }
 }
 
+@layer utilities {
+  /* Confirmacion de "pedido enviado": el anillo se apaga solo y el check se
+     dibuja con trazo, en vez de un aviso aparte que hay que ir a leer. */
+  @keyframes card-confirm {
+    0% {
+      box-shadow: 0 0 0 2px rgba(95, 209, 140, 0.55);
+    }
+    100% {
+      box-shadow: 0 0 0 2px rgba(95, 209, 140, 0);
+    }
+  }
+  @keyframes check-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes check-draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  .animate-card-confirm {
+    animation: card-confirm 1200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-check-pop {
+    animation: check-pop 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-check-draw {
+    animation: check-draw 380ms cubic-bezier(0.16, 1, 0.3, 1) 120ms forwards;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Tirilla de venta: al imprimir, solo sale la tirilla. Trazo de visibilidad
+   en vez de desmontar el resto de la pagina, asi no hace falta tocar cada
+   componente: todo queda invisible salvo el contenido de #receipt-print-root,
+   que se libera del backdrop fijo para poder fluir en el papel. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #receipt-print-root,
+  #receipt-print-root * {
+    visibility: visible;
+  }
+  #receipt-print-root {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
   }
 }

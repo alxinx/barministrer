@@ -29,6 +29,25 @@ authRoutes.post('/login', async (req, res) => {
   })
 })
 
+// Devolver un producto ya pedido necesita el PIN del encargado (ADMIN o
+// CAJERO), no el de quien esta operando: una mesera puede iniciar la
+// devolucion pero necesita que alguien con autoridad la apruebe.
+authRoutes.post('/verify-pin', requireAuth, async (req, res) => {
+  const { pin } = req.body || {}
+  if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN' })
+
+  const encargados = await prisma.user.findMany({
+    where: { tenantId: req.auth.tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
+  })
+
+  for (const u of encargados) {
+    if (await bcrypt.compare(String(pin), u.pinHash)) {
+      return res.json({ ok: true, authorizedBy: { id: u.id, name: u.name } })
+    }
+  }
+  res.status(401).json({ error: 'PIN incorrecto' })
+})
+
 authRoutes.get('/me', requireAuth, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.auth.userId },

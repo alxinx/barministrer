@@ -45,6 +45,7 @@ export default function FloorPlan({
   onBlockCell,
   onGestureStart,
   onGestureEnd,
+  onContextMenu,
   elapsedByTable = {},
 }) {
   const boardRef = useRef(null)
@@ -234,6 +235,11 @@ export default function FloorPlan({
             type="button"
             onPointerDown={(e) => startDrag(e, 'table', t)}
             onClick={() => !editable && onSelect?.('table', t)}
+            onContextMenu={(e) => {
+              if (editable || !onContextMenu) return
+              e.preventDefault()
+              onContextMenu(t, e)
+            }}
             style={style(t)}
             className={`absolute grid place-content-center gap-0.5 border-2 bg-raised
               transition-colors

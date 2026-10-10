@@ -64,6 +64,30 @@ catalogRoutes.patch('/categories/:id', adminOnly, async (req, res) => {
   res.json(category)
 })
 
+// Borrar de verdad, no solo desactivar: para cuando una categoria se creo mal
+// y no debe quedar ni como historial. Si todavia tiene subcategorias o
+// productos, hay que moverlos o borrarlos primero (o solo desactivarla).
+catalogRoutes.delete('/categories/:id', adminOnly, async (req, res) => {
+  const existing = await prisma.category.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId },
+  })
+  if (!existing) return res.status(404).json({ error: 'Categoria no encontrada' })
+
+  const [hijas, productos] = await Promise.all([
+    prisma.category.count({ where: { parentId: existing.id } }),
+    prisma.product.count({ where: { categoryId: existing.id } }),
+  ])
+  if (hijas > 0) {
+    return res.status(400).json({ error: 'Esta categoría tiene subcategorías; bórralas primero' })
+  }
+  if (productos > 0) {
+    return res.status(400).json({ error: 'Esta categoría todavía tiene productos; muévelos o bórralos primero' })
+  }
+
+  await prisma.category.delete({ where: { id: existing.id } })
+  res.status(204).end()
+})
+
 // --- Productos -------------------------------------------------------------
 
 catalogRoutes.get('/products', async (req, res) => {

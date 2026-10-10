@@ -582,6 +582,7 @@ export default function Distribucion() {
       <div className="flex gap-2 flex-wrap mb-5">
         {zones.map((z) => {
           const I = zoneIcon[z.icon] || Icon.tables
+          const abiertas = z.tables.filter((t) => t.status === 'OCCUPIED').length
           return (
             <button
               key={z.id}
@@ -591,7 +592,7 @@ export default function Distribucion() {
                 setBlockMode(false)
                 setLastSnapshot(null)
               }}
-              className={`flex items-center gap-2 h-11 px-4 rounded-xl text-sm font-semibold border transition-colors ${
+              className={`relative flex items-center gap-2 h-11 px-4 rounded-xl text-sm font-semibold border transition-colors ${
                 z.id === activeId
                   ? 'bg-amber text-night border-amber'
                   : 'bg-surface text-muted border-edge hover:text-ink'
@@ -600,6 +601,14 @@ export default function Distribucion() {
               <I />
               {z.name}
               <span className="opacity-60 font-normal">{z.tables.length}</span>
+              {abiertas > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ocupada text-ink
+                             text-[10px] font-bold grid place-items-center border-2 border-night"
+                >
+                  {abiertas}
+                </span>
+              )}
             </button>
           )
         })}

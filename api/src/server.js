@@ -6,6 +6,7 @@ import { catalogRoutes } from './routes/catalog.js'
 import { layoutRoutes } from './routes/layout.js'
 import { shiftRoutes } from './routes/shifts.js'
 import { customerRoutes } from './routes/customers.js'
+import { orderRoutes } from './routes/orders.js'
 import { requireAuth } from './middleware/auth.js'
 
 const app = express()
@@ -20,6 +21,7 @@ app.use('/api', requireAuth, catalogRoutes)
 app.use('/api', requireAuth, layoutRoutes)
 app.use('/api', requireAuth, shiftRoutes)
 app.use('/api', requireAuth, customerRoutes)
+app.use('/api', requireAuth, orderRoutes)
 
 app.use((_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }))
 
