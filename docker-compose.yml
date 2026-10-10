@@ -1,0 +1,54 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: licorplus_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-licorplus}
+      MYSQL_USER: ${MYSQL_USER:-licorplus}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-licorplus}
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: ./api
+    container_name: licorplus_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-licorplus}:${MYSQL_PASSWORD:-licorplus}@db:3306/${MYSQL_DATABASE:-licorplus}
+      JWT_SECRET: ${JWT_SECRET:-cambia-esto-en-produccion}
+      PORT: 4000
+      NODE_ENV: development
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./api/src:/app/src
+      - ./api/prisma:/app/prisma
+
+  web:
+    build: ./web
+    container_name: licorplus_web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: http://localhost:4000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web/src:/app/src
+      - ./web/index.html:/app/index.html
+
+volumes:
+  db_data:
