@@ -3,7 +3,7 @@
  * (140000 -> 140.000) pero entrega solo los digitos por onChange, sin
  * formato, para que el resto del codigo lo siga tratando como numero.
  */
-export default function MoneyInput({ value, onChange, className = '', placeholder = '0', autoFocus, id }) {
+export default function MoneyInput({ value, onChange, className = '', placeholder = '0', autoFocus, id, disabled }) {
   const digits = String(value ?? '').replace(/\D/g, '')
   const display = digits ? Number(digits).toLocaleString('es-CO') : ''
 
@@ -22,6 +22,7 @@ export default function MoneyInput({ value, onChange, className = '', placeholde
       onChange={handleChange}
       placeholder={placeholder}
       autoFocus={autoFocus}
+      disabled={disabled}
     />
   )
 }

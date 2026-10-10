@@ -6,6 +6,7 @@ import NuevaVenta from './pages/NuevaVenta'
 import Distribucion from './pages/Distribucion'
 import Productos from './pages/Productos'
 import Caja from './pages/Caja'
+import Clientes from './pages/Clientes'
 
 function Protegida({ children, soloAdmin = false, roles }) {
   const { session, loading } = useAuth()
@@ -35,6 +36,10 @@ export default function App() {
           <Route
             path="/caja"
             element={<Protegida roles={['ADMIN', 'CAJERO']}><Caja /></Protegida>}
+          />
+          <Route
+            path="/clientes"
+            element={<Protegida roles={['ADMIN', 'CAJERO']}><Clientes /></Protegida>}
           />
           <Route
             path="/distribucion"

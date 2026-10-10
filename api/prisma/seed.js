@@ -1,6 +1,9 @@
 /**
- * Datos de arranque para el bar piloto. Idempotente: se puede correr en cada
- * arranque del contenedor sin duplicar nada.
+ * Datos de arranque para el bar piloto. El Dockerfile corre este script en
+ * cada arranque del contenedor, asi que el catalogo y el plano SOLO se crean
+ * la primera vez que existe el tenant: si se repitiera siempre por nombre,
+ * cada reinicio reviviria zonas, mesas o productos que el admin ya borro a
+ * proposito. Los usuarios de prueba si se aseguran siempre (no hace dano).
  */
 import bcrypt from 'bcryptjs'
 import { PrismaClient } from '@prisma/client'
@@ -8,6 +11,7 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
+  const existia = await prisma.tenant.findUnique({ where: { slug: 'bar-piloto' } })
   const tenant = await prisma.tenant.upsert({
     where: { slug: 'bar-piloto' },
     update: {},
@@ -32,6 +36,11 @@ async function main() {
         pinHash: await bcrypt.hash('1234', 10),
       },
     })
+  }
+
+  if (existia) {
+    console.log('Tenant ya existia: no se toca catalogo ni plano (para no revivir lo que el admin borro).')
+    return
   }
 
   // --- Categorias ----------------------------------------------------------

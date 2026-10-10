@@ -30,6 +30,9 @@ model Tenant {
   elements   LayoutElement[]
   shifts     Shift[]
   expenses   ShiftExpense[]
+  customers  Customer[]
+  customerCharges  CustomerCharge[]
+  customerPayments CustomerPayment[]
 }
 
 enum Role {
@@ -53,6 +56,8 @@ model User {
   shiftsOpened  Shift[]        @relation("ShiftOpenedBy")
   shiftsClosed  Shift[]        @relation("ShiftClosedBy")
   shiftExpenses ShiftExpense[]
+  customerCharges  CustomerCharge[]
+  customerPayments CustomerPayment[]
 
   @@index([tenantId])
 }
@@ -321,5 +326,72 @@ model ShiftExpense {
   authorizedBy User   @relation(fields: [authorizedById], references: [id])
 
   @@index([shiftId])
+  @@index([tenantId])
+}
+
+// ---------------------------------------------------------------------------
+// CLIENTES Y FIADOS
+// El fiado es una cuenta por cobrar: cada consumo a credito es un cargo,
+// cada pago es un abono. El saldo (debe o no debe) se calcula, nunca se
+// guarda: cargos menos pagos, igual que la disponibilidad de un producto.
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id            String   @id @default(uuid())
+  tenantId      String
+  firstName     String
+  lastName      String?
+  alias         String?
+  idNumber      String? // cedula, no es obligatoria
+  email         String?
+  whatsapp      String?
+  creditEnabled Boolean  @default(false)
+  creditLimit   Decimal? @db.Decimal(12, 2) // null = sin tope, si creditEnabled
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  charges  CustomerCharge[]
+  payments CustomerPayment[]
+
+  @@unique([tenantId, idNumber])
+  @@index([tenantId])
+}
+
+/// Un consumo fiado: lo que se llevo y cuanto quedo debiendo por eso.
+model CustomerCharge {
+  id          String   @id @default(uuid())
+  tenantId    String
+  customerId  String
+  amount      Decimal  @db.Decimal(12, 2)
+  description String
+  createdAt   DateTime @default(now())
+
+  createdById String
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy  User     @relation(fields: [createdById], references: [id])
+
+  @@index([customerId])
+  @@index([tenantId])
+}
+
+/// Un abono contra la deuda. Puede ser parcial; el saldo se recalcula solo.
+model CustomerPayment {
+  id         String   @id @default(uuid())
+  tenantId   String
+  customerId String
+  amount     Decimal  @db.Decimal(12, 2)
+  note       String?
+  createdAt  DateTime @default(now())
+
+  createdById String
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([customerId])
   @@index([tenantId])
 }

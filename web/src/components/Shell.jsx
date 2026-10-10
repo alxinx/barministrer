@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 const nav = [
   { to: '/venta', label: 'Nueva venta', icon: Icon.cart, roles: ['ADMIN', 'CAJERO', 'MESERO'] },
   { to: '/caja', label: 'Caja', icon: Icon.cash, roles: ['ADMIN', 'CAJERO'] },
+  { to: '/clientes', label: 'Clientes', icon: Icon.users, roles: ['ADMIN', 'CAJERO'] },
   { to: '/distribucion', label: 'Distribución', icon: Icon.tables, roles: ['ADMIN'] },
   { to: '/productos', label: 'Productos', icon: Icon.box, roles: ['ADMIN'] },
   { to: '/reportes', label: 'Reportes', icon: Icon.chart, roles: ['ADMIN'] },
