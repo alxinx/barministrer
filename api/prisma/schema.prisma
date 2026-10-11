@@ -25,6 +25,22 @@ model Tenant {
   /// reinicia por turno ni por dia: es lo que pide un control contable serio.
   lastInvoiceNumber Int @default(0)
 
+  // Datos para la factura y la marca del bar. Todos opcionales: un bar chico
+  // puede no tener NIT ni logo todavia.
+  logoUrl    String? // URL publica en R2 (ver api/src/lib/r2.js); el archivo no vive en la base de datos
+  address    String?
+  legalName  String? // razon social
+  taxId      String? // NIT
+  taxRegime  String? // regimen tributario
+
+  // Permisos especiales: por defecto todo sigue como esta (solo ADMIN). El
+  // dueno del bar los prende si quiere delegarle algo puntual al cajero.
+  // Cada flag es una frontera real que ya existe en el codigo, no un mock.
+  cajeroEditaCatalogo        Boolean @default(false)
+  cajeroGestionaInventario   Boolean @default(false)
+  cajeroGestionaDistribucion Boolean @default(false)
+  cajeroGestionaUsuarios     Boolean @default(false)
+
   users      User[]
   categories Category[]
   products   Product[]
@@ -120,6 +136,7 @@ model Product {
   variants  Variant[]
   recipe    Recipe?
   asIngredientOf RecipeItem[] @relation("IngredientProduct")
+  orderItems OrderItem[]
 
   @@index([tenantId])
   @@index([categoryId])
@@ -532,10 +549,14 @@ model OrderItem {
   voidReason String?
   voidedById String?
 
-  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  createdBy User?  @relation("OrderItemCreatedBy", fields: [createdById], references: [id])
-  voidedBy  User?  @relation("OrderItemVoidedBy", fields: [voidedById], references: [id])
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("OrderItemCreatedBy", fields: [createdById], references: [id])
+  voidedBy  User?    @relation("OrderItemVoidedBy", fields: [voidedById], references: [id])
+  // SetNull a proposito: si algun dia se borra un producto de verdad, la
+  // venta historica no debe desaparecer ni bloquear el borrado, solo pierde
+  // la foto (name/price ya quedaron congelados en el item de todos modos).
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
   @@index([tenantId])

@@ -5,6 +5,23 @@ import { signToken, requireAuth } from '../middleware/auth.js'
 
 export const authRoutes = Router()
 
+// Los flags de permiso van en la sesion de cualquier rol (no solo admin): el
+// frontend los necesita para saber si a ESTE cajero le delegaron catalogo,
+// inventario, distribucion o usuarios. No es informacion sensible, son
+// booleanos sobre su propio alcance.
+function tenantPublic(tenant) {
+  return {
+    id: tenant.id,
+    name: tenant.name,
+    timezone: tenant.timezone,
+    logoUrl: tenant.logoUrl,
+    cajeroEditaCatalogo: tenant.cajeroEditaCatalogo,
+    cajeroGestionaInventario: tenant.cajeroGestionaInventario,
+    cajeroGestionaDistribucion: tenant.cajeroGestionaDistribucion,
+    cajeroGestionaUsuarios: tenant.cajeroGestionaUsuarios,
+  }
+}
+
 authRoutes.post('/login', async (req, res) => {
   const { email, password } = req.body || {}
   if (!email || !password) {
@@ -25,7 +42,7 @@ authRoutes.post('/login', async (req, res) => {
   res.json({
     token: signToken(user),
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
-    tenant: { id: user.tenant.id, name: user.tenant.name, timezone: user.tenant.timezone },
+    tenant: tenantPublic(user.tenant),
   })
 })
 
@@ -56,6 +73,6 @@ authRoutes.get('/me', requireAuth, async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Sesion invalida' })
   res.json({
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
-    tenant: { id: user.tenant.id, name: user.tenant.name, timezone: user.tenant.timezone },
+    tenant: tenantPublic(user.tenant),
   })
 })

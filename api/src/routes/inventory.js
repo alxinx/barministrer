@@ -1,9 +1,9 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { requireRole } from '../middleware/auth.js'
+import { requirePermission } from '../middleware/permissions.js'
 
 export const inventoryRoutes = Router()
-const adminOnly = requireRole('ADMIN')
+const adminOnly = requirePermission('cajeroGestionaInventario')
 
 // Entradas recientes, para ver que se agrego sin tener que ir variante por
 // variante. Solo entradas (PURCHASE); el stock mismo sigue siendo el numero

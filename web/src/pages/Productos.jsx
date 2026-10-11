@@ -8,7 +8,9 @@ import CategoriaForm from '../components/CategoriaForm'
 
 export default function Productos() {
   const { session } = useAuth()
-  const isAdmin = session?.user.role === 'ADMIN'
+  const isAdmin =
+    session?.user.role === 'ADMIN' ||
+    (session?.user.role === 'CAJERO' && session?.tenant.cajeroEditaCatalogo)
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
   const [filter, setFilter] = useState('')

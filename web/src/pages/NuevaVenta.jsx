@@ -197,6 +197,7 @@ export default function NuevaVenta() {
                 name: product.name,
                 variantName: null,
                 color: product.category.color,
+                imageUrl: product.imageUrl,
                 price: product.recipe.price,
                 qty: 1,
               },
@@ -220,6 +221,7 @@ export default function NuevaVenta() {
               name: product.name,
               variantName: variant.name,
               color: product.category.color,
+              imageUrl: product.imageUrl,
               price: variant.price,
               qty: 1,
             },
@@ -520,6 +522,29 @@ export default function NuevaVenta() {
             </section>
           )}
 
+          {/* Debajo de "lg" (donde el plano y la cuenta dejan de ir lado a
+              lado) tocar una mesa despliega esto como un panel desde la
+              derecha, en vez de empujarlo mas abajo: evita que el operador
+              tenga que bajar para ver que puede pedir. */}
+          {table && (
+            <div className="lg:hidden fixed inset-0 z-30 bg-black/60" onClick={() => setTable(null)} />
+          )}
+          <div
+            className={`fixed inset-y-0 right-0 z-40 w-full max-w-sm bg-night p-4 overflow-y-auto shadow-2xl
+                         space-y-4 transition-transform duration-300
+                         ${table ? 'translate-x-0' : 'translate-x-full'}
+                         lg:static lg:translate-x-0 lg:z-auto lg:w-auto lg:max-w-none lg:bg-transparent
+                         lg:p-0 lg:shadow-none lg:space-y-4`}
+          >
+            <button
+              type="button"
+              onClick={() => setTable(null)}
+              className="lg:hidden flex items-center gap-1.5 text-sm text-muted hover:text-ink"
+            >
+              <Icon.chevronLeft width={16} height={16} />
+              Volver al plano
+            </button>
+
           <div className="card p-4 select-none" onDoubleClick={abrirVincular}>
             {table ? (
               <div className="flex items-baseline gap-3">
@@ -609,6 +634,7 @@ export default function NuevaVenta() {
                 </p>
                 {itemsPendientes.map((it) => (
                   <div key={it.id} className="flex items-center gap-3">
+                    <ItemThumb item={it} />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium truncate">
                         {it.name}
@@ -639,6 +665,7 @@ export default function NuevaVenta() {
               <div className="space-y-2.5 mb-4">
                 {itemsEnviados.map((it) => (
                   <div key={it.id} className="flex items-center gap-3">
+                    <ItemThumb item={it} />
                     <div className="min-w-0 flex-1">
                       <p className={`text-sm font-medium truncate ${it.status === 'VOIDED' ? 'line-through text-muted' : ''}`}>
                         {it.name}
@@ -674,10 +701,14 @@ export default function NuevaVenta() {
                   {lines.map((l) => (
                     <li key={l.key} className="flex items-center gap-3">
                       <span
-                        className="w-9 h-9 rounded-lg shrink-0 grid place-items-center text-[11px] font-bold text-night"
-                        style={{ background: l.color }}
+                        className="w-9 h-9 rounded-lg shrink-0 grid place-items-center overflow-hidden text-[11px] font-bold text-night"
+                        style={!l.imageUrl ? { background: l.color } : undefined}
                       >
-                        {l.name.slice(0, 2).toUpperCase()}
+                        {l.imageUrl ? (
+                          <img src={l.imageUrl} alt="" className="w-full h-full object-contain" />
+                        ) : (
+                          l.name.slice(0, 2).toUpperCase()
+                        )}
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium truncate">{l.name}</p>
@@ -751,19 +782,28 @@ export default function NuevaVenta() {
                   <button
                     key={p.id}
                     onClick={() => agregar(p)}
-                    className="text-left p-3 rounded-xl bg-raised border border-edge
-                               hover:border-amber transition-colors"
+                    style={{ borderColor: p.category.color }}
+                    className="flex items-center gap-2.5 text-left p-2.5 rounded-xl bg-raised border
+                               hover:bg-surface transition-colors"
                   >
                     <span
-                      className="block w-full h-1 rounded-pill mb-2.5"
-                      style={{ background: p.category.color }}
-                    />
-                    <p className="text-sm font-semibold leading-tight">{p.name}</p>
-                    <p className="text-xs text-muted mt-0.5">
-                      {p.kind === 'PREPARED' ? 'Shot' : v.name}
-                      {v?.volumeMl ? ` · ${v.volumeMl} ml` : ''}
-                    </p>
-                    <p className="text-sm font-bold mt-1.5">{money(price)}</p>
+                      className="w-10 h-10 rounded-lg grid place-items-center shrink-0 overflow-hidden"
+                      style={!p.imageUrl ? { background: p.category.color } : undefined}
+                    >
+                      {p.imageUrl ? (
+                        <img src={p.imageUrl} alt="" className="w-full h-full object-contain" />
+                      ) : (
+                        <span className="text-night font-bold text-xs">{p.name.slice(0, 2).toUpperCase()}</span>
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold leading-tight truncate">{p.name}</p>
+                      <p className="text-xs text-muted mt-0.5 truncate">
+                        {p.kind === 'PREPARED' ? 'Shot' : v.name}
+                        {v?.volumeMl ? ` · ${v.volumeMl} ml` : ''}
+                      </p>
+                      <p className="text-sm font-bold mt-1">{money(price)}</p>
+                    </div>
                   </button>
                 )
               })}
@@ -771,6 +811,7 @@ export default function NuevaVenta() {
           </div>
           </>
           )}
+          </div>
         </aside>
       </div>
 
@@ -820,6 +861,22 @@ export default function NuevaVenta() {
         />
       )}
     </div>
+  )
+}
+
+// Miniatura de un item ya en el pedido (pendiente o enviado): la foto real
+// del producto si existe, o las iniciales si no. A diferencia de "lines"
+// (la ronda nueva), el item congelado no guarda el color de la categoria,
+// asi que el respaldo es neutro en vez de ese color.
+function ItemThumb({ item }) {
+  return (
+    <span className="w-9 h-9 rounded-lg shrink-0 grid place-items-center overflow-hidden bg-raised border border-edge text-[11px] font-bold text-muted">
+      {item.product?.imageUrl ? (
+        <img src={item.product.imageUrl} alt="" className="w-full h-full object-contain" />
+      ) : (
+        item.name.slice(0, 2).toUpperCase()
+      )}
+    </span>
   )
 }
 

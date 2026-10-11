@@ -3,6 +3,11 @@ export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
+      screens: {
+        // Punto donde el sidebar se retrae a solo iconos (ver Shell.jsx). No
+        // es ninguno de los breakpoints estandar de Tailwind.
+        nav: '900px',
+      },
       colors: {
         // Interfaz oscura: el bar opera de noche con poca luz. Una pantalla
         // clara encandila y se lee peor a metro y medio de distancia.

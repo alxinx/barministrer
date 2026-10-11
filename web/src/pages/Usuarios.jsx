@@ -8,6 +8,7 @@ const ROLE_LABEL = { ADMIN: 'Administrador', CAJERO: 'Cajero/a', MESERO: 'Mesero
 
 export default function Usuarios() {
   const { session } = useAuth()
+  const esAdminReal = session?.user.role === 'ADMIN'
   const [users, setUsers] = useState([])
   const [target, setTarget] = useState(undefined) // undefined = cerrado, null = nuevo, usuario = editar
   const [error, setError] = useState('')
@@ -61,7 +62,9 @@ export default function Usuarios() {
       )}
 
       <div className="card divide-y divide-edge">
-        {users.map((u) => (
+        {users.map((u) => {
+          const bloqueada = u.role === 'ADMIN' && !esAdminReal
+          return (
           <div key={u.id} className="flex items-center gap-4 p-4">
             <span className="w-10 h-10 rounded-full bg-raised border border-edge grid place-items-center text-sm font-bold shrink-0">
               {u.name
@@ -85,18 +88,25 @@ export default function Usuarios() {
 
             <button
               onClick={() => alternar(u)}
-              className={`text-[11px] font-semibold px-2.5 py-1 rounded-pill border shrink-0 ${
+              disabled={bloqueada}
+              className={`text-[11px] font-semibold px-2.5 py-1 rounded-pill border shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
                 u.active ? 'text-libre border-libre/40 bg-libre/10' : 'text-muted border-edge bg-raised'
               }`}
             >
               {u.active ? 'Activo' : 'Desactivado'}
             </button>
 
-            <button onClick={() => setTarget(u)} className="text-muted hover:text-ink shrink-0" aria-label="Editar">
+            <button
+              onClick={() => setTarget(u)}
+              disabled={bloqueada}
+              className="text-muted hover:text-ink shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Editar"
+            >
               <Icon.gear width={16} height={16} />
             </button>
           </div>
-        ))}
+          )
+        })}
 
         {users.length === 0 && <p className="p-10 text-center text-muted text-sm">Cargando…</p>}
       </div>

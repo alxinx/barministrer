@@ -11,11 +11,22 @@ import TurnoDetalle from './pages/TurnoDetalle'
 import Clientes from './pages/Clientes'
 import ClienteDetalle from './pages/ClienteDetalle'
 import Usuarios from './pages/Usuarios'
+import Configuracion from './pages/Configuracion'
+import DatosBar from './pages/DatosBar'
+import Permisos from './pages/Permisos'
 
-function Protegida({ children, soloAdmin = false, roles }) {
+// `permiso` es el flag de Tenant que el dueno puede prender para delegarle
+// esto a CAJERO (ver /configuracion/permisos). ADMIN siempre entra; cualquier
+// otro rol necesita que ese flag especifico este en true para este tenant.
+function Protegida({ children, soloAdmin = false, roles, permiso }) {
   const { session, loading } = useAuth()
   if (loading) return <div className="h-full grid place-items-center text-muted">Cargando…</div>
   if (!session) return <Navigate to="/entrar" replace />
+  if (permiso) {
+    const tienePermiso = session.user.role === 'ADMIN' || (session.user.role === 'CAJERO' && session.tenant[permiso])
+    if (!tienePermiso) return <Navigate to="/venta" replace />
+    return <Shell>{children}</Shell>
+  }
   if (soloAdmin && session.user.role !== 'ADMIN') return <Navigate to="/venta" replace />
   if (roles && !roles.includes(session.user.role)) return <Navigate to="/venta" replace />
   return <Shell>{children}</Shell>
@@ -55,22 +66,27 @@ export default function App() {
           />
           <Route
             path="/distribucion"
-            element={<Protegida soloAdmin><Distribucion /></Protegida>}
+            element={<Protegida permiso="cajeroGestionaDistribucion"><Distribucion /></Protegida>}
           />
-          <Route path="/usuarios" element={<Protegida soloAdmin><Usuarios /></Protegida>} />
-          <Route path="/productos" element={<Protegida soloAdmin><Productos /></Protegida>} />
+          <Route
+            path="/usuarios"
+            element={<Protegida permiso="cajeroGestionaUsuarios"><Usuarios /></Protegida>}
+          />
+          <Route
+            path="/productos"
+            element={<Protegida permiso="cajeroEditaCatalogo"><Productos /></Protegida>}
+          />
           <Route
             path="/productos/inventario"
-            element={<Protegida soloAdmin><AgregarInventario /></Protegida>}
+            element={<Protegida permiso="cajeroGestionaInventario"><AgregarInventario /></Protegida>}
           />
           <Route
             path="/reportes"
             element={<Protegida soloAdmin><Pendiente titulo="Reportes" /></Protegida>}
           />
-          <Route
-            path="/configuracion"
-            element={<Protegida soloAdmin><Pendiente titulo="Configuración" /></Protegida>}
-          />
+          <Route path="/configuracion" element={<Protegida soloAdmin><Configuracion /></Protegida>} />
+          <Route path="/configuracion/datos" element={<Protegida soloAdmin><DatosBar /></Protegida>} />
+          <Route path="/configuracion/permisos" element={<Protegida soloAdmin><Permisos /></Protegida>} />
           <Route path="*" element={<Navigate to="/venta" replace />} />
         </Routes>
       </AuthProvider>

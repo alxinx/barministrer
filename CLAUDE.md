@@ -175,6 +175,15 @@ recorte y fondo, nada de IA generativa, que deforma etiquetas de marca. Comprimi
 y redimensionar en el navegador antes de subir (máx 800 px, ~200 KB). La imagen
 es **opcional**: si no hay, se muestra el nombre sobre el color de la categoría.
 
+El logo del bar es distinto: banner, no ícono, máx **200×70 px**, siempre
+**webp**, y vive en **Cloudflare R2** (no en la base de datos — `Tenant.logoUrl`
+es solo la URL pública). El navegador redimensiona y convierte antes de subir
+(`web/src/lib/image.js`); el backend (`POST /tenant/logo`) solo decodifica y
+sube a R2 con el SDK de S3 (`api/src/lib/r2.js`). Las credenciales de R2
+(`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
+`R2_PUBLIC_URL`) viven **solo en `.env`**, nunca llegan al frontend ni a la
+base de datos.
+
 ## Diseño de UI
 
 El bar opera de noche con poca luz. Interfaz **oscura**, tokens en
@@ -210,6 +219,17 @@ El bar opera de noche con poca luz. Interfaz **oscura**, tokens en
   se acabe primero).
 - Mutaciones de configuración: solo ADMIN. Mutaciones de operación (estado de
   mesa): cualquier rol. La distinción está en `PATCH /tables/:id`.
+- **Permisos delegables:** por defecto catálogo, inventario, distribución y
+  usuarios son solo-ADMIN. El dueño puede prenderle cada uno a CAJERO puntualmente
+  desde `/configuracion/permisos` (`Tenant.cajeroEditaCatalogo` /
+  `cajeroGestionaInventario` / `cajeroGestionaDistribucion` /
+  `cajeroGestionaUsuarios`, todos `false` por defecto). El middleware
+  `requirePermission(flag)` deja pasar a ADMIN siempre; a CAJERO solo si su
+  tenant tiene ese flag en `true`. Aunque se le delegue usuarios, un cajero
+  **nunca** puede crear ni tocar una cuenta ADMIN — evita que un permiso
+  puntual se use para escalar a dueño. La página de permisos misma es siempre
+  ADMIN real, nunca delegable (si no, un cajero podría otorgarse más acceso a
+  sí mismo).
 
 ## Estado actual
 
@@ -217,7 +237,8 @@ Hecho: auth con roles, aislamiento por tenant, catálogo (categorías, productos
 variantes), editor de distribución (zonas, mesas y elementos arrastrables sobre
 cuadrícula), pantalla de venta con plano y pedido, movimientos de inventario,
 turnos y cierre de caja, pre-pedido de la mesera con aprobación del admin por
-WebSocket (ver Operación arriba), módulo de usuarios (`/usuarios`).
+WebSocket (ver Operación arriba), módulo de usuarios (`/usuarios`), datos del
+bar y permisos delegables (`/configuracion`).
 
 Falta, en orden: estados *listo*/*entregado* dentro del pedido ya aprobado →
 reglas de precio → recetas y combos en UI → reportes → QR en mesa (fase 2).

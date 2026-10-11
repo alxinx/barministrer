@@ -1,9 +1,9 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { requireRole } from '../middleware/auth.js'
+import { requirePermission, tienePermiso } from '../middleware/permissions.js'
 
 export const layoutRoutes = Router()
-const adminOnly = requireRole('ADMIN')
+const adminOnly = requirePermission('cajeroGestionaDistribucion')
 
 /** Plano completo: zonas con sus mesas y elementos. Una sola llamada. */
 layoutRoutes.get('/zones', async (req, res) => {
@@ -144,7 +144,7 @@ layoutRoutes.patch('/tables/:id', async (req, res) => {
   // (libre/ocupada) es operacion: cualquier rol.
   const isConfigChange = [number, seats, shape, gridX, gridY, width, height, zoneId, active]
     .some((v) => v !== undefined)
-  if (isConfigChange && req.auth.role !== 'ADMIN') {
+  if (isConfigChange && !(await tienePermiso(req.auth, 'cajeroGestionaDistribucion'))) {
     return res.status(403).json({ error: 'Solo el administrador puede mover o editar mesas' })
   }
 

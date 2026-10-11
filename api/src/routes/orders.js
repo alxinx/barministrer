@@ -11,6 +11,7 @@ const puedeGestionarPrePedidos = requireRole('ADMIN', 'CAJERO') // ambos se ente
 const ITEM_INCLUDE = {
   createdBy: { select: { id: true, name: true } },
   voidedBy: { select: { id: true, name: true } },
+  product: { select: { imageUrl: true } },
 }
 const ORDER_INCLUDE = {
   items: { include: ITEM_INCLUDE, orderBy: { orderedAt: 'asc' } },

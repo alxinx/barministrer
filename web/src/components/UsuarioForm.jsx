@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '../lib/api'
 import { Icon } from './Icons'
+import { useAuth } from '../context/AuthContext'
 
 const ROLES = [
   { value: 'MESERO', label: 'Mesero/a' },
@@ -14,7 +15,12 @@ const ROLES = [
  * sin obligar a retipear la clave cada vez que se cambia el nombre.
  */
 export default function UsuarioForm({ user, onClose, onSaved }) {
+  const { session } = useAuth()
+  const esAdminReal = session?.user.role === 'ADMIN'
   const esNuevo = !user
+  // Un cajero con el permiso delegado gestiona meseras y cajeros, pero nunca
+  // una cuenta de administrador: ni la crea ni se la encuentra en la lista.
+  const rolesDisponibles = esAdminReal ? ROLES : ROLES.filter((r) => r.value !== 'ADMIN')
 
   const [name, setName] = useState(user?.name || '')
   const [email, setEmail] = useState(user?.email || '')
@@ -93,7 +99,7 @@ export default function UsuarioForm({ user, onClose, onSaved }) {
         <div>
           <label className="label">Rol</label>
           <select className="field" value={role} onChange={(e) => setRole(e.target.value)}>
-            {ROLES.map((r) => (
+            {rolesDisponibles.map((r) => (
               <option key={r.value} value={r.value}>
                 {r.label}
               </option>

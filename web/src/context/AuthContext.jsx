@@ -26,10 +26,18 @@ export function AuthProvider({ children }) {
     setSession(null)
   }
 
+  // Tras editar nombre/logo del bar en /configuracion, la sesion en memoria
+  // queda desactualizada (viene del login, no se recalcula sola): se vuelve a
+  // pedir /me para que el sidebar refleje el cambio sin tener que recargar.
+  async function refreshSession() {
+    const data = await api('/auth/me')
+    setSession(data)
+  }
+
   const isAdmin = session?.user.role === 'ADMIN'
 
   return (
-    <AuthContext.Provider value={{ session, loading, login, logout, isAdmin }}>
+    <AuthContext.Provider value={{ session, loading, login, logout, refreshSession, isAdmin }}>
       {children}
     </AuthContext.Provider>
   )

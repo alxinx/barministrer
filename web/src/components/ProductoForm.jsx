@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import { categoryTree, flattenCategories } from '../lib/categories'
+import { resizeProductImage } from '../lib/image'
 import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
 
@@ -34,8 +35,26 @@ export default function ProductoForm({ categories, products, product, initialNam
       ? product.recipe.items.map((i) => ({ sourceProductId: i.sourceProductId, ml: i.ml }))
       : [{ sourceProductId: '', ml: 30 }]
   )
+  const [imageUrl, setImageUrl] = useState(product?.imageUrl || '')
+  const [subiendoImagen, setSubiendoImagen] = useState(false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  async function subirImagen(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setSubiendoImagen(true)
+    setError('')
+    try {
+      const webp = await resizeProductImage(file)
+      const { imageUrl: url } = await api('/products/image', { method: 'POST', body: { image: webp } })
+      setImageUrl(url)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSubiendoImagen(false)
+    }
+  }
 
   const options = useMemo(() => flattenCategories(categoryTree(categories)), [categories])
   const category = categories.find((c) => c.id === categoryId)
@@ -79,6 +98,7 @@ export default function ProductoForm({ categories, products, product, initialNam
       }
       body = { name: name.trim(), categoryId, kind: 'STOCK' }
     }
+    body.imageUrl = imageUrl || null
 
     setSaving(true)
     try {
@@ -329,6 +349,37 @@ export default function ProductoForm({ categories, products, product, initialNam
             )}
           </div>
         )}
+
+        <div>
+          <label className="label">Imagen</label>
+          <div className="flex items-center gap-4">
+            <span className="w-20 h-20 rounded-xl grid place-items-center overflow-hidden shrink-0 bg-raised border border-edge">
+              {imageUrl ? (
+                <img src={imageUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <span
+                  className="w-full h-full grid place-items-center text-night font-bold text-lg"
+                  style={{ background: category?.color || '#6B7280' }}
+                >
+                  {name.slice(0, 2).toUpperCase() || '—'}
+                </span>
+              )}
+            </span>
+            <label className="btn-ghost cursor-pointer">
+              {subiendoImagen ? 'Subiendo…' : imageUrl ? 'Cambiar imagen' : 'Subir imagen'}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={subirImagen}
+                disabled={subiendoImagen}
+              />
+            </label>
+          </div>
+          <p className="text-xs text-muted mt-2">
+            Opcional: si no hay imagen, se muestra el nombre sobre el color de la categoría.
+          </p>
+        </div>
 
         <div className="flex gap-3 pt-2">
           <button type="button" onClick={onClose} className="btn-ghost flex-1">

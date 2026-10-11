@@ -1,11 +1,11 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
-import { requireRole } from '../middleware/auth.js'
+import { requirePermission } from '../middleware/permissions.js'
 
 export const userRoutes = Router()
 
-const adminOnly = requireRole('ADMIN')
+const adminOnly = requirePermission('cajeroGestionaUsuarios')
 const ROLES = ['ADMIN', 'CAJERO', 'MESERO']
 
 // Nunca se devuelve passwordHash/pinHash: son hashes, pero no hay razon para
@@ -45,6 +45,12 @@ userRoutes.post('/users', adminOnly, async (req, res) => {
   if (!ROLES.includes(role)) return res.status(400).json({ error: 'El rol no es valido' })
   if (password.length < 6) return res.status(400).json({ error: 'La clave debe tener minimo 6 caracteres' })
   if (pinInvalido(pin)) return res.status(400).json({ error: 'El PIN debe tener exactamente 4 digitos' })
+  // El permiso delegado deja gestionar MESERO/CAJERO, no crear otro admin:
+  // eso seria escalar su propio acceso con un permiso que el dueno le dio
+  // para otra cosa.
+  if (role === 'ADMIN' && req.auth.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'Solo un administrador puede crear otro administrador' })
+  }
 
   try {
     const user = await prisma.user.create({
@@ -76,6 +82,11 @@ userRoutes.patch('/users/:id', adminOnly, async (req, res) => {
     return res.status(400).json({ error: 'La clave debe tener minimo 6 caracteres' })
   }
   if (pinInvalido(pin)) return res.status(400).json({ error: 'El PIN debe tener exactamente 4 digitos' })
+  // Mismo limite que al crear: el permiso delegado no alcanza para tocar una
+  // cuenta de administrador ni para convertir a alguien en uno.
+  if (req.auth.role !== 'ADMIN' && (user.role === 'ADMIN' || role === 'ADMIN')) {
+    return res.status(403).json({ error: 'Solo un administrador puede gestionar cuentas de administrador' })
+  }
 
   // No dejar el bar sin ningun admin activo: seria un candado que nadie puede
   // abrir, ni siquiera para revertir el propio cambio.

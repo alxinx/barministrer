@@ -1,9 +1,10 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { requireRole } from '../middleware/auth.js'
+import { requirePermission } from '../middleware/permissions.js'
+import { subirImagenProducto } from '../lib/r2.js'
 
 export const catalogRoutes = Router()
-const adminOnly = requireRole('ADMIN')
+const adminOnly = requirePermission('cajeroEditaCatalogo')
 
 // --- Categorias ------------------------------------------------------------
 
@@ -132,6 +133,23 @@ async function validarIngredientes(tenantId, items) {
   }
   return null
 }
+
+// El navegador ya redujo la imagen (max 800px, ~200KB) y la convirtio a
+// webp; aqui solo se decodifica y se sube a R2, carpeta global "productos/"
+// (no por tenant: una foto de marca comercial se comparte entre bares).
+catalogRoutes.post('/products/image', adminOnly, async (req, res) => {
+  const { image } = req.body || {}
+  const match = /^data:image\/webp;base64,(.+)$/.exec(image || '')
+  if (!match) return res.status(400).json({ error: 'La imagen debe venir en formato webp' })
+
+  const buffer = Buffer.from(match[1], 'base64')
+  if (buffer.length > 300_000) {
+    return res.status(400).json({ error: 'La imagen quedo mas grande de lo esperado, intenta con otra' })
+  }
+
+  const imageUrl = await subirImagenProducto(buffer)
+  res.status(201).json({ imageUrl })
+})
 
 catalogRoutes.post('/products', adminOnly, async (req, res) => {
   const { name, categoryId, kind = 'STOCK', imageUrl, variants = [], recipe } = req.body || {}
