@@ -5,7 +5,58 @@ import { requireRole } from '../middleware/auth.js'
 export const shiftRoutes = Router()
 const cajero = requireRole('ADMIN', 'CAJERO')
 
-const METHODS = ['EFECTIVO', 'NEQUI', 'DAVIPLATA', 'DATAFONO']
+// Medios que se cuentan a ciegas al cerrar caja. Credito no entra: el fiado
+// es una cuenta por cobrar, nunca efectivo ni plastico en el cajon.
+const METHODS = ['EFECTIVO', 'NEQUI', 'TRANSFERENCIA', 'DATAFONO']
+
+// Ventas reales del turno, agrupadas por medio de pago. Se usa en vivo (para
+// mostrar el movimiento del dia con el turno todavia abierto) y una sola vez
+// al cerrar, para congelar el snapshot que despues ve el historial.
+async function resumenVentas(tenantId, shiftId) {
+  const pagos = await prisma.orderPayment.groupBy({
+    by: ['method'],
+    where: { tenantId, order: { shiftId } },
+    _sum: { amount: true },
+  })
+  const byMethod = Object.fromEntries(METHODS.map((m) => [m, 0]))
+  let fiado = 0
+  for (const p of pagos) {
+    const monto = Number(p._sum.amount) || 0
+    if (p.method === 'CREDITO') fiado = monto
+    else byMethod[p.method] = monto
+  }
+
+  const [tickets, cortesias] = await Promise.all([
+    prisma.order.count({ where: { tenantId, shiftId, status: 'CLOSED' } }),
+    prisma.order.count({ where: { tenantId, shiftId, status: 'CLOSED', isCourtesy: true } }),
+  ])
+
+  const totalVentas = Object.values(byMethod).reduce((s, v) => s + v, 0) + fiado
+  return { byMethod, fiado, totalVentas, tickets, cortesias }
+}
+
+// Lista liviana de las cuentas cerradas del turno, para "ver la factura" de
+// cualquier mesa sin cargar el pedido completo de una.
+async function facturasDelTurno(tenantId, shiftId) {
+  const orders = await prisma.order.findMany({
+    where: { tenantId, shiftId, status: 'CLOSED' },
+    select: {
+      id: true,
+      closedAt: true,
+      isCourtesy: true,
+      table: { select: { number: true } },
+      items: { select: { price: true, qty: true, status: true } },
+    },
+    orderBy: { closedAt: 'desc' },
+  })
+  return orders.map((o) => ({
+    id: o.id,
+    tableNumber: o.table.number,
+    closedAt: o.closedAt,
+    isCourtesy: o.isCourtesy,
+    total: o.items.filter((i) => i.status === 'ACTIVE').reduce((s, i) => s + Number(i.price) * i.qty, 0),
+  }))
+}
 
 // --- Turno actual ------------------------------------------------------------
 
@@ -20,7 +71,13 @@ shiftRoutes.get('/shifts/current', async (req, res) => {
       },
     },
   })
-  res.json(shift)
+  if (!shift) return res.json(null)
+
+  const [sales, facturas] = await Promise.all([
+    resumenVentas(req.auth.tenantId, shift.id),
+    facturasDelTurno(req.auth.tenantId, shift.id),
+  ])
+  res.json({ ...shift, sales, facturas })
 })
 
 shiftRoutes.get('/shifts', async (req, res) => {
@@ -35,6 +92,28 @@ shiftRoutes.get('/shifts', async (req, res) => {
     take: 30,
   })
   res.json(shifts)
+})
+
+// Detalle de un turno (pasado o actual) para el drill-down desde el
+// historial: cuadre, ventas, egresos y consumo por mesa, todo discriminado.
+shiftRoutes.get('/shifts/:id', async (req, res) => {
+  const shift = await prisma.shift.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId },
+    include: {
+      openedBy: { select: { id: true, name: true } },
+      closedBy: { select: { id: true, name: true } },
+      expenses: {
+        include: { authorizedBy: { select: { id: true, name: true } } },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  })
+  if (!shift) return res.status(404).json({ error: 'Turno no encontrado' })
+
+  const facturas = await facturasDelTurno(req.auth.tenantId, shift.id)
+  // Un turno cerrado trae su snapshot congelado; uno abierto todavia no.
+  const sales = shift.sales ?? (await resumenVentas(req.auth.tenantId, shift.id))
+  res.json({ ...shift, sales, facturas })
 })
 
 // --- Abrir --------------------------------------------------------------
@@ -125,17 +204,14 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
     }
   }
 
-  // Ventas por medio de pago: todavia no existe el modulo de pedidos, asi que
-  // por ahora son 0 para todos. Cuando exista, esto se vuelve una suma real
-  // sobre las ventas del turno (no hay que tocar el resto del cuadre).
-  const ventasPorMedio = { EFECTIVO: 0, NEQUI: 0, DAVIPLATA: 0, DATAFONO: 0 }
+  const sales = await resumenVentas(req.auth.tenantId, shift.id)
   const egresosEfectivo = shift.expenses.reduce((sum, e) => sum + Number(e.amount), 0)
 
   const resultado = METHODS.map((method) => {
     const expected =
       method === 'EFECTIVO'
-        ? Number(shift.baseCash) + ventasPorMedio.EFECTIVO - egresosEfectivo
-        : ventasPorMedio[method]
+        ? Number(shift.baseCash) + sales.byMethod.EFECTIVO - egresosEfectivo
+        : sales.byMethod[method]
     const counted = Number(counts[method])
     return { method, expected, counted, difference: counted - expected }
   })
@@ -147,6 +223,7 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
       closedById: req.auth.userId,
       closedAt: new Date(),
       counts: resultado,
+      sales,
     },
     include: {
       openedBy: { select: { id: true, name: true } },

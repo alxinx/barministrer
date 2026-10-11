@@ -104,12 +104,20 @@ herencia desde la categoría padre), no contra la venta total: el aguardiente no
 usa hielo y el whisky no usa limón.
 
 ### Operación
-- **Flujo del pedido:** mesera pide → entra a la mesa como *pendiente* y la barra
-  lo ve en tiempo real → barra marca *listo* → **mesera marca *entregado*** y ahí
-  suma a la cuenta. El cajero **no** aprueba al inicio: se vuelve cuello de
-  botella y si se le olvida uno, las cervezas salen sin quedar en la cuenta.
+- **Flujo del pedido (decisión de Alejo, oct-2026 — invierte la anterior):**
+  la mesera registra el pedido y le da enviar, pero queda como **pre-pedido**
+  (`OrderItem.status = PENDING`): no suma al total ni llega a la barra. Por
+  WebSocket le llega al admin un aviso en vivo (número de mesa en ámbar en el
+  plano + listado en el panel lateral). El admin entra a esa mesa, ve el
+  pre-pedido ya cargado en "Cuenta de la mesa", y es **el único que puede
+  enviarlo a la barra** (`POST /orders/:id/send`, pasa todo a `ACTIVE`),
+  normalmente cuando la mesera se lo confirma en persona. Solo ADMIN aprueba;
+  CAJERO no. Esto es a propósito el cuello de botella que la regla anterior
+  evitaba — si en operación real trae problemas (admin ocupado, pedidos
+  atascados), es decisión suya revertirlo, no algo para decidir en el código.
 - Al cobrar, las líneas en *listo* sin entregar se muestran y hay que resolverlas
-  (entregar o anular con motivo). Nada queda en el limbo.
+  (entregar o anular con motivo). Nada queda en el limbo. (Pendiente: todavía
+  no hay estados *listo*/*entregado* separados, solo pre-pedido → activo.)
 - "No hay" sí existe aunque el inventario diga que sí (cerveza caliente, botella
   rota, venta sin registrar). El stock es un aviso, no un bloqueo.
 - **Permisos:** la mesera crea pedidos y agrega productos. No aplica descuentos,
@@ -122,8 +130,8 @@ usa hielo y el whisky no usa limón.
 - **Propinas:** fuera del sistema. No van en la factura.
 - **Turnos:** el turno no es el día calendario (el viernes termina a las 3 am).
   Toda venta va atada a un turno. Cierre con base inicial, medios de pago
-  separados (efectivo / Nequi / Daviplata / datáfono), fiados como cuentas por
-  cobrar, retiros registrados, y **conteo ciego**: el cajero cuenta sin ver lo
+  separados (efectivo / Nequi / transferencia / datáfono), fiados como cuentas
+  por cobrar, retiros registrados, y **conteo ciego**: el cajero cuenta sin ver lo
   esperado. Turno cerrado queda bloqueado; las correcciones son ajustes con
   autor y motivo.
 
@@ -188,15 +196,15 @@ El bar opera de noche con poca luz. Interfaz **oscura**, tokens en
 
 Hecho: auth con roles, aislamiento por tenant, catálogo (categorías, productos,
 variantes), editor de distribución (zonas, mesas y elementos arrastrables sobre
-cuadrícula), pantalla de venta con plano y pedido en memoria.
+cuadrícula), pantalla de venta con plano y pedido, movimientos de inventario,
+turnos y cierre de caja, pre-pedido de la mesera con aprobación del admin por
+WebSocket (ver Operación arriba).
 
-Falta, en orden: movimientos de inventario → pedidos (mesera/barra/entregado) →
-turnos y cierre de caja → reglas de precio → recetas y combos en UI → reportes →
-QR en mesa (fase 2).
+Falta, en orden: estados *listo*/*entregado* dentro del pedido ya aprobado →
+reglas de precio → recetas y combos en UI → reportes → QR en mesa (fase 2).
 
 Pendientes conocidos:
 
-- El botón "Enviar pedido a la barra" no hace nada todavía.
 - `Variant.stock` es un número suelto. Se vuelve derivado de los movimientos.
 - El Dockerfile de la API corre `prisma db push`. Antes de producción: migraciones
   reales con `prisma migrate deploy`.

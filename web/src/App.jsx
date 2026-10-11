@@ -5,8 +5,11 @@ import Login from './pages/Login'
 import NuevaVenta from './pages/NuevaVenta'
 import Distribucion from './pages/Distribucion'
 import Productos from './pages/Productos'
+import AgregarInventario from './pages/AgregarInventario'
 import Caja from './pages/Caja'
+import TurnoDetalle from './pages/TurnoDetalle'
 import Clientes from './pages/Clientes'
+import ClienteDetalle from './pages/ClienteDetalle'
 
 function Protegida({ children, soloAdmin = false, roles }) {
   const { session, loading } = useAuth()
@@ -38,14 +41,26 @@ export default function App() {
             element={<Protegida roles={['ADMIN', 'CAJERO']}><Caja /></Protegida>}
           />
           <Route
+            path="/caja/turnos/:id"
+            element={<Protegida roles={['ADMIN', 'CAJERO']}><TurnoDetalle /></Protegida>}
+          />
+          <Route
             path="/clientes"
             element={<Protegida roles={['ADMIN', 'CAJERO']}><Clientes /></Protegida>}
+          />
+          <Route
+            path="/clientes/:id"
+            element={<Protegida roles={['ADMIN', 'CAJERO']}><ClienteDetalle /></Protegida>}
           />
           <Route
             path="/distribucion"
             element={<Protegida soloAdmin><Distribucion /></Protegida>}
           />
           <Route path="/productos" element={<Protegida soloAdmin><Productos /></Protegida>} />
+          <Route
+            path="/productos/inventario"
+            element={<Protegida soloAdmin><AgregarInventario /></Protegida>}
+          />
           <Route
             path="/reportes"
             element={<Protegida soloAdmin><Pendiente titulo="Reportes" /></Protegida>}

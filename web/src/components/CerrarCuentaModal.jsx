@@ -7,6 +7,7 @@ const METHODS = [
   { key: 'EFECTIVO', label: 'Efectivo' },
   { key: 'TRANSFERENCIA', label: 'Transferencia Bancolombia' },
   { key: 'NEQUI', label: 'Nequi' },
+  { key: 'DATAFONO', label: 'Datáfono' },
   { key: 'CREDITO', label: 'Crédito (fiado)' },
 ]
 

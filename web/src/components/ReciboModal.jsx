@@ -6,6 +6,7 @@ const METHOD_LABEL = {
   EFECTIVO: 'Efectivo',
   TRANSFERENCIA: 'Transferencia',
   NEQUI: 'Nequi',
+  DATAFONO: 'Datáfono',
   CREDITO: 'Crédito',
 }
 
@@ -14,11 +15,12 @@ const METHOD_LABEL = {
  * impresion del navegador de una vez, en la misma pestaña (nunca window.open,
  * eso abriria otra). Se queda en pantalla despues por si hay que reimprimir.
  */
-export default function ReciboModal({ order, splitCount, tenantName, onClose }) {
+export default function ReciboModal({ order, splitCount, tenantName, onClose, autoPrint = true }) {
   useEffect(() => {
+    if (!autoPrint) return
     const t = setTimeout(() => window.print(), 150)
     return () => clearTimeout(t)
-  }, [])
+  }, [autoPrint])
 
   const items = order.items.filter((i) => i.status === 'ACTIVE')
   const porPersona = splitCount > 1 ? order.total / splitCount : null

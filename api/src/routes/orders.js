@@ -2,17 +2,22 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
+import { avisarAdmins } from '../lib/realtime.js'
 
 export const orderRoutes = Router()
 const puedeCerrar = requireRole('ADMIN', 'CAJERO') // cobrar/cerrar cuenta no es cosa de mesera
+const soloAdmin = requireRole('ADMIN') // aprobar y enviar el pre-pedido a la barra es solo del admin
 
-const ITEM_INCLUDE = { voidedBy: { select: { id: true, name: true } } }
+const ITEM_INCLUDE = {
+  createdBy: { select: { id: true, name: true } },
+  voidedBy: { select: { id: true, name: true } },
+}
 const ORDER_INCLUDE = {
   items: { include: ITEM_INCLUDE, orderBy: { orderedAt: 'asc' } },
   payments: { orderBy: { createdAt: 'asc' } },
   openedBy: { select: { id: true, name: true } },
   closedBy: { select: { id: true, name: true } },
-  table: { select: { id: true, number: true } },
+  table: { select: { id: true, number: true, zoneId: true } },
   customer: {
     select: {
       id: true,
@@ -131,6 +136,47 @@ orderRoutes.get('/orders/history/:tableId', async (req, res) => {
   res.json(orders.map((o) => ({ ...o, total: total(o) })))
 })
 
+// La cola de pre-pedidos esperando aprobacion, para cuando el admin entra o
+// recarga: los eventos de socket solo avisan de lo que pasa despues de
+// conectarse, esto es lo que ya esta pendiente en ese momento. Va antes de
+// /orders/:id para que "pending" no se confunda con un id de cuenta.
+orderRoutes.get('/orders/pending', soloAdmin, async (req, res) => {
+  const items = await prisma.orderItem.findMany({
+    where: { tenantId: req.auth.tenantId, status: 'PENDING' },
+    include: {
+      createdBy: { select: { id: true, name: true } },
+      order: {
+        select: {
+          id: true,
+          tableId: true,
+          table: { select: { number: true, zoneId: true, zone: { select: { name: true } } } },
+        },
+      },
+    },
+    orderBy: { orderedAt: 'asc' },
+  })
+
+  const porOrden = new Map()
+  for (const it of items) {
+    const existente = porOrden.get(it.orderId)
+    if (!existente) {
+      porOrden.set(it.orderId, {
+        orderId: it.orderId,
+        tableId: it.order.tableId,
+        tableNumber: it.order.table.number,
+        zoneId: it.order.table.zoneId,
+        zoneName: it.order.table.zone.name,
+        since: it.orderedAt,
+        meseras: new Set([it.createdBy?.name].filter(Boolean)),
+      })
+    } else if (it.createdBy?.name) {
+      existente.meseras.add(it.createdBy.name)
+    }
+  }
+
+  res.json([...porOrden.values()].map((o) => ({ ...o, meseras: [...o.meseras] })))
+})
+
 orderRoutes.get('/orders/:id', async (req, res) => {
   const order = await prisma.order.findFirst({
     where: { id: req.params.id, tenantId: req.auth.tenantId },
@@ -169,8 +215,16 @@ orderRoutes.post('/orders', async (req, res) => {
 
 // Agregar una ronda de productos. El precio se congela aqui: si el catalogo
 // cambia despues, esta cuenta no se mueve.
+//
+// Quien la registra importa: si no es el admin, queda como PENDING (un
+// pre-pedido) en vez de ACTIVE. No suma al total ni llega a la barra todavia
+// -- el admin tiene que aprobarlo y enviarlo (POST /orders/:id/send) cuando
+// la mesera llegue a confirmarlo. Esto es decision del dueno del bar.
 orderRoutes.post('/orders/:id/items', async (req, res) => {
-  const order = await prisma.order.findFirst({ where: { id: req.params.id, tenantId: req.auth.tenantId } })
+  const order = await prisma.order.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId },
+    include: { table: { select: { number: true, zoneId: true, zone: { select: { name: true } } } } },
+  })
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
 
@@ -179,6 +233,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
     return res.status(400).json({ error: 'Agrega al menos un producto' })
   }
 
+  const status = req.auth.role === 'ADMIN' ? 'ACTIVE' : 'PENDING'
   const data = []
   for (const it of items) {
     const qty = Number(it.qty) || 1
@@ -197,6 +252,8 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         variantName: variant.name,
         price: variant.price,
         qty,
+        status,
+        createdById: req.auth.userId,
       })
     } else if (it.productId) {
       const product = await prisma.product.findFirst({
@@ -212,6 +269,8 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         variantName: null,
         price: product.recipe.price,
         qty,
+        status,
+        createdById: req.auth.userId,
       })
     } else {
       return res.status(400).json({ error: 'Cada producto necesita una presentacion o un shot' })
@@ -220,7 +279,40 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
 
   await prisma.orderItem.createMany({ data })
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
+
+  if (status === 'PENDING') {
+    // Misma forma que GET /orders/pending: el frontend guarda ambos en la
+    // misma lista y no deberia importarle si llego por fetch o por socket.
+    avisarAdmins(req.auth.tenantId, 'pre-pedido:nuevo', {
+      orderId: order.id,
+      tableId: order.tableId,
+      tableNumber: order.table.number,
+      zoneId: order.table.zoneId,
+      zoneName: order.table.zone.name,
+      since: new Date().toISOString(),
+      meseras: [req.auth.name],
+    })
+  }
+
   res.status(201).json({ ...updated, total: total(updated) })
+})
+
+// El admin aprueba el pre-pedido que dejo la mesera: los items PENDING de
+// esta cuenta pasan a ACTIVE (ahi si llegan a la barra y suman al total).
+orderRoutes.post('/orders/:id/send', soloAdmin, async (req, res) => {
+  const order = await prisma.order.findFirst({ where: { id: req.params.id, tenantId: req.auth.tenantId } })
+  if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
+  if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
+
+  const { count } = await prisma.orderItem.updateMany({
+    where: { orderId: order.id, tenantId: req.auth.tenantId, status: 'PENDING' },
+    data: { status: 'ACTIVE' },
+  })
+  if (!count) return res.status(400).json({ error: 'Esta mesa no tiene un pre-pedido esperando envio' })
+
+  const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
+  avisarAdmins(req.auth.tenantId, 'pre-pedido:enviado', { orderId: order.id })
+  res.json({ ...updated, total: total(updated) })
 })
 
 // Devolver un producto: necesita el PIN de un encargado (ADMIN o CAJERO) y un
@@ -287,7 +379,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       return res.status(400).json({ error: `Los pagos suman ${sumaPagos} y la cuenta es ${cuenta}` })
     }
     for (const p of payments) {
-      if (!['EFECTIVO', 'TRANSFERENCIA', 'NEQUI', 'CREDITO'].includes(p.method)) {
+      if (!['EFECTIVO', 'TRANSFERENCIA', 'NEQUI', 'DATAFONO', 'CREDITO'].includes(p.method)) {
         return res.status(400).json({ error: 'Medio de pago no valido' })
       }
       if (p.method === 'EFECTIVO' && p.tendered !== undefined && Number(p.tendered) < Number(p.amount)) {
@@ -334,6 +426,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
               data: {
                 tenantId: req.auth.tenantId,
                 customerId: order.customer.id,
+                orderId: order.id,
                 amount: montoCredito,
                 description: `Fiado - mesa ${order.table.number}`,
                 createdById: req.auth.userId,

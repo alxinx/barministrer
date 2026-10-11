@@ -1,13 +1,22 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from './Icons'
 import { useAuth } from '../context/AuthContext'
 
 const nav = [
-  { to: '/venta', label: 'Nueva venta', icon: Icon.cart, roles: ['ADMIN', 'CAJERO', 'MESERO'] },
+  { to: '/venta', label: 'POS y pedidos', icon: Icon.cart, roles: ['ADMIN', 'CAJERO', 'MESERO'] },
   { to: '/caja', label: 'Caja', icon: Icon.cash, roles: ['ADMIN', 'CAJERO'] },
   { to: '/clientes', label: 'Clientes', icon: Icon.users, roles: ['ADMIN', 'CAJERO'] },
   { to: '/distribucion', label: 'Distribución', icon: Icon.tables, roles: ['ADMIN'] },
-  { to: '/productos', label: 'Productos', icon: Icon.box, roles: ['ADMIN'] },
+  {
+    label: 'Productos',
+    icon: Icon.box,
+    roles: ['ADMIN'],
+    children: [
+      { to: '/productos', label: 'Ver productos' },
+      { to: '/productos/inventario', label: 'Agregar inventario' },
+    ],
+  },
   { to: '/reportes', label: 'Reportes', icon: Icon.chart, roles: ['ADMIN'] },
   { to: '/configuracion', label: 'Configuración', icon: Icon.gear, roles: ['ADMIN'] },
 ]
@@ -15,6 +24,7 @@ const nav = [
 export default function Shell({ children }) {
   const { session, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const role = session?.user.role
 
   function salir() {
@@ -40,22 +50,24 @@ export default function Shell({ children }) {
         <nav className="px-3 flex-1 space-y-1">
           {nav
             .filter((item) => item.roles.includes(role))
-            .map(({ to, label, icon: I }) => (
-              <NavLink
-                key={to}
-                to={to}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-amber text-night'
-                      : 'text-muted hover:text-ink hover:bg-raised'
-                  }`
-                }
-              >
-                <I />
-                {label}
-              </NavLink>
-            ))}
+            .map((item) =>
+              item.children ? (
+                <NavGroup key={item.label} item={item} active={item.children.some((c) => location.pathname === c.to)} />
+              ) : (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
+                      isActive ? 'bg-amber text-night' : 'text-muted hover:text-ink hover:bg-raised'
+                    }`
+                  }
+                >
+                  <item.icon />
+                  {item.label}
+                </NavLink>
+              )
+            )}
         </nav>
 
         <div className="p-3 border-t border-edge">
@@ -79,6 +91,45 @@ export default function Shell({ children }) {
       </aside>
 
       <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
+    </div>
+  )
+}
+
+function NavGroup({ item, active }) {
+  const [open, setOpen] = useState(active)
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`w-full flex items-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
+          active && !open ? 'text-amber' : 'text-muted hover:text-ink hover:bg-raised'
+        }`}
+      >
+        <item.icon />
+        <span className="flex-1 text-left">{item.label}</span>
+        <Icon.chevronDown width={15} height={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="pl-[22px] mt-1 space-y-1 border-l border-edge ml-5">
+          {item.children.map((c) => (
+            <NavLink
+              key={c.to}
+              to={c.to}
+              end
+              className={({ isActive }) =>
+                `block h-9 px-3 rounded-lg text-sm leading-9 transition-colors ${
+                  isActive ? 'bg-amber text-night font-medium' : 'text-muted hover:text-ink hover:bg-raised'
+                }`
+              }
+            >
+              {c.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

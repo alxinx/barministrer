@@ -150,6 +150,64 @@ export const Icon = {
       <rect x="6" y="14" width="12" height="7" />
     </svg>
   ),
+  phone: (p) => (
+    <svg {...base} {...p}>
+      <rect x="7" y="2" width="10" height="20" rx="2" />
+      <path d="M11 18h2" />
+    </svg>
+  ),
+  bank: (p) => (
+    <svg {...base} {...p}>
+      <path d="M4 10h16M5 10l7-6 7 6M5 10v9M19 10v9M9 10v9M15 10v9M3 21h18" />
+    </svg>
+  ),
+  card: (p) => (
+    <svg {...base} {...p}>
+      <rect x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M3 10h18M6 15h5" />
+    </svg>
+  ),
+  alert: (p) => (
+    <svg {...base} {...p}>
+      <path d="M12 3L2 20h20L12 3z" />
+      <path d="M12 10v4M12 17h.01" />
+    </svg>
+  ),
+  chevronLeft: (p) => (
+    <svg {...base} {...p}>
+      <path d="M15 5l-7 7 7 7" />
+    </svg>
+  ),
+  chevronDown: (p) => (
+    <svg {...base} {...p}>
+      <path d="M5 9l7 7 7-7" />
+    </svg>
+  ),
+  truck: (p) => (
+    <svg {...base} {...p}>
+      <path d="M3 7h11v9H3zM14 11h4l3 3v2h-7z" />
+      <circle cx="7" cy="18.5" r="1.6" />
+      <circle cx="17" cy="18.5" r="1.6" />
+    </svg>
+  ),
+  gift: (p) => (
+    <svg {...base} {...p}>
+      <rect x="4" y="9" width="16" height="11" rx="1" />
+      <path d="M4 13h16M12 9v11M12 9c-1.5-3-4-4-5-2.5S8.5 9 12 9zM12 9c1.5-3 4-4 5-2.5S15.5 9 12 9z" />
+    </svg>
+  ),
+  receipt: (p) => (
+    <svg {...base} {...p}>
+      <path d="M6 2h12v19l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5z" />
+      <path d="M9 7h6M9 11h6M9 15h3" />
+    </svg>
+  ),
+  bell: (p) => (
+    <svg {...base} {...p}>
+      <path d="M6 9a6 6 0 1 1 12 0c0 3.2 1 5 2 6.5H4c1-1.5 2-3.3 2-6.5z" />
+      <path d="M10 19a2 2 0 0 0 4 0" />
+    </svg>
+  ),
 }
 
 export const zoneIcon = { table: Icon.tables, sun: Icon.sun, crown: Icon.crown, glass: Icon.glass }

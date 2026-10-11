@@ -292,3 +292,22 @@ catalogRoutes.patch('/variants/:id', adminOnly, async (req, res) => {
   })
   res.json(updated)
 })
+
+// Borra la presentacion de verdad. Si es ingrediente de algun shot se
+// rechaza: borrarla igual dejaria la receta apuntando a nada (SET NULL en la
+// base), sellando un shot roto en silencio. El historial de inventario de la
+// presentacion (StockMovement) sí se pierde: es la cuenta de borrar de verdad.
+catalogRoutes.delete('/variants/:id', adminOnly, async (req, res) => {
+  const variant = await prisma.variant.findFirst({
+    where: { id: req.params.id, product: { tenantId: req.auth.tenantId } },
+  })
+  if (!variant) return res.status(404).json({ error: 'Presentacion no encontrada' })
+
+  const enReceta = await prisma.recipeItem.findFirst({ where: { variantId: variant.id } })
+  if (enReceta) {
+    return res.status(400).json({ error: 'Esta presentacion es ingrediente de un shot. Quitala de esa receta antes de borrarla.' })
+  }
+
+  await prisma.variant.delete({ where: { id: variant.id } })
+  res.status(204).end()
+})

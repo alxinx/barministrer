@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import { api, money } from '../lib/api'
+import { api } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import MoneyInput from './MoneyInput'
 import { Icon } from './Icons'
 
 /**
- * Crea o edita un cliente. Habilitar credito (y su tope) es una decision de
- * confianza del dueno: solo ADMIN puede tocarlo, igual que allowsPour en
- * categorias. El historial de cargos/pagos solo existe editando uno que ya
- * existe, porque no hay nada que mostrar antes de crearlo.
+ * Crea o edita los datos basicos de un cliente (identidad, contacto y el
+ * interruptor de credito). El saldo, el historial de cargos/pagos y la
+ * grafica de consumo viven en la pagina dedicada del cliente, no aqui:
+ * este modal es solo para entrar o corregir datos, de paso o desde esa
+ * pagina. Habilitar credito (y su tope) es una decision de confianza del
+ * dueno: solo ADMIN puede tocarlo, igual que allowsPour en categorias.
  */
 export default function ClienteForm({ customer, onClose, onSaved }) {
   const { session } = useAuth()
@@ -25,10 +27,6 @@ export default function ClienteForm({ customer, onClose, onSaved }) {
   const [creditLimit, setCreditLimit] = useState(customer?.creditLimit || '')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-
-  const [charges, setCharges] = useState(customer?.charges || [])
-  const [payments, setPayments] = useState(customer?.payments || [])
-  const balance = charges.reduce((s, c) => s + Number(c.amount), 0) - payments.reduce((s, p) => s + Number(p.amount), 0)
 
   async function submit(e) {
     e.preventDefault()
@@ -47,36 +45,16 @@ export default function ClienteForm({ customer, onClose, onSaved }) {
 
     setSaving(true)
     try {
-      if (isEdit) await api(`/customers/${customer.id}`, { method: 'PATCH', body })
-      else await api('/customers', { method: 'POST', body })
-      onSaved()
+      const saved = isEdit
+        ? await api(`/customers/${customer.id}`, { method: 'PATCH', body })
+        : await api('/customers', { method: 'POST', body })
+      onSaved(saved)
     } catch (err) {
       setError(err.message)
     } finally {
       setSaving(false)
     }
   }
-
-  async function agregarCargo({ amount, description }) {
-    const cargo = await api(`/customers/${customer.id}/charges`, {
-      method: 'POST',
-      body: { amount, description },
-    })
-    setCharges((prev) => [cargo, ...prev])
-  }
-
-  async function agregarPago({ amount, note }) {
-    const pago = await api(`/customers/${customer.id}/payments`, {
-      method: 'POST',
-      body: { amount, note },
-    })
-    setPayments((prev) => [pago, ...prev])
-  }
-
-  const historial = [
-    ...charges.map((c) => ({ ...c, tipo: 'cargo' })),
-    ...payments.map((p) => ({ ...p, tipo: 'pago' })),
-  ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
@@ -96,27 +74,6 @@ export default function ClienteForm({ customer, onClose, onSaved }) {
           <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
             {error}
           </p>
-        )}
-
-        {isEdit && (
-          <div
-            className={`flex items-center justify-between rounded-xl px-3 py-2.5 border ${
-              balance > 0
-                ? 'border-ocupada/30 bg-ocupada/10'
-                : balance < 0
-                  ? 'border-reservada/30 bg-reservada/10'
-                  : 'border-libre/30 bg-libre/10'
-            }`}
-          >
-            <span className="text-sm font-medium">Saldo</span>
-            <span
-              className={`text-sm font-bold ${
-                balance > 0 ? 'text-ocupada' : balance < 0 ? 'text-reservada' : 'text-libre'
-              }`}
-            >
-              {balance === 0 ? 'Al día' : balance > 0 ? `Debe ${money(balance)}` : `A favor ${money(-balance)}`}
-            </span>
-          </div>
         )}
 
         <div className="grid grid-cols-2 gap-3">
@@ -197,46 +154,6 @@ export default function ClienteForm({ customer, onClose, onSaved }) {
           )}
         </div>
 
-        {isEdit && creditEnabled && (
-          <CargoForm onAgregar={agregarCargo} />
-        )}
-        {isEdit && <PagoForm onAgregar={agregarPago} />}
-
-        {isEdit && (
-          <div className="space-y-2">
-            <h3 className="label mb-0">Historial</h3>
-            {historial.length === 0 ? (
-              <p className="text-sm text-muted">Todavía no hay consumos ni pagos registrados.</p>
-            ) : (
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {historial.map((h) => (
-                  <div
-                    key={h.id}
-                    className="flex items-center justify-between bg-raised border border-edge rounded-xl px-3 py-2.5"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {h.tipo === 'cargo' ? h.description : h.note || 'Abono'}
-                      </p>
-                      <p className="text-xs text-muted">
-                        {h.createdBy?.name} · {formatFecha(h.createdAt)}
-                      </p>
-                    </div>
-                    <span
-                      className={`text-sm font-semibold shrink-0 ml-2 ${
-                        h.tipo === 'cargo' ? 'text-ocupada' : 'text-libre'
-                      }`}
-                    >
-                      {h.tipo === 'cargo' ? '+' : '-'}
-                      {money(h.amount)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         <div className="flex gap-3 pt-2">
           <button type="button" onClick={onClose} className="btn-ghost flex-1">
             Cancelar
@@ -250,99 +167,3 @@ export default function ClienteForm({ customer, onClose, onSaved }) {
   )
 }
 
-function CargoForm({ onAgregar }) {
-  const [amount, setAmount] = useState('')
-  const [description, setDescription] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function agregar() {
-    if (!amount || !description.trim()) return
-    setSaving(true)
-    setError('')
-    try {
-      await onAgregar({ amount: Number(amount), description: description.trim() })
-      setAmount('')
-      setDescription('')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-2">
-      <label className="label">Registrar consumo fiado</label>
-      {error && <p className="text-xs text-ocupada">{error}</p>}
-      <div className="flex flex-wrap gap-2 items-end bg-raised border border-edge rounded-xl p-3">
-        <div className="flex-1 min-w-[160px]">
-          <input
-            className="field h-10"
-            placeholder="Qué consumió (ej: 2 cervezas)"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </div>
-        <div className="w-32">
-          <MoneyInput className="field h-10" placeholder="Monto" value={amount} onChange={setAmount} />
-        </div>
-        <button type="button" onClick={agregar} disabled={saving} className="btn-ghost h-10">
-          <Icon.plus width={16} height={16} />
-          Agregar
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function PagoForm({ onAgregar }) {
-  const [amount, setAmount] = useState('')
-  const [note, setNote] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function agregar() {
-    if (!amount) return
-    setSaving(true)
-    setError('')
-    try {
-      await onAgregar({ amount: Number(amount), note: note.trim() })
-      setAmount('')
-      setNote('')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-2">
-      <label className="label">Registrar pago / abono</label>
-      {error && <p className="text-xs text-ocupada">{error}</p>}
-      <div className="flex flex-wrap gap-2 items-end bg-raised border border-edge rounded-xl p-3">
-        <div className="flex-1 min-w-[160px]">
-          <input
-            className="field h-10"
-            placeholder="Nota (opcional)"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-        </div>
-        <div className="w-32">
-          <MoneyInput className="field h-10" placeholder="Monto" value={amount} onChange={setAmount} />
-        </div>
-        <button type="button" onClick={agregar} disabled={saving} className="btn-ghost h-10">
-          <Icon.plus width={16} height={16} />
-          Agregar
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function formatFecha(iso) {
-  if (!iso) return ''
-  return new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })
-}

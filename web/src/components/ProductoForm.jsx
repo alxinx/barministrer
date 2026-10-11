@@ -11,11 +11,11 @@ import MoneyInput from './MoneyInput'
  *   concreta. Solo existe si la categoria tiene allowsPour, porque ahi vive
  *   el permiso de vender por ml, no en el producto.
  */
-export default function ProductoForm({ categories, products, product, onClose, onSaved }) {
+export default function ProductoForm({ categories, products, product, initialName, onClose, onSaved }) {
   const isEdit = Boolean(product)
   const [kind, setKind] = useState(product?.kind || 'STOCK')
   const [categoryId, setCategoryId] = useState(product?.categoryId || '')
-  const [name, setName] = useState(product?.name || '')
+  const [name, setName] = useState(product?.name || initialName || '')
   const [variants, setVariants] = useState(
     product?.variants?.length
       ? product.variants.map((v) => ({
@@ -82,9 +82,18 @@ export default function ProductoForm({ categories, products, product, onClose, o
 
     setSaving(true)
     try {
+      let saved
       if (isEdit) {
-        await api(`/products/${product.id}`, { method: 'PATCH', body })
+        saved = await api(`/products/${product.id}`, { method: 'PATCH', body })
         if (kind !== 'PREPARED') {
+          // Quitar una presentacion con el basurero es local hasta aqui: lo
+          // que ya existia en el producto y ya no esta en la lista actual se
+          // borra de verdad al guardar.
+          const idsActuales = new Set(variants.map((v) => v.id).filter(Boolean))
+          const eliminadas = (product.variants || []).filter((v) => !idsActuales.has(v.id))
+          for (const v of eliminadas) {
+            await api(`/variants/${v.id}`, { method: 'DELETE' })
+          }
           for (const v of variants.filter((v) => v.name.trim())) {
             const payload = {
               name: v.name.trim(),
@@ -108,9 +117,9 @@ export default function ProductoForm({ categories, products, product, onClose, o
               stock: Number(v.stock) || 0,
             }))
         }
-        await api('/products', { method: 'POST', body })
+        saved = await api('/products', { method: 'POST', body })
       }
-      onSaved()
+      onSaved(saved)
     } catch (err) {
       setError(err.message)
     } finally {

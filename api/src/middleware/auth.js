@@ -10,6 +10,13 @@ export function signToken(user) {
   )
 }
 
+// Mismo verify que requireAuth, para autenticar la conexion de websocket con
+// el mismo token de sesion en vez de inventar un segundo mecanismo de login.
+export function verifyToken(token) {
+  const payload = jwt.verify(token, SECRET)
+  return { userId: payload.sub, tenantId: payload.tenantId, role: payload.role, name: payload.name }
+}
+
 /**
  * Inyecta req.auth = { userId, tenantId, role }.
  * El tenantId SIEMPRE sale del token, nunca del body ni del query. Esa es la

@@ -41,7 +41,13 @@ customerRoutes.get('/customers/:id', puedeGestionar, async (req, res) => {
   const customer = await prisma.customer.findFirst({
     where: { id: req.params.id, tenantId: req.auth.tenantId },
     include: {
-      charges: { include: { createdBy: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' } },
+      charges: {
+        include: {
+          createdBy: { select: { id: true, name: true } },
+          order: { select: { id: true, closedAt: true, table: { select: { number: true } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
       payments: { include: { createdBy: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' } },
     },
   })

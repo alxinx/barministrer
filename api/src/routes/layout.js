@@ -148,6 +148,27 @@ layoutRoutes.patch('/tables/:id', async (req, res) => {
     return res.status(403).json({ error: 'Solo el administrador puede mover o editar mesas' })
   }
 
+  // Marcar disponible o cerrada dice que ahi no hay nadie. Si por debajo quedo
+  // una cuenta abierta vacia (el caso tipico: se abrio solo para asociar un
+  // cliente y al final no se asocio nada), se descarta sola porque nunca hubo
+  // nada que auditar. Si de verdad tiene productos o cliente, se rechaza el
+  // cambio para no perder el rastro de una cuenta real: hay que liquidarla.
+  if ((status === 'AVAILABLE' || status === 'CLOSED') && table.status !== status) {
+    const abierta = await prisma.order.findFirst({
+      where: { tableId: table.id, tenantId: req.auth.tenantId, status: 'OPEN' },
+      include: { items: true },
+    })
+    if (abierta) {
+      const vacia = !abierta.customerId && abierta.items.every((i) => i.status !== 'ACTIVE')
+      if (!vacia) {
+        return res.status(400).json({
+          error: 'Esta mesa tiene una cuenta abierta con productos o cliente. Liquídala antes de cambiarle el estado.',
+        })
+      }
+      await prisma.order.delete({ where: { id: abierta.id } })
+    }
+  }
+
   const updated = await prisma.barTable.update({
     where: { id: table.id },
     data: {

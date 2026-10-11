@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, money } from '../lib/api'
+import { getSocket } from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
 import FloorPlan from '../components/FloorPlan'
 import MoneyInput from '../components/MoneyInput'
@@ -43,6 +44,17 @@ export default function NuevaVenta() {
   const [trasladando, setTrasladando] = useState(null) // {order, fromTableId} en traslado
   const [historial, setHistorial] = useState(null) // mesa cuyo historial se esta viendo
   const [recibo, setRecibo] = useState(null) // {order, splitCount} de la ultima cuenta cerrada, para la tirilla
+  const [prePedidos, setPrePedidos] = useState([]) // cola de pre-pedidos esperando que el admin los envie
+  const [enviandoPrePedido, setEnviandoPrePedido] = useState(false)
+  const [ahora, setAhora] = useState(() => Date.now()) // tick para refrescar "hace Xm" sin recargar nada
+
+  // abrirVincular crea la cuenta antes de saber si el usuario de verdad va a
+  // asociar un cliente; si en ese tiempo ya cambio de mesa, esta referencia es
+  // lo que permite notar que la mesa activa ya no es la misma.
+  const tableRef = useRef(null)
+  useEffect(() => {
+    tableRef.current = table
+  }, [table])
 
   useEffect(() => {
     api('/zones').then((z) => {
@@ -52,6 +64,43 @@ export default function NuevaVenta() {
     api('/products').then(setProducts)
     api('/shifts/current').then(setShift)
   }, [])
+
+  const esAdmin = session?.user.role === 'ADMIN'
+
+  // Solo el admin ve la cola de pre-pedidos: trae lo que ya estaba esperando
+  // al entrar (el socket solo avisa de lo que pasa despues de conectarse) y
+  // se suscribe a lo que llegue o se resuelva en vivo.
+  useEffect(() => {
+    if (!esAdmin) return
+    api('/orders/pending').then(setPrePedidos).catch(() => {})
+
+    const socket = getSocket()
+    function onNuevo(p) {
+      setPrePedidos((prev) => {
+        const existente = prev.find((x) => x.orderId === p.orderId)
+        if (!existente) return [...prev, p]
+        // Otra ronda sobre la misma cuenta: se junta con la que ya esperaba.
+        const meseras = [...new Set([...existente.meseras, ...p.meseras])]
+        return prev.map((x) => (x.orderId === p.orderId ? { ...x, meseras } : x))
+      })
+    }
+    function onEnviado({ orderId }) {
+      setPrePedidos((prev) => prev.filter((p) => p.orderId !== orderId))
+    }
+    socket.on('pre-pedido:nuevo', onNuevo)
+    socket.on('pre-pedido:enviado', onEnviado)
+    return () => {
+      socket.off('pre-pedido:nuevo', onNuevo)
+      socket.off('pre-pedido:enviado', onEnviado)
+    }
+  }, [esAdmin])
+
+  // Refresca el "hace Xm" de la cola sin depender de que llegue otro evento.
+  useEffect(() => {
+    if (!esAdmin || prePedidos.length === 0) return
+    const id = setInterval(() => setAhora(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [esAdmin, prePedidos.length])
 
   // Cambiar de mesa o de zona es cambiar de contexto: la busqueda de la mesa
   // anterior no tiene por que seguir filtrando la de esta.
@@ -108,6 +157,14 @@ export default function NuevaVenta() {
 
   const total = lines.reduce((sum, l) => sum + Number(l.price) * l.qty, 0)
   const itemsActivos = order?.items?.filter((i) => i.status === 'ACTIVE') || []
+  const itemsPendientes = order?.items?.filter((i) => i.status === 'PENDING') || []
+  const itemsEnviados = order?.items?.filter((i) => i.status !== 'PENDING') || []
+
+  const pendingTableIds = useMemo(() => new Set(prePedidos.map((p) => p.tableId)), [prePedidos])
+  const elapsedByTable = useMemo(
+    () => Object.fromEntries(prePedidos.map((p) => [p.tableId, `hace ${minutosDesde(p.since, ahora)}m`])),
+    [prePedidos, ahora]
+  )
 
   async function recargarZonas() {
     setZones(await api('/zones'))
@@ -201,6 +258,22 @@ export default function NuevaVenta() {
     }
   }
 
+  // El admin aprueba el pre-pedido que dejo la mesera: recien ahi los items
+  // pasan a activos, suman al total y quedan listos para la barra.
+  async function enviarPrePedido() {
+    setEnviandoPrePedido(true)
+    setError('')
+    try {
+      const actualizada = await api(`/orders/${order.id}/send`, { method: 'POST' })
+      setOrder(actualizada)
+      recargarZonas()
+    } catch (err) {
+      show(err)
+    } finally {
+      setEnviandoPrePedido(false)
+    }
+  }
+
   function manejarDevuelto() {
     setDevolviendo(null)
     api(`/orders/${order.id}`).then(setOrder)
@@ -220,11 +293,15 @@ export default function NuevaVenta() {
   // de pedir algo.
   async function abrirVincular() {
     if (!table || mesaCerrada) return
+    const tableIdAlAbrir = table.id
     if (!order) {
       try {
         const nueva = await api('/orders', { method: 'POST', body: { tableId: table.id } })
-        setOrder(nueva)
         recargarZonas()
+        // Si mientras se creaba la cuenta el usuario ya selecciono otra mesa,
+        // no le metemos encima el estado ni el modal de la mesa anterior.
+        if (tableRef.current?.id !== tableIdAlAbrir) return
+        setOrder(nueva)
       } catch (err) {
         return show(err)
       }
@@ -235,6 +312,15 @@ export default function NuevaVenta() {
   function manejarVinculado(actualizada) {
     setOrder(actualizada)
     setVinculando(false)
+  }
+
+  // Saltar desde la cola de pre-pedidos directo a la mesa que lo mando,
+  // aunque este en otra zona.
+  function irAMesa(p) {
+    setActiveZone(p.zoneId)
+    const z = zones.find((zz) => zz.id === p.zoneId)
+    const t = z?.tables.find((tt) => tt.id === p.tableId)
+    if (t) setTable(t)
   }
 
   // Clic derecho sobre una mesa: acciones rapidas sin tener que entrar primero
@@ -332,7 +418,7 @@ export default function NuevaVenta() {
   return (
     <div className="p-5 md:p-7 max-w-[1500px] mx-auto">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold">Nueva venta</h1>
+        <h1 className="text-2xl font-bold">POS y pedidos</h1>
       </header>
 
       {error && (
@@ -390,6 +476,8 @@ export default function NuevaVenta() {
             selectedId={table?.id}
             onSelect={(_kind, item) => setTable(item)}
             onContextMenu={(t, e) => setMenu({ table: t, x: e.clientX, y: e.clientY })}
+            pendingIds={esAdmin ? pendingTableIds : undefined}
+            elapsedByTable={esAdmin ? elapsedByTable : undefined}
           />
 
           <div className="flex gap-4 flex-wrap mt-4 text-xs text-muted">
@@ -403,6 +491,33 @@ export default function NuevaVenta() {
         </section>
 
         <aside className="space-y-4">
+          {esAdmin && prePedidos.length > 0 && (
+            <section className="card p-4 space-y-2.5 border-amber/40">
+              <h2 className="font-semibold flex items-center gap-2">
+                <Icon.bell width={18} height={18} className="text-amber" />
+                Pre-pedidos esperando envío
+              </h2>
+              {prePedidos.map((p) => (
+                <button
+                  key={p.orderId}
+                  type="button"
+                  onClick={() => irAMesa(p)}
+                  className="w-full flex items-center gap-3 bg-amber/10 border border-amber/40 rounded-xl px-3 py-2.5 text-left hover:border-amber transition-colors"
+                >
+                  <span className="w-10 h-10 rounded-xl bg-night border border-amber/40 grid place-items-center text-amber font-bold shrink-0">
+                    {p.tableNumber}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">
+                      {p.zoneName} · {p.meseras.join(', ') || 'Sin registrar'}
+                    </p>
+                    <p className="text-xs text-amber/80">hace {minutosDesde(p.since, ahora)}m</p>
+                  </div>
+                </button>
+              ))}
+            </section>
+          )}
+
           <div className="card p-4 select-none" onDoubleClick={abrirVincular}>
             {table ? (
               <div className="flex items-baseline gap-3">
@@ -478,9 +593,43 @@ export default function NuevaVenta() {
               </p>
             )}
 
-            {order?.items.length > 0 && (
+            {itemsPendientes.length > 0 && (
+              <div className="space-y-2.5 mb-4 bg-amber/10 border border-amber/40 rounded-xl p-3">
+                <p className="text-xs font-semibold text-amber flex items-center gap-1.5">
+                  <Icon.bell width={14} height={14} />
+                  Pre-pedido de {[...new Set(itemsPendientes.map((i) => i.createdBy?.name).filter(Boolean))].join(', ') || 'la mesera'}
+                </p>
+                {itemsPendientes.map((it) => (
+                  <div key={it.id} className="flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">
+                        {it.name}
+                        {it.variantName ? ` · ${it.variantName}` : ''}
+                        {it.qty > 1 ? ` ×${it.qty}` : ''}
+                      </p>
+                      <p className="text-xs text-muted">
+                        {formatHora(it.orderedAt)} · {money(it.price)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                {esAdmin ? (
+                  <button
+                    onClick={enviarPrePedido}
+                    disabled={enviandoPrePedido}
+                    className="btn-primary w-full mt-1"
+                  >
+                    {enviandoPrePedido ? 'Enviando…' : 'Enviar pre-pedido a la barra'}
+                  </button>
+                ) : (
+                  <p className="text-xs text-amber/80">Esperando que el administrador lo envíe a la barra.</p>
+                )}
+              </div>
+            )}
+
+            {itemsEnviados.length > 0 && (
               <div className="space-y-2.5 mb-4">
-                {order.items.map((it) => (
+                {itemsEnviados.map((it) => (
                   <div key={it.id} className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <p className={`text-sm font-medium truncate ${it.status === 'VOIDED' ? 'line-through text-muted' : ''}`}>
@@ -562,7 +711,7 @@ export default function NuevaVenta() {
                 disabled={!table || !turnoAbierto || enviando}
                 title={!turnoAbierto ? 'No hay un turno abierto' : undefined}
               >
-                {enviando ? 'Enviando…' : 'Enviar pedido a la barra'}
+                {enviando ? 'Enviando…' : esAdmin ? 'Enviar pedido a la barra' : 'Enviar pre-pedido'}
               </button>
             )}
 
@@ -669,6 +818,10 @@ export default function NuevaVenta() {
 function formatHora(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+}
+
+function minutosDesde(iso, ahora) {
+  return Math.max(0, Math.round((ahora - new Date(iso).getTime()) / 60000))
 }
 
 function SinTurnoOverlay({ puedeAbrirTurno, onDismiss, onAbrir }) {

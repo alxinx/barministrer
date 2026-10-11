@@ -47,6 +47,7 @@ export default function FloorPlan({
   onGestureEnd,
   onContextMenu,
   elapsedByTable = {},
+  pendingIds,
 }) {
   const boardRef = useRef(null)
   const [dragging, setDragging] = useState(null)
@@ -229,6 +230,7 @@ export default function FloorPlan({
 
       {zone.tables?.map((t) => {
         const elapsed = elapsedByTable[t.id]
+        const pendiente = pendingIds?.has(t.id)
         return (
           <button
             key={t.id}
@@ -247,8 +249,11 @@ export default function FloorPlan({
               ${selectedId === t.id ? 'border-amber bg-amber/10' : statusRing[t.status]}
               ${editable ? 'cursor-grab active:cursor-grabbing' : 'hover:border-amber'}`}
           >
+            {pendiente && (
+              <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-amber border-2 border-night animate-pulse" />
+            )}
             <span className={`w-2 h-2 rounded-full justify-self-center ${statusDot[t.status]}`} />
-            <span className="text-mesa">{t.number}</span>
+            <span className={`text-mesa ${pendiente ? 'text-amber' : ''}`}>{t.number}</span>
             <span className="text-[11px] text-muted">{t.seats} pers.</span>
             {elapsed && (
               <span className="text-[11px] font-semibold text-reservada">{elapsed}</span>

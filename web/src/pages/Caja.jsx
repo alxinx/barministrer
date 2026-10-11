@@ -1,22 +1,24 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api, money } from '../lib/api'
+import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
-
-const METHODS = [
-  { key: 'EFECTIVO', label: 'Efectivo' },
-  { key: 'NEQUI', label: 'Nequi' },
-  { key: 'DAVIPLATA', label: 'Daviplata' },
-  { key: 'DATAFONO', label: 'Datáfono' },
-]
-const METHOD_LABEL = Object.fromEntries(METHODS.map((m) => [m.key, m.label]))
+import ReciboModal from '../components/ReciboModal'
+import FacturasDelDia from '../components/FacturasDelDia'
+import ResumenVentas from '../components/ResumenVentas'
+import CuadreResumen from '../components/CuadreResumen'
+import { METHODS } from '../lib/paymentMethods'
 
 export default function Caja() {
+  const { session } = useAuth()
   const [shift, setShift] = useState(undefined) // undefined = cargando, null = sin turno abierto
   const [history, setHistory] = useState([])
+  const [tab, setTab] = useState('activo')
   const [error, setError] = useState('')
   const [closing, setClosing] = useState(false)
   const [closedResult, setClosedResult] = useState(null)
+  const [factura, setFactura] = useState(null) // pedido completo que se esta viendo, o null
 
   useEffect(() => {
     load()
@@ -63,6 +65,15 @@ export default function Caja() {
     }
   }
 
+  async function verFactura(id) {
+    try {
+      const order = await api(`/orders/${id}`)
+      setFactura(order)
+    } catch (err) {
+      show(err)
+    }
+  }
+
   if (shift === undefined) {
     return <div className="p-7 text-muted text-sm">Cargando…</div>
   }
@@ -85,16 +96,58 @@ export default function Caja() {
 
       {closedResult && <ResumenCierre resultado={closedResult} onCerrar={() => setClosedResult(null)} />}
 
-      {!closedResult && !shift && <AbrirTurno onAbrir={abrirTurno} />}
+      {!closedResult && (
+        <>
+          <div className="flex gap-2">
+            <TabButton active={tab === 'activo'} onClick={() => setTab('activo')}>
+              Turno actual
+            </TabButton>
+            <TabButton active={tab === 'historial'} onClick={() => setTab('historial')}>
+              Turnos anteriores{history.length > 0 ? ` (${history.length})` : ''}
+            </TabButton>
+          </div>
 
-      {!closedResult && shift && (
-        <TurnoActivo shift={shift} onAgregarEgreso={agregarEgreso} onPedirCierre={() => setClosing(true)} />
+          {tab === 'activo' && !shift && <AbrirTurno onAbrir={abrirTurno} />}
+
+          {tab === 'activo' && shift && (
+            <TurnoActivo
+              shift={shift}
+              onAgregarEgreso={agregarEgreso}
+              onPedirCierre={() => setClosing(true)}
+              onVerFactura={verFactura}
+            />
+          )}
+
+          {tab === 'historial' && <Historial turnos={history} />}
+        </>
       )}
 
       {closing && <CuadreModal onCancel={() => setClosing(false)} onConfirm={cerrarTurno} />}
 
-      {history.length > 0 && <Historial turnos={history} />}
+      {factura && (
+        <ReciboModal
+          order={factura}
+          splitCount={1}
+          tenantName={session?.tenant?.name}
+          autoPrint={false}
+          onClose={() => setFactura(null)}
+        />
+      )}
     </div>
+  )
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-10 px-4 rounded-xl text-sm font-semibold border transition-colors ${
+        active ? 'bg-amber text-night border-amber' : 'bg-surface text-muted border-edge hover:text-ink'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -121,9 +174,11 @@ function AbrirTurno({ onAbrir }) {
   )
 }
 
-function TurnoActivo({ shift, onAgregarEgreso, onPedirCierre }) {
+function TurnoActivo({ shift, onAgregarEgreso, onPedirCierre, onVerFactura }) {
   const egresos = shift.expenses || []
   const totalEgresos = egresos.reduce((s, e) => s + Number(e.amount), 0)
+  const sales = shift.sales || { byMethod: {}, fiado: 0, totalVentas: 0, tickets: 0, cortesias: 0 }
+  const efectivoEsperado = Number(shift.baseCash) + (sales.byMethod.EFECTIVO || 0) - totalEgresos
 
   return (
     <>
@@ -142,10 +197,19 @@ function TurnoActivo({ shift, onAgregarEgreso, onPedirCierre }) {
         </p>
       </section>
 
+      <ResumenVentas
+        titulo="Movimiento de hoy"
+        sales={sales}
+        heroLabel="Efectivo esperado en caja"
+        heroValue={efectivoEsperado}
+      />
+
+      {shift.facturas?.length > 0 && <FacturasDelDia facturas={shift.facturas} onVer={onVerFactura} />}
+
       <section className="card p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Egresos</h2>
-          <span className="text-sm text-muted">{money(totalEgresos)}</span>
+          <h2 className="font-semibold">Egresos y retiros</h2>
+          <span className="text-sm font-semibold text-ocupada">-{money(totalEgresos)}</span>
         </div>
 
         <EgresoForm onAgregar={onAgregarEgreso} />
@@ -153,19 +217,19 @@ function TurnoActivo({ shift, onAgregarEgreso, onPedirCierre }) {
         {egresos.length === 0 ? (
           <p className="text-sm text-muted">Todavía no hay egresos en este turno.</p>
         ) : (
-          <div className="space-y-2">
+          <div>
             {egresos.map((e) => (
               <div
                 key={e.id}
-                className="flex items-center justify-between bg-raised border border-edge rounded-xl px-3 py-2.5"
+                className="flex items-center justify-between gap-3 py-2.5 border-b border-edge/60 last:border-0"
               >
-                <div>
-                  <p className="text-sm font-medium">{e.reason}</p>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{e.reason}</p>
                   <p className="text-xs text-muted">
                     {e.type === 'RETIRO' ? 'Retiro' : 'Gasto'} · {e.authorizedBy?.name}
                   </p>
                 </div>
-                <span className="text-sm font-semibold text-ocupada">-{money(e.amount)}</span>
+                <span className="text-sm font-semibold text-ocupada shrink-0">-{money(e.amount)}</span>
               </div>
             ))}
           </div>
@@ -234,7 +298,7 @@ function tipoClass(active) {
 }
 
 function CuadreModal({ onCancel, onConfirm }) {
-  const [counts, setCounts] = useState({ EFECTIVO: '', NEQUI: '', DAVIPLATA: '', DATAFONO: '' })
+  const [counts, setCounts] = useState({ EFECTIVO: '', NEQUI: '', TRANSFERENCIA: '', DATAFONO: '' })
   const [saving, setSaving] = useState(false)
   const completo = METHODS.every((m) => counts[m.key] !== '')
 
@@ -290,29 +354,11 @@ function ResumenCierre({ resultado, onCerrar }) {
           Cerró {resultado.closedBy?.name} · {formatFecha(resultado.closedAt)}
         </p>
       </div>
-      <div className="space-y-2">
-        {counts.map((c) => (
-          <div
-            key={c.method}
-            className="flex items-center justify-between bg-raised border border-edge rounded-xl px-3 py-2.5"
-          >
-            <span className="text-sm font-medium">{METHOD_LABEL[c.method]}</span>
-            <div className="text-right">
-              <p className="text-sm">
-                <span className="text-muted">Esperado </span>
-                <span className="font-semibold">{money(c.expected)}</span>
-                <span className="text-muted"> · Contado </span>
-                <span className="font-semibold">{money(c.counted)}</span>
-              </p>
-              <p className={`text-xs font-semibold ${diffColor(c.difference)}`}>
-                {c.difference === 0
-                  ? 'Sin diferencia'
-                  : `${c.difference > 0 ? 'Sobran' : 'Faltan'} ${money(Math.abs(c.difference))}`}
-              </p>
-            </div>
-          </div>
-        ))}
+      <div className="flex items-center justify-between pb-1 border-b border-edge">
+        <span className="text-sm text-muted">Total vendido</span>
+        <span className="text-lg font-bold text-amber">{money(resultado.sales?.totalVentas || 0)}</span>
       </div>
+      <CuadreResumen counts={counts} />
       <button onClick={onCerrar} className="btn-primary w-full">
         Entendido
       </button>
@@ -321,32 +367,45 @@ function ResumenCierre({ resultado, onCerrar }) {
 }
 
 function Historial({ turnos }) {
+  const navigate = useNavigate()
+
   return (
     <section className="card p-5">
       <h2 className="font-semibold mb-3">Turnos anteriores</h2>
-      <div>
-        {turnos.map((t) => {
-          const efectivo = (t.counts || []).find((c) => c.method === 'EFECTIVO')
-          return (
-            <div
-              key={t.id}
-              className="flex items-center justify-between text-sm py-2.5 border-b border-edge/60 last:border-0"
-            >
-              <div>
-                <p className="font-medium">{formatFecha(t.closedAt)}</p>
-                <p className="text-xs text-muted">
-                  {t.openedBy?.name} abrió · {t.closedBy?.name} cerró
-                </p>
-              </div>
-              {efectivo && (
-                <span className={`text-xs font-semibold ${diffColor(efectivo.difference)}`}>
-                  {efectivo.difference === 0 ? 'Cuadrado' : money(efectivo.difference)}
-                </span>
-              )}
-            </div>
-          )
-        })}
-      </div>
+      {turnos.length === 0 ? (
+        <p className="text-sm text-muted">Todavía no hay turnos cerrados.</p>
+      ) : (
+        <div>
+          {turnos.map((t) => {
+            const efectivo = (t.counts || []).find((c) => c.method === 'EFECTIVO')
+
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => navigate(`/caja/turnos/${t.id}`)}
+                className="w-full flex items-center gap-3 py-3 px-2 -mx-2 rounded-xl text-left transition-colors hover:bg-raised border-b border-edge/60 last:border-0"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{formatFecha(t.closedAt)}</p>
+                  <p className="text-xs text-muted truncate">
+                    {t.openedBy?.name} abrió · {t.closedBy?.name} cerró
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-sm font-semibold">{money(t.sales?.totalVentas || 0)}</p>
+                  {efectivo && (
+                    <p className={`text-xs font-semibold ${diffColor(efectivo.difference)}`}>
+                      {efectivo.difference === 0 ? 'Cuadrado' : money(efectivo.difference)}
+                    </p>
+                  )}
+                </div>
+                <Icon.chevronLeft width={16} height={16} className="rotate-180 text-muted shrink-0" />
+              </button>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
