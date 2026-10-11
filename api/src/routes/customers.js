@@ -150,20 +150,33 @@ customerRoutes.post('/customers/:id/charges', puedeGestionar, async (req, res) =
   res.status(201).json(charge)
 })
 
+const METODOS_ABONO = ['EFECTIVO', 'NEQUI', 'TRANSFERENCIA', 'DATAFONO']
+
+// El abono es dinero real entrando a caja, no una venta: por eso necesita un
+// turno abierto donde contarlo (igual que cualquier otro cobro) y un medio de
+// pago, para que el cuadre de ese medio en el cierre lo tenga en cuenta.
 customerRoutes.post('/customers/:id/payments', puedeGestionar, async (req, res) => {
   const customer = await prisma.customer.findFirst({
     where: { id: req.params.id, tenantId: req.auth.tenantId },
   })
   if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' })
 
-  const { amount, note } = req.body || {}
+  const { amount, method, note } = req.body || {}
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'El pago necesita un monto mayor a cero' })
+  if (!METODOS_ABONO.includes(method)) return res.status(400).json({ error: 'Elige el medio de pago del abono' })
+
+  const shift = await prisma.shift.findFirst({ where: { tenantId: req.auth.tenantId, status: 'OPEN' } })
+  if (!shift) {
+    return res.status(400).json({ error: 'No hay un turno de caja abierto. Abre turno antes de registrar el abono.' })
+  }
 
   const payment = await prisma.customerPayment.create({
     data: {
       tenantId: req.auth.tenantId,
       customerId: customer.id,
+      shiftId: shift.id,
       amount,
+      method,
       note: note?.trim() || null,
       createdById: req.auth.userId,
     },

@@ -35,6 +35,7 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
         <div id="receipt-print-root" className="bg-white text-[#111] w-[310px] p-4 font-mono text-xs rounded shadow-xl">
           <div className="text-center space-y-0.5">
             <p className="font-bold text-sm uppercase">{tenantName || 'LicorPlus'}</p>
+            {order.invoiceNumber && <p>Factura #{String(order.invoiceNumber).padStart(4, '0')}</p>}
             <p>Mesa {order.table?.number}</p>
             <p>{new Date(order.closedAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}</p>
           </div>

@@ -107,14 +107,14 @@ usa hielo y el whisky no usa limón.
 - **Flujo del pedido (decisión de Alejo, oct-2026 — invierte la anterior):**
   la mesera registra el pedido y le da enviar, pero queda como **pre-pedido**
   (`OrderItem.status = PENDING`): no suma al total ni llega a la barra. Por
-  WebSocket le llega al admin un aviso en vivo (número de mesa en ámbar en el
-  plano + listado en el panel lateral). El admin entra a esa mesa, ve el
-  pre-pedido ya cargado en "Cuenta de la mesa", y es **el único que puede
-  enviarlo a la barra** (`POST /orders/:id/send`, pasa todo a `ACTIVE`),
-  normalmente cuando la mesera se lo confirma en persona. Solo ADMIN aprueba;
-  CAJERO no. Esto es a propósito el cuello de botella que la regla anterior
+  WebSocket le llega el aviso en vivo a admin **y cajero** (número de mesa en
+  ámbar en el plano + listado en el panel lateral): los dos se enteran de que
+  hay un pre-pedido esperando, y **cualquiera de los dos puede aprobarlo y
+  enviarlo a la barra** (`POST /orders/:id/send`, pasa todo a `ACTIVE`) — la
+  mesera no. Esto es a propósito el cuello de botella que la regla anterior
   evitaba — si en operación real trae problemas (admin ocupado, pedidos
-  atascados), es decisión suya revertirlo, no algo para decidir en el código.
+  atascados), es decisión suya revertirlo,
+  no algo para decidir en el código.
 - Al cobrar, las líneas en *listo* sin entregar se muestran y hay que resolverlas
   (entregar o anular con motivo). Nada queda en el limbo. (Pendiente: todavía
   no hay estados *listo*/*entregado* separados, solo pre-pedido → activo.)
@@ -123,6 +123,14 @@ usa hielo y el whisky no usa limón.
 - **Permisos:** la mesera crea pedidos y agrega productos. No aplica descuentos,
   no borra productos ya enviados, no cambia precios, no cierra caja. Anular
   requiere PIN del encargado y queda con motivo.
+- **Módulo de usuarios** (`/usuarios`, solo ADMIN): crear, editar rol, resetear
+  clave/PIN y desactivar. Gestionar usuarios es configuración, igual que
+  catálogo e inventario — CAJERO no entra aquí. Nunca se borra un usuario de
+  verdad: `createdById`/`voidedById`/`closedBy` en pedidos, turnos y
+  movimientos apuntan a él, y borrarlo rompería ese rastro. Se desactiva
+  (`active=false`), igual que categorías y productos. La API bloquea dejar el
+  tenant sin ningún ADMIN activo (no quedaría quién revierta el cambio). Cada
+  mesero/a tiene pantalla de "mi cuenta": la clave y el PIN los fija el admin.
 - **Cortesías:** el usuario logueado dice quién registró; el PIN del encargado
   autoriza. Para eventos (el artista), se abre una cuenta de cortesía con cupo
   **antes** del evento en vez de aprobar cada cerveza. El PIN no se rota por
@@ -134,6 +142,17 @@ usa hielo y el whisky no usa limón.
   por cobrar, retiros registrados, y **conteo ciego**: el cajero cuenta sin ver lo
   esperado. Turno cerrado queda bloqueado; las correcciones son ajustes con
   autor y motivo.
+- **Abonos a fiado:** un abono es plata real entrando a caja, no una venta
+  nueva. Necesita turno abierto (si no hay, no se deja registrar) y un medio
+  de pago; ese monto se suma a lo esperado de ese medio en el cuadre del
+  cierre, aparte del total vendido. Cada abono genera un comprobante
+  imprimible (tirilla), igual que una venta.
+- **Consecutivo de facturas:** una sola secuencia por bar (`Tenant.lastInvoiceNumber`),
+  nunca se reinicia por turno ni por día. Se asigna solo al **cerrar** la
+  cuenta (antes de eso no es una factura todavía), con un increment atómico
+  dentro de la misma transacción del cierre para que dos cierres a la vez
+  nunca repitan número. Las cuentas cerradas antes de este campo quedan sin
+  número — no se rellena hacia atrás.
 
 ### Precios con horario
 `active_from`/`active_until` **no** sirve para "los martes de 5 a 7": eso es
@@ -198,7 +217,7 @@ Hecho: auth con roles, aislamiento por tenant, catálogo (categorías, productos
 variantes), editor de distribución (zonas, mesas y elementos arrastrables sobre
 cuadrícula), pantalla de venta con plano y pedido, movimientos de inventario,
 turnos y cierre de caja, pre-pedido de la mesera con aprobación del admin por
-WebSocket (ver Operación arriba).
+WebSocket (ver Operación arriba), módulo de usuarios (`/usuarios`).
 
 Falta, en orden: estados *listo*/*entregado* dentro del pedido ya aprobado →
 reglas de precio → recetas y combos en UI → reportes → QR en mesa (fase 2).

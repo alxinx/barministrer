@@ -15,6 +15,9 @@ export default function FacturasDelDia({ facturas, onVer, titulo = 'Facturas de 
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium flex items-center gap-2">
+                {f.invoiceNumber && (
+                  <span className="text-muted font-mono text-xs">{formatFactura(f.invoiceNumber)}</span>
+                )}
                 Mesa {f.tableNumber}
                 {f.isCourtesy && (
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber border border-amber/40 bg-amber/10 rounded-pill px-2 py-0.5 shrink-0">
@@ -23,7 +26,9 @@ export default function FacturasDelDia({ facturas, onVer, titulo = 'Facturas de 
                   </span>
                 )}
               </p>
-              <p className="text-xs text-muted">{formatHora(f.closedAt)}</p>
+              <p className="text-xs text-muted">
+                Abrió {f.openedByName} · {formatHora(f.closedAt)}
+              </p>
             </div>
             <span className="font-semibold shrink-0">{money(f.total)}</span>
             <button
@@ -44,4 +49,8 @@ export default function FacturasDelDia({ facturas, onVer, titulo = 'Facturas de 
 function formatHora(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleString('es-CO', { timeStyle: 'short' })
+}
+
+function formatFactura(n) {
+  return `#${String(n).padStart(4, '0')}`
 }

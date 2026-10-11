@@ -66,12 +66,14 @@ export default function NuevaVenta() {
   }, [])
 
   const esAdmin = session?.user.role === 'ADMIN'
+  const esEncargado = esAdmin || session?.user.role === 'CAJERO'
 
-  // Solo el admin ve la cola de pre-pedidos: trae lo que ya estaba esperando
-  // al entrar (el socket solo avisa de lo que pasa despues de conectarse) y
-  // se suscribe a lo que llegue o se resuelva en vivo.
+  // Admin y cajero ven la cola de pre-pedidos (el cajero se entera pero no
+  // aprueba): trae lo que ya estaba esperando al entrar (el socket solo avisa
+  // de lo que pasa despues de conectarse) y se suscribe a lo que llegue o se
+  // resuelva en vivo.
   useEffect(() => {
-    if (!esAdmin) return
+    if (!esEncargado) return
     api('/orders/pending').then(setPrePedidos).catch(() => {})
 
     const socket = getSocket()
@@ -93,14 +95,14 @@ export default function NuevaVenta() {
       socket.off('pre-pedido:nuevo', onNuevo)
       socket.off('pre-pedido:enviado', onEnviado)
     }
-  }, [esAdmin])
+  }, [esEncargado])
 
   // Refresca el "hace Xm" de la cola sin depender de que llegue otro evento.
   useEffect(() => {
-    if (!esAdmin || prePedidos.length === 0) return
+    if (!esEncargado || prePedidos.length === 0) return
     const id = setInterval(() => setAhora(Date.now()), 30_000)
     return () => clearInterval(id)
-  }, [esAdmin, prePedidos.length])
+  }, [esEncargado, prePedidos.length])
 
   // Cambiar de mesa o de zona es cambiar de contexto: la busqueda de la mesa
   // anterior no tiene por que seguir filtrando la de esta.
@@ -476,8 +478,8 @@ export default function NuevaVenta() {
             selectedId={table?.id}
             onSelect={(_kind, item) => setTable(item)}
             onContextMenu={(t, e) => setMenu({ table: t, x: e.clientX, y: e.clientY })}
-            pendingIds={esAdmin ? pendingTableIds : undefined}
-            elapsedByTable={esAdmin ? elapsedByTable : undefined}
+            pendingIds={esEncargado ? pendingTableIds : undefined}
+            elapsedByTable={esEncargado ? elapsedByTable : undefined}
           />
 
           <div className="flex gap-4 flex-wrap mt-4 text-xs text-muted">
@@ -491,8 +493,8 @@ export default function NuevaVenta() {
         </section>
 
         <aside className="space-y-4">
-          {esAdmin && prePedidos.length > 0 && (
-            <section className="card p-4 space-y-2.5 border-amber/40">
+          {esEncargado && prePedidos.length > 0 && (
+            <section className="card p-4 space-y-2.5 border-amber/40 animate-pre-pedido-buzz">
               <h2 className="font-semibold flex items-center gap-2">
                 <Icon.bell width={18} height={18} className="text-amber" />
                 Pre-pedidos esperando envío
@@ -569,6 +571,12 @@ export default function NuevaVenta() {
               )}
             </h2>
 
+            {order?.openedBy && (
+              <p className="text-xs text-muted mb-3">
+                Abrió {order.openedBy.name} · {formatHora(order.openedAt)}
+              </p>
+            )}
+
             {order?.customer && (
               <p className="text-sm text-muted mb-3">
                 A nombre de{' '}
@@ -613,7 +621,7 @@ export default function NuevaVenta() {
                     </div>
                   </div>
                 ))}
-                {esAdmin ? (
+                {esEncargado ? (
                   <button
                     onClick={enviarPrePedido}
                     disabled={enviandoPrePedido}
@@ -622,7 +630,7 @@ export default function NuevaVenta() {
                     {enviandoPrePedido ? 'Enviando…' : 'Enviar pre-pedido a la barra'}
                   </button>
                 ) : (
-                  <p className="text-xs text-amber/80">Esperando que el administrador lo envíe a la barra.</p>
+                  <p className="text-xs text-amber/80">Esperando que el administrador o cajero lo envíe a la barra.</p>
                 )}
               </div>
             )}

@@ -3,11 +3,13 @@ import { verifyToken } from '../middleware/auth.js'
 
 let io = null
 
-// Pre-pedidos: solo el admin de cada bar necesita verlos en vivo, asi que
-// cada socket se une al cuarto de su propio tenant (nunca al de otro) y solo
-// si su rol es ADMIN. La mesera no se conecta a esto.
-function salaAdmin(tenantId) {
-  return `tenant:${tenantId}:admin`
+// Pre-pedidos: admin y cajero necesitan verlos en vivo (ambos manejan caja y
+// pueden estar pendientes de que llegue la mesera), asi que cada socket se une
+// al cuarto de su propio tenant (nunca al de otro) si su rol es uno de esos
+// dos. Solo ADMIN puede aprobar y enviar a la barra; eso se valida aparte en
+// la ruta, no aqui. La mesera no se conecta a esto.
+function salaEncargados(tenantId) {
+  return `tenant:${tenantId}:encargados`
 }
 
 export function initRealtime(httpServer) {
@@ -25,12 +27,12 @@ export function initRealtime(httpServer) {
 
   io.on('connection', (socket) => {
     const { tenantId, role } = socket.data.auth
-    if (role === 'ADMIN') socket.join(salaAdmin(tenantId))
+    if (role === 'ADMIN' || role === 'CAJERO') socket.join(salaEncargados(tenantId))
   })
 
   return io
 }
 
-export function avisarAdmins(tenantId, event, payload) {
-  io?.to(salaAdmin(tenantId)).emit(event, payload)
+export function avisarEncargados(tenantId, event, payload) {
+  io?.to(salaEncargados(tenantId)).emit(event, payload)
 }

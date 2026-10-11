@@ -2,11 +2,11 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
-import { avisarAdmins } from '../lib/realtime.js'
+import { avisarEncargados } from '../lib/realtime.js'
 
 export const orderRoutes = Router()
 const puedeCerrar = requireRole('ADMIN', 'CAJERO') // cobrar/cerrar cuenta no es cosa de mesera
-const soloAdmin = requireRole('ADMIN') // aprobar y enviar el pre-pedido a la barra es solo del admin
+const puedeGestionarPrePedidos = requireRole('ADMIN', 'CAJERO') // ambos se enteran y ambos pueden aprobar
 
 const ITEM_INCLUDE = {
   createdBy: { select: { id: true, name: true } },
@@ -140,7 +140,7 @@ orderRoutes.get('/orders/history/:tableId', async (req, res) => {
 // recarga: los eventos de socket solo avisan de lo que pasa despues de
 // conectarse, esto es lo que ya esta pendiente en ese momento. Va antes de
 // /orders/:id para que "pending" no se confunda con un id de cuenta.
-orderRoutes.get('/orders/pending', soloAdmin, async (req, res) => {
+orderRoutes.get('/orders/pending', puedeGestionarPrePedidos, async (req, res) => {
   const items = await prisma.orderItem.findMany({
     where: { tenantId: req.auth.tenantId, status: 'PENDING' },
     include: {
@@ -283,7 +283,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
   if (status === 'PENDING') {
     // Misma forma que GET /orders/pending: el frontend guarda ambos en la
     // misma lista y no deberia importarle si llego por fetch o por socket.
-    avisarAdmins(req.auth.tenantId, 'pre-pedido:nuevo', {
+    avisarEncargados(req.auth.tenantId, 'pre-pedido:nuevo', {
       orderId: order.id,
       tableId: order.tableId,
       tableNumber: order.table.number,
@@ -297,9 +297,9 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
   res.status(201).json({ ...updated, total: total(updated) })
 })
 
-// El admin aprueba el pre-pedido que dejo la mesera: los items PENDING de
-// esta cuenta pasan a ACTIVE (ahi si llegan a la barra y suman al total).
-orderRoutes.post('/orders/:id/send', soloAdmin, async (req, res) => {
+// Admin o cajero aprueban el pre-pedido que dejo la mesera: los items PENDING
+// de esta cuenta pasan a ACTIVE (ahi si llegan a la barra y suman al total).
+orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) => {
   const order = await prisma.order.findFirst({ where: { id: req.params.id, tenantId: req.auth.tenantId } })
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
@@ -311,7 +311,7 @@ orderRoutes.post('/orders/:id/send', soloAdmin, async (req, res) => {
   if (!count) return res.status(400).json({ error: 'Esta mesa no tiene un pre-pedido esperando envio' })
 
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
-  avisarAdmins(req.auth.tenantId, 'pre-pedido:enviado', { orderId: order.id })
+  avisarEncargados(req.auth.tenantId, 'pre-pedido:enviado', { orderId: order.id })
   res.json({ ...updated, total: total(updated) })
 })
 
@@ -353,12 +353,25 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
 
   if (courtesy) {
     if (!order.shiftId) return res.status(400).json({ error: 'Esta cuenta no tiene un turno asociado' })
-    await prisma.$transaction([
-      prisma.order.update({
+    await prisma.$transaction(async (tx) => {
+      // El consecutivo se asigna aqui, no antes: mientras la cuenta sigue
+      // abierta no es una factura todavia. El increment es atomico (una fila
+      // de Tenant), asi que dos cierres a la vez nunca repiten numero.
+      const tenant = await tx.tenant.update({
+        where: { id: req.auth.tenantId },
+        data: { lastInvoiceNumber: { increment: 1 } },
+      })
+      await tx.order.update({
         where: { id: order.id },
-        data: { status: 'CLOSED', closedAt: new Date(), closedById: req.auth.userId, isCourtesy: true },
-      }),
-      prisma.shiftExpense.create({
+        data: {
+          status: 'CLOSED',
+          closedAt: new Date(),
+          closedById: req.auth.userId,
+          isCourtesy: true,
+          invoiceNumber: tenant.lastInvoiceNumber,
+        },
+      })
+      await tx.shiftExpense.create({
         data: {
           tenantId: req.auth.tenantId,
           shiftId: order.shiftId,
@@ -367,9 +380,9 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
           reason: 'Pago a proveedor oficial',
           authorizedById: req.auth.userId,
         },
-      }),
-      prisma.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } }),
-    ])
+      })
+      await tx.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } })
+    })
   } else {
     if (!Array.isArray(payments) || !payments.length) {
       return res.status(400).json({ error: 'Elige cómo se paga la cuenta' })
@@ -400,12 +413,21 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       }
     }
 
-    await prisma.$transaction([
-      prisma.order.update({
+    await prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.update({
+        where: { id: req.auth.tenantId },
+        data: { lastInvoiceNumber: { increment: 1 } },
+      })
+      await tx.order.update({
         where: { id: order.id },
-        data: { status: 'CLOSED', closedAt: new Date(), closedById: req.auth.userId },
-      }),
-      prisma.orderPayment.createMany({
+        data: {
+          status: 'CLOSED',
+          closedAt: new Date(),
+          closedById: req.auth.userId,
+          invoiceNumber: tenant.lastInvoiceNumber,
+        },
+      })
+      await tx.orderPayment.createMany({
         data: payments.map((p) => {
           const amount = Number(p.amount)
           const tendered = p.method === 'EFECTIVO' ? Number(p.tendered ?? amount) : null
@@ -418,23 +440,21 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
             change: tendered !== null ? tendered - amount : null,
           }
         }),
-      }),
-      prisma.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } }),
-      ...(montoCredito > 0
-        ? [
-            prisma.customerCharge.create({
-              data: {
-                tenantId: req.auth.tenantId,
-                customerId: order.customer.id,
-                orderId: order.id,
-                amount: montoCredito,
-                description: `Fiado - mesa ${order.table.number}`,
-                createdById: req.auth.userId,
-              },
-            }),
-          ]
-        : []),
-    ])
+      })
+      await tx.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } })
+      if (montoCredito > 0) {
+        await tx.customerCharge.create({
+          data: {
+            tenantId: req.auth.tenantId,
+            customerId: order.customer.id,
+            orderId: order.id,
+            amount: montoCredito,
+            description: `Fiado - mesa ${order.table.number}`,
+            createdById: req.auth.userId,
+          },
+        })
+      }
+    })
   }
 
   const cerrada = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })

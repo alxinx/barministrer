@@ -95,6 +95,50 @@
   .animate-check-draw {
     animation: check-draw 380ms cubic-bezier(0.16, 1, 0.3, 1) 120ms forwards;
   }
+
+  /* Pre-pedido esperando: un vibrador corto cada 5s (no un temblor continuo,
+     que cansa la vista) para que el operador note que sigue pendiente aunque
+     no haya mirado el panel. */
+  @keyframes pre-pedido-buzz {
+    0%,
+    92%,
+    100% {
+      transform: translateX(0);
+    }
+    93% {
+      transform: translateX(-3px);
+    }
+    94.5% {
+      transform: translateX(3px);
+    }
+    96% {
+      transform: translateX(-3px);
+    }
+    97.5% {
+      transform: translateX(3px);
+    }
+    99% {
+      transform: translateX(0);
+    }
+  }
+  .animate-pre-pedido-buzz {
+    animation: pre-pedido-buzz 5s ease-in-out infinite;
+  }
+
+  /* Mesa seleccionada: un brillo respirando del mismo ambar del contorno, para
+     que se note cual mesa esta activa sin tener que buscar el borde fino. */
+  @keyframes mesa-seleccionada-shine {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(232, 163, 61, 0.5);
+    }
+    50% {
+      box-shadow: 0 0 14px 3px rgba(232, 163, 61, 0.55);
+    }
+  }
+  .animate-mesa-seleccionada {
+    animation: mesa-seleccionada-shine 1.8s ease-in-out infinite;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -103,6 +147,14 @@
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* Las de arriba son "infinite": forzar su duracion a 0.01ms las deja
+     parpadeando sin parar en vez de quietas. Se apagan del todo; el resaltado
+     estatico (borde/fondo ambar) que ya tienen se queda como aviso. */
+  .animate-pre-pedido-buzz,
+  .animate-mesa-seleccionada {
+    animation: none !important;
   }
 }
 

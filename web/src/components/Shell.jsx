@@ -18,6 +18,7 @@ const nav = [
     ],
   },
   { to: '/reportes', label: 'Reportes', icon: Icon.chart, roles: ['ADMIN'] },
+  { to: '/usuarios', label: 'Usuarios', icon: Icon.crown, roles: ['ADMIN'] },
   { to: '/configuracion', label: 'Configuración', icon: Icon.gear, roles: ['ADMIN'] },
 ]
 

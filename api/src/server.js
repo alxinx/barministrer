@@ -9,6 +9,7 @@ import { shiftRoutes } from './routes/shifts.js'
 import { customerRoutes } from './routes/customers.js'
 import { orderRoutes } from './routes/orders.js'
 import { inventoryRoutes } from './routes/inventory.js'
+import { userRoutes } from './routes/users.js'
 import { requireAuth } from './middleware/auth.js'
 import { initRealtime } from './lib/realtime.js'
 
@@ -26,6 +27,7 @@ app.use('/api', requireAuth, shiftRoutes)
 app.use('/api', requireAuth, customerRoutes)
 app.use('/api', requireAuth, orderRoutes)
 app.use('/api', requireAuth, inventoryRoutes)
+app.use('/api', requireAuth, userRoutes)
 
 app.use((_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }))
 

@@ -21,6 +21,9 @@ model Tenant {
   currency  String   @default("COP")
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
+  /// Ultimo numero de factura asignado. Una sola secuencia por bar, nunca se
+  /// reinicia por turno ni por dia: es lo que pide un control contable serio.
+  lastInvoiceNumber Int @default(0)
 
   users      User[]
   categories Category[]
@@ -340,8 +343,9 @@ model Shift {
   tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   openedBy User           @relation("ShiftOpenedBy", fields: [openedById], references: [id])
   closedBy User?          @relation("ShiftClosedBy", fields: [closedById], references: [id])
-  expenses ShiftExpense[]
-  orders   Order[]
+  expenses         ShiftExpense[]
+  orders           Order[]
+  customerPayments CustomerPayment[]
 
   @@index([tenantId])
 }
@@ -423,22 +427,29 @@ model CustomerCharge {
 }
 
 /// Un abono contra la deuda. Puede ser parcial; el saldo se recalcula solo.
+/// Abono de un cliente a su fiado. Es dinero real entrando a caja (no una
+/// venta), asi que queda atado al turno abierto en el momento del abono para
+/// que el cierre lo cuente dentro de lo esperado en ese medio de pago.
 model CustomerPayment {
-  id         String   @id @default(uuid())
+  id         String              @id @default(uuid())
   tenantId   String
   customerId String
-  amount     Decimal  @db.Decimal(12, 2)
+  shiftId    String? // opcional solo por abonos historicos de antes de este campo; la API siempre lo exige para uno nuevo
+  amount     Decimal             @db.Decimal(12, 2)
+  method     OrderPaymentMethod? // nunca CREDITO: un abono no se puede pagar a credito
   note       String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime            @default(now())
 
   createdById String
 
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  shift     Shift?   @relation(fields: [shiftId], references: [id])
   createdBy User     @relation(fields: [createdById], references: [id])
 
   @@index([customerId])
   @@index([tenantId])
+  @@index([shiftId])
 }
 
 // ---------------------------------------------------------------------------
@@ -478,6 +489,10 @@ model Order {
   isCourtesy Boolean     @default(false)
   openedAt   DateTime    @default(now())
   closedAt   DateTime?
+  /// Consecutivo de factura, asignado solo al cerrar (antes de eso no es una
+  /// factura todavia). Null en cuentas abiertas y en las cerradas antes de
+  /// este campo: no se rellena hacia atras.
+  invoiceNumber Int?
 
   openedById String
   closedById String?
@@ -494,6 +509,7 @@ model Order {
 
   @@index([tenantId])
   @@index([tableId])
+  @@unique([tenantId, invoiceNumber])
 }
 
 /// Un producto pedido. name/variantName/price son una foto del momento de

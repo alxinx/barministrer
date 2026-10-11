@@ -55,6 +55,18 @@ export default function ResumenVentas({ titulo, sales, heroLabel, heroValue }) {
           </div>
         </div>
 
+        {sales.abonos?.total > 0 && (
+          <div className="flex items-center gap-2.5 bg-raised border border-edge rounded-xl pl-2.5 pr-3.5 py-2">
+            <span className="w-9 h-9 rounded-full bg-night border border-edge grid place-items-center text-muted shrink-0">
+              <Icon.receipt width={18} height={18} />
+            </span>
+            <div>
+              <p className="text-[11px] text-muted leading-none">Abonos recibidos</p>
+              <p className="text-sm font-semibold leading-tight">{money(sales.abonos.total)}</p>
+            </div>
+          </div>
+        )}
+
         {sales.cortesias > 0 && (
           <div className="flex items-center gap-2.5 bg-amber/10 border border-amber/30 rounded-xl pl-2.5 pr-3.5 py-2">
             <span className="w-9 h-9 rounded-full bg-amber/15 border border-amber/40 grid place-items-center text-amber shrink-0">

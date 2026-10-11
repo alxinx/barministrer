@@ -12,12 +12,24 @@ const METHODS = ['EFECTIVO', 'NEQUI', 'TRANSFERENCIA', 'DATAFONO']
 // Ventas reales del turno, agrupadas por medio de pago. Se usa en vivo (para
 // mostrar el movimiento del dia con el turno todavia abierto) y una sola vez
 // al cerrar, para congelar el snapshot que despues ve el historial.
+//
+// Los abonos a credito van separados de las ventas (no son una venta nueva,
+// son plata que ya se habia vendido fiada), pero igual hay que sumarlos al
+// medio de pago en que entraron: ese dinero tiene que estar en el cajon.
 async function resumenVentas(tenantId, shiftId) {
-  const pagos = await prisma.orderPayment.groupBy({
-    by: ['method'],
-    where: { tenantId, order: { shiftId } },
-    _sum: { amount: true },
-  })
+  const [pagos, abonos] = await Promise.all([
+    prisma.orderPayment.groupBy({
+      by: ['method'],
+      where: { tenantId, order: { shiftId } },
+      _sum: { amount: true },
+    }),
+    prisma.customerPayment.groupBy({
+      by: ['method'],
+      where: { tenantId, shiftId },
+      _sum: { amount: true },
+    }),
+  ])
+
   const byMethod = Object.fromEntries(METHODS.map((m) => [m, 0]))
   let fiado = 0
   for (const p of pagos) {
@@ -26,13 +38,19 @@ async function resumenVentas(tenantId, shiftId) {
     else byMethod[p.method] = monto
   }
 
+  const abonosByMethod = Object.fromEntries(METHODS.map((m) => [m, 0]))
+  for (const a of abonos) {
+    if (a.method) abonosByMethod[a.method] = Number(a._sum.amount) || 0
+  }
+  const totalAbonos = Object.values(abonosByMethod).reduce((s, v) => s + v, 0)
+
   const [tickets, cortesias] = await Promise.all([
     prisma.order.count({ where: { tenantId, shiftId, status: 'CLOSED' } }),
     prisma.order.count({ where: { tenantId, shiftId, status: 'CLOSED', isCourtesy: true } }),
   ])
 
   const totalVentas = Object.values(byMethod).reduce((s, v) => s + v, 0) + fiado
-  return { byMethod, fiado, totalVentas, tickets, cortesias }
+  return { byMethod, fiado, totalVentas, tickets, cortesias, abonos: { byMethod: abonosByMethod, total: totalAbonos } }
 }
 
 // Lista liviana de las cuentas cerradas del turno, para "ver la factura" de
@@ -44,8 +62,10 @@ async function facturasDelTurno(tenantId, shiftId) {
       id: true,
       closedAt: true,
       isCourtesy: true,
+      invoiceNumber: true,
       table: { select: { number: true } },
       items: { select: { price: true, qty: true, status: true } },
+      openedBy: { select: { name: true } },
     },
     orderBy: { closedAt: 'desc' },
   })
@@ -54,6 +74,8 @@ async function facturasDelTurno(tenantId, shiftId) {
     tableNumber: o.table.number,
     closedAt: o.closedAt,
     isCourtesy: o.isCourtesy,
+    invoiceNumber: o.invoiceNumber,
+    openedByName: o.openedBy.name,
     total: o.items.filter((i) => i.status === 'ACTIVE').reduce((s, i) => s + Number(i.price) * i.qty, 0),
   }))
 }
@@ -208,10 +230,8 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
   const egresosEfectivo = shift.expenses.reduce((sum, e) => sum + Number(e.amount), 0)
 
   const resultado = METHODS.map((method) => {
-    const expected =
-      method === 'EFECTIVO'
-        ? Number(shift.baseCash) + sales.byMethod.EFECTIVO - egresosEfectivo
-        : sales.byMethod[method]
+    const recibido = sales.byMethod[method] + sales.abonos.byMethod[method]
+    const expected = method === 'EFECTIVO' ? Number(shift.baseCash) + recibido - egresosEfectivo : recibido
     const counted = Number(counts[method])
     return { method, expected, counted, difference: counted - expected }
   })

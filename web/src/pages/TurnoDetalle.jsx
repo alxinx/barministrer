@@ -52,7 +52,14 @@ export default function TurnoDetalle() {
   const counts = shift.counts || []
   const egresos = shift.expenses || []
   const totalEgresos = egresos.reduce((s, e) => s + Number(e.amount), 0)
-  const sales = shift.sales || { byMethod: {}, fiado: 0, totalVentas: 0, tickets: 0, cortesias: 0 }
+  const sales = shift.sales || {
+    byMethod: {},
+    fiado: 0,
+    totalVentas: 0,
+    tickets: 0,
+    cortesias: 0,
+    abonos: { byMethod: {}, total: 0 },
+  }
 
   return (
     <div className="p-5 md:p-7 max-w-[900px] mx-auto space-y-5">

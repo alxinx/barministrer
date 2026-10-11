@@ -246,7 +246,7 @@ export default function FloorPlan({
             className={`absolute grid place-content-center gap-0.5 border-2 bg-raised
               transition-colors
               ${t.shape === 'ROUND' ? 'rounded-full' : 'rounded-xl'}
-              ${selectedId === t.id ? 'border-amber bg-amber/10' : statusRing[t.status]}
+              ${selectedId === t.id ? 'border-amber bg-amber/10 animate-mesa-seleccionada' : statusRing[t.status]}
               ${editable ? 'cursor-grab active:cursor-grabbing' : 'hover:border-amber'}`}
           >
             {pendiente && (

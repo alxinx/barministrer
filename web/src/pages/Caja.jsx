@@ -177,8 +177,16 @@ function AbrirTurno({ onAbrir }) {
 function TurnoActivo({ shift, onAgregarEgreso, onPedirCierre, onVerFactura }) {
   const egresos = shift.expenses || []
   const totalEgresos = egresos.reduce((s, e) => s + Number(e.amount), 0)
-  const sales = shift.sales || { byMethod: {}, fiado: 0, totalVentas: 0, tickets: 0, cortesias: 0 }
-  const efectivoEsperado = Number(shift.baseCash) + (sales.byMethod.EFECTIVO || 0) - totalEgresos
+  const sales = shift.sales || {
+    byMethod: {},
+    fiado: 0,
+    totalVentas: 0,
+    tickets: 0,
+    cortesias: 0,
+    abonos: { byMethod: {}, total: 0 },
+  }
+  const efectivoEsperado =
+    Number(shift.baseCash) + (sales.byMethod.EFECTIVO || 0) + (sales.abonos.byMethod.EFECTIVO || 0) - totalEgresos
 
   return (
     <>

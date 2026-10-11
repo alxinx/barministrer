@@ -5,8 +5,10 @@ import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import ClienteForm from '../components/ClienteForm'
 import ReciboModal from '../components/ReciboModal'
+import ReciboAbonoModal from '../components/ReciboAbonoModal'
 import ConsumoChart from '../components/ConsumoChart'
 import MoneyInput from '../components/MoneyInput'
+import { METHODS, METHOD_LABEL } from '../lib/paymentMethods'
 
 export default function ClienteDetalle() {
   const { id } = useParams()
@@ -15,6 +17,7 @@ export default function ClienteDetalle() {
   const [customer, setCustomer] = useState(undefined) // undefined = cargando, null = no existe
   const [editing, setEditing] = useState(false)
   const [factura, setFactura] = useState(null)
+  const [comprobante, setComprobante] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -39,9 +42,10 @@ export default function ClienteDetalle() {
     load()
   }
 
-  async function agregarPago({ amount, note }) {
-    await api(`/customers/${id}/payments`, { method: 'POST', body: { amount, note } })
-    load()
+  async function agregarPago({ amount, method, note }) {
+    const payment = await api(`/customers/${id}/payments`, { method: 'POST', body: { amount, method, note } })
+    setCustomer(await api(`/customers/${id}`))
+    setComprobante(payment)
   }
 
   async function verFactura(orderId) {
@@ -216,6 +220,11 @@ export default function ClienteDetalle() {
                         Mesa {h.order.table.number}
                       </span>
                     )}
+                    {h.tipo === 'pago' && h.method && (
+                      <span className="text-[10px] font-bold text-muted border border-edge rounded-pill px-1.5 py-0.5 shrink-0">
+                        {METHOD_LABEL[h.method] || h.method}
+                      </span>
+                    )}
                   </p>
                   <p className="text-xs text-muted">
                     {h.createdBy?.name} · {formatFecha(h.createdAt)}
@@ -265,12 +274,23 @@ export default function ClienteDetalle() {
           onClose={() => setFactura(null)}
         />
       )}
+
+      {comprobante && (
+        <ReciboAbonoModal
+          payment={comprobante}
+          customer={customer}
+          tenantName={session?.tenant?.name}
+          autoPrint={false}
+          onClose={() => setComprobante(null)}
+        />
+      )}
     </div>
   )
 }
 
 function PagoForm({ onAgregar }) {
   const [amount, setAmount] = useState('')
+  const [method, setMethod] = useState('EFECTIVO')
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -280,7 +300,7 @@ function PagoForm({ onAgregar }) {
     setSaving(true)
     setError('')
     try {
-      await onAgregar({ amount: Number(amount), note: note.trim() })
+      await onAgregar({ amount: Number(amount), method, note: note.trim() })
       setAmount('')
       setNote('')
     } catch (err) {
@@ -294,6 +314,15 @@ function PagoForm({ onAgregar }) {
     <div className="space-y-2">
       {error && <p className="text-xs text-ocupada">{error}</p>}
       <div className="flex flex-wrap gap-2 items-end bg-raised border border-edge rounded-xl p-3">
+        <div className="w-40">
+          <select className="field h-10" value={method} onChange={(e) => setMethod(e.target.value)}>
+            {METHODS.map((m) => (
+              <option key={m.key} value={m.key}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex-1 min-w-[160px]">
           <input
             className="field h-10"
