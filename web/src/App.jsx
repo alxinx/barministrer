@@ -11,6 +11,9 @@ import TurnoDetalle from './pages/TurnoDetalle'
 import Clientes from './pages/Clientes'
 import ClienteDetalle from './pages/ClienteDetalle'
 import Usuarios from './pages/Usuarios'
+import Reportes from './pages/Reportes'
+import ReporteVentas from './pages/ReporteVentas'
+import UtilidadProducto from './pages/UtilidadProducto'
 import Configuracion from './pages/Configuracion'
 import DatosBar from './pages/DatosBar'
 import Permisos from './pages/Permisos'
@@ -80,9 +83,15 @@ export default function App() {
             path="/productos/inventario"
             element={<Protegida permiso="cajeroGestionaInventario"><AgregarInventario /></Protegida>}
           />
+          <Route path="/reportes" element={<Protegida soloAdmin><Reportes /></Protegida>} />
           <Route
-            path="/reportes"
-            element={<Protegida soloAdmin><Pendiente titulo="Reportes" /></Protegida>}
+            path="/reportes/utilidad-producto"
+            element={<Protegida soloAdmin><UtilidadProducto /></Protegida>}
+          />
+          <Route path="/reportes/ventas" element={<Protegida soloAdmin><ReporteVentas /></Protegida>} />
+          <Route
+            path="/reportes/empleados"
+            element={<Protegida soloAdmin><Pendiente titulo="Reporte de empleados" /></Protegida>}
           />
           <Route path="/configuracion" element={<Protegida soloAdmin><Configuracion /></Protegida>} />
           <Route path="/configuracion/datos" element={<Protegida soloAdmin><DatosBar /></Protegida>} />

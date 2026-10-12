@@ -214,6 +214,30 @@ export const Icon = {
       <path d="M10 19a2 2 0 0 0 4 0" />
     </svg>
   ),
+  percent: (p) => (
+    <svg {...base} {...p}>
+      <path d="M19 5L5 19" />
+      <circle cx="7" cy="7" r="2.3" />
+      <circle cx="17" cy="17" r="2.3" />
+    </svg>
+  ),
+  download: (p) => (
+    <svg {...base} {...p}>
+      <path d="M12 3v12M7 10l5 5 5-5" />
+      <path d="M4 19h16" />
+    </svg>
+  ),
+  sort: (p) => (
+    <svg {...base} {...p}>
+      <path d="M8 5v14M8 5l-3 3M8 5l3 3M16 19V5M16 19l-3-3M16 19l3-3" />
+    </svg>
+  ),
+  calendar: (p) => (
+    <svg {...base} {...p}>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4" />
+    </svg>
+  ),
 }
 
 export const zoneIcon = { table: Icon.tables, sun: Icon.sun, crown: Icon.crown, glass: Icon.glass }

@@ -177,3 +177,52 @@
     width: 100%;
   }
 }
+
+/* Calendario de rango de fechas (react-day-picker): la libreria trae su
+   propio CSS pensado para fondo claro, asi que se pisa con los mismos
+   tokens del resto de la app en vez de dejarlo con su tema por defecto. */
+.rdp-licorplus {
+  --rdp-cell-size: 36px;
+  --rdp-accent-color: #e8a33d;
+  --rdp-background-color: #211d2c;
+  --rdp-accent-color-dark: #e8a33d;
+  --rdp-background-color-dark: #211d2c;
+  --rdp-outline: 2px solid #e8a33d;
+  --rdp-outline-selected: 2px solid #e8a33d;
+  --rdp-selected-color: #0e0c13;
+  margin: 0;
+}
+.rdp-licorplus .rdp-caption_label,
+.rdp-licorplus .rdp-day {
+  color: #f2efe8;
+}
+.rdp-licorplus .rdp-head_cell {
+  color: #9a93a8;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.rdp-licorplus .rdp-nav_button {
+  color: #9a93a8;
+}
+.rdp-licorplus .rdp-nav_button:hover {
+  color: #f2efe8;
+  background-color: #211d2c;
+}
+.rdp-licorplus .rdp-day_range_middle {
+  background-color: rgba(232, 163, 61, 0.18);
+  color: #f2efe8;
+}
+.rdp-licorplus .rdp-day_range_start,
+.rdp-licorplus .rdp-day_range_end {
+  background-color: #e8a33d;
+  color: #0e0c13;
+  font-weight: 700;
+}
+.rdp-licorplus .rdp-day_outside {
+  color: #9a93a8;
+  opacity: 0.4;
+}
+.rdp-licorplus .rdp-day:focus-visible {
+  outline: 2px solid #e8a33d;
+  outline-offset: 1px;
+}

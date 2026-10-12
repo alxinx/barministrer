@@ -11,6 +11,7 @@ import { orderRoutes } from './routes/orders.js'
 import { inventoryRoutes } from './routes/inventory.js'
 import { userRoutes } from './routes/users.js'
 import { tenantRoutes } from './routes/tenant.js'
+import { reportRoutes } from './routes/reports.js'
 import { requireAuth } from './middleware/auth.js'
 import { initRealtime } from './lib/realtime.js'
 
@@ -30,6 +31,7 @@ app.use('/api', requireAuth, orderRoutes)
 app.use('/api', requireAuth, inventoryRoutes)
 app.use('/api', requireAuth, userRoutes)
 app.use('/api', requireAuth, tenantRoutes)
+app.use('/api', requireAuth, reportRoutes)
 
 app.use((_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }))
 
