@@ -25,12 +25,25 @@ export default function FacturasDelDia({ facturas, onVer, titulo = 'Facturas de 
                     Cortesía
                   </span>
                 )}
+                {f.discountAmount > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber border border-amber/40 bg-amber/10 rounded-pill px-2 py-0.5 shrink-0">
+                    <Icon.tag width={11} height={11} />
+                    Descuento
+                  </span>
+                )}
               </p>
               <p className="text-xs text-muted">
                 Abrió {f.openedByName} · {formatHora(f.closedAt)}
               </p>
             </div>
-            <span className="font-semibold shrink-0">{money(f.total)}</span>
+            {f.discountAmount > 0 ? (
+              <span className="text-right shrink-0">
+                <span className="block text-xs text-muted line-through">{money(f.total)}</span>
+                <span className="font-semibold">{money(f.total - f.discountAmount)}</span>
+              </span>
+            ) : (
+              <span className="font-semibold shrink-0">{money(f.total)}</span>
+            )}
             <button
               type="button"
               onClick={() => onVer(f.id)}

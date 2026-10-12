@@ -1,4 +1,7 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+// Ruta relativa: el dev server la reenvia a la API (ver proxy en vite.config.js).
+// Si se fija VITE_API_URL explicitamente (ej. una build de produccion sin ese
+// proxy), esa URL absoluta gana.
+const BASE = import.meta.env.VITE_API_URL || ''
 
 const TOKEN_KEY = 'licorplus.token'
 

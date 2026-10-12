@@ -19,6 +19,7 @@ const CAMPOS_PERMISOS = [
   'cajeroGestionaInventario',
   'cajeroGestionaDistribucion',
   'cajeroGestionaUsuarios',
+  'cajeroAplicaDescuentos',
 ]
 
 tenantRoutes.get('/tenant', soloAdmin, async (req, res) => {

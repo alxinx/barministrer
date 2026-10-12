@@ -67,6 +67,7 @@ export default function NuevaVenta() {
 
   const esAdmin = session?.user.role === 'ADMIN'
   const esEncargado = esAdmin || session?.user.role === 'CAJERO'
+  const puedeDescuento = esAdmin || (session?.user.role === 'CAJERO' && session?.tenant.cajeroAplicaDescuentos)
 
   // Admin y cajero ven la cola de pre-pedidos (el cajero se entera pero no
   // aprueba): trae lo que ya estaba esperando al entrar (el socket solo avisa
@@ -817,8 +818,10 @@ export default function NuevaVenta() {
 
       {cerrando && (
         <CerrarCuentaModal
+          orderId={order.id}
           total={order.total}
           customer={order.customer}
+          puedeDescuento={puedeDescuento}
           onClose={() => setCerrando(false)}
           onConfirm={cerrarCuenta}
         />

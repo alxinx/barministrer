@@ -25,6 +25,12 @@ const PERMISOS = [
     descripcion:
       'Crear, editar y desactivar meseras y cajeros. Nunca puede crear ni tocar otra cuenta de administrador, así se lo active.',
   },
+  {
+    key: 'cajeroAplicaDescuentos',
+    titulo: 'Cajero puede aplicar descuentos',
+    descripcion:
+      'Editar el valor a cobrar al cerrar una cuenta. El sistema sigue bloqueando cualquier descuento que deje la cuenta en pérdida.',
+  },
 ]
 
 export default function Permisos() {

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { money } from '../lib/api'
+import { useEffect, useState } from 'react'
+import { api, money } from '../lib/api'
 import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
 
@@ -14,24 +14,44 @@ const METHODS = [
 /**
  * Cierra la cuenta: paga en uno o varios medios con cambio si es en efectivo,
  * divide el comprobante entre personas (no cambia lo que se cobra, solo lo
- * que imprime), o cortesia. El switch de cortesia esta escondido a proposito:
- * hay que tocar 3 veces el titulo "Cerrar cuenta" para que aparezca. Credito
- * solo aparece si hay un cliente vinculado con el credito habilitado: fiar
- * sin saber a quien no tiene sentido.
+ * que imprime), cortesia o descuento. Ambos switches estan escondidos a
+ * proposito: hay que tocar 3 veces el titulo "Cerrar cuenta" para cortesia, o
+ * 3 veces "Total a cobrar" para descuento (y ninguno de los dos aparece si el
+ * rol no tiene el permiso). Credito solo aparece si hay un cliente vinculado
+ * con el credito habilitado: fiar sin saber a quien no tiene sentido.
  */
-export default function CerrarCuentaModal({ total, customer, onClose, onConfirm }) {
+export default function CerrarCuentaModal({ orderId, total, customer, puedeDescuento, onClose, onConfirm }) {
   const metodosDisponibles = customer?.creditEnabled ? METHODS : METHODS.filter((m) => m.key !== 'CREDITO')
   const [splitOpen, setSplitOpen] = useState(false)
   const [splitCount, setSplitCount] = useState(1)
   const [rows, setRows] = useState([{ method: 'EFECTIVO', amount: String(total), tendered: '' }])
   const [clickCount, setClickCount] = useState(0)
   const [courtesy, setCourtesy] = useState(false)
+  const [totalClickCount, setTotalClickCount] = useState(0)
+  const [discountOpen, setDiscountOpen] = useState(false)
+  const [finalValue, setFinalValue] = useState(String(total))
+  const [cost, setCost] = useState(null)
+  const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // El costo de la cuenta solo se necesita si de verdad se va a aplicar un
+  // descuento: evita el viaje a la base de datos (recetas, presentaciones)
+  // cada vez que alguien solo quiere cobrar normal.
+  useEffect(() => {
+    if (!discountOpen) return
+    api(`/orders/${orderId}/cost`).then((r) => setCost(r.cost))
+  }, [discountOpen, orderId])
+
+  const descuento = discountOpen ? total - (Number(finalValue) || 0) : 0
+  const montoACobrar = discountOpen ? Number(finalValue) || 0 : total
+  const perdida = discountOpen && cost !== null && montoACobrar < cost
+  const descuentoInvalido = discountOpen && (Number(finalValue) < 0 || Number(finalValue) > total)
+  const hayDescuento = discountOpen && descuento > 0
+
   const sumaPagos = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
-  const restante = total - sumaPagos
-  const porPersona = total / (Number(splitCount) || 1)
+  const restante = montoACobrar - sumaPagos
+  const porPersona = montoACobrar / (Number(splitCount) || 1)
 
   function setRow(i, patch) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
@@ -41,6 +61,33 @@ export default function CerrarCuentaModal({ total, customer, onClose, onConfirm 
   }
   function removeRow(i) {
     setRows((prev) => prev.filter((_, idx) => idx !== i))
+  }
+
+  // Mientras solo haya un medio de pago, lo mas comun, se mantiene igualado
+  // al valor a cobrar para que activar el descuento no obligue a ir a editar
+  // el monto de ese medio tambien. Si ya hay varios, el cajero los reparte el
+  // mismo a mano.
+  useEffect(() => {
+    if (rows.length === 1) setRow(0, { amount: String(montoACobrar) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [montoACobrar])
+
+  function alternarCourtesy() {
+    setCourtesy((v) => {
+      if (!v) setDiscountOpen(false)
+      return !v
+    })
+  }
+
+  function alternarDescuento() {
+    setDiscountOpen((v) => {
+      if (!v) {
+        setCourtesy(false)
+        setFinalValue(String(total))
+      }
+      setPin('')
+      return !v
+    })
   }
 
   async function confirmar() {
@@ -57,6 +104,15 @@ export default function CerrarCuentaModal({ total, customer, onClose, onConfirm 
       return
     }
 
+    if (descuentoInvalido) {
+      return setError('El valor a cobrar no puede ser negativo ni mayor al total original')
+    }
+    if (perdida) {
+      return setError('Ese descuento deja la cuenta en pérdida')
+    }
+    if (hayDescuento && !pin.trim()) {
+      return setError('El descuento necesita el PIN del encargado')
+    }
     if (restante !== 0) {
       return setError(restante > 0 ? `Faltan ${money(restante)} por asignar` : `Sobran ${money(-restante)} asignados`)
     }
@@ -70,6 +126,7 @@ export default function CerrarCuentaModal({ total, customer, onClose, onConfirm 
           ...(r.method === 'EFECTIVO' && r.tendered ? { tendered: Number(r.tendered) } : {}),
         })),
         splitCount: Number(splitCount) || 1,
+        ...(hayDescuento ? { discountAmount: descuento, pin: pin.trim() } : {}),
       })
     } catch (err) {
       setError(err.message)
@@ -82,20 +139,72 @@ export default function CerrarCuentaModal({ total, customer, onClose, onConfirm 
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="card w-full max-w-md p-5 space-y-5 max-h-[90vh] overflow-y-auto"
+        className={`card w-full max-w-md p-5 space-y-5 max-h-[90vh] overflow-y-auto transition-colors ${
+          perdida ? 'border-2 border-ocupada' : ''
+        }`}
       >
         <header className="flex items-center justify-between">
-          <h2
-            onClick={() => setClickCount((c) => c + 1)}
-            className="text-lg font-bold select-none cursor-default"
-          >
+          <h2 onClick={() => setClickCount((c) => c + 1)} className="text-lg font-bold select-none cursor-default">
             Cerrar cuenta
           </h2>
-          <div className="text-right">
-            <p className="text-xs text-muted">Total a cobrar</p>
-            <p className="text-xl font-bold text-amber leading-tight">{money(total)}</p>
+          <div
+            onClick={() => !discountOpen && setTotalClickCount((c) => c + 1)}
+            className="text-right select-none cursor-default"
+          >
+            <p className="text-xs text-muted">{discountOpen ? 'Valor a cobrar' : 'Total a cobrar'}</p>
+            {discountOpen ? (
+              <MoneyInput
+                className="field h-9 w-36 text-right font-bold text-amber"
+                value={finalValue}
+                onChange={setFinalValue}
+                autoFocus
+              />
+            ) : (
+              <p className="text-xl font-bold text-amber leading-tight">{money(total)}</p>
+            )}
           </div>
         </header>
+
+        {discountOpen && (
+          <div className="bg-raised border border-edge rounded-xl p-3 space-y-1 text-sm">
+            <div className="flex justify-between text-muted">
+              <span>Valor original</span>
+              <span>{money(total)}</span>
+            </div>
+            <div className="flex justify-between text-muted">
+              <span>Descuento</span>
+              <span>{money(Math.max(0, descuento))}</span>
+            </div>
+          </div>
+        )}
+
+        {descuentoInvalido && (
+          <p className="text-sm font-semibold text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+            El valor a cobrar no puede ser mayor al valor original de la cuenta ({money(total)}) ni negativo.
+          </p>
+        )}
+
+        {perdida && !descuentoInvalido && (
+          <p className="text-sm font-semibold text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+            Ese descuento deja la cuenta en pérdida: el valor a cobrar queda por debajo de lo que cuestan los
+            productos. Baja el descuento para poder cobrar.
+          </p>
+        )}
+
+        {hayDescuento && !perdida && !descuentoInvalido && (
+          <div>
+            <label className="label text-xs">PIN del encargado para autorizar el descuento</label>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={4}
+              className="field h-9"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              placeholder="····"
+            />
+          </div>
+        )}
 
         {error && (
           <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
@@ -235,7 +344,12 @@ export default function CerrarCuentaModal({ total, customer, onClose, onConfirm 
           <button type="button" onClick={onClose} className="btn-ghost flex-1">
             Cancelar
           </button>
-          <button type="button" onClick={confirmar} disabled={saving} className="btn-primary flex-1">
+          <button
+            type="button"
+            onClick={confirmar}
+            disabled={saving || perdida || descuentoInvalido || (hayDescuento && !pin.trim())}
+            className="btn-primary flex-1"
+          >
             {saving ? 'Procesando…' : courtesy ? 'Marcar como cortesía' : 'Pagar'}
           </button>
         </div>
@@ -245,7 +359,7 @@ export default function CerrarCuentaModal({ total, customer, onClose, onConfirm 
             <span className="text-xs font-semibold text-muted">Cortesía</span>
             <button
               type="button"
-              onClick={() => setCourtesy((v) => !v)}
+              onClick={alternarCourtesy}
               className={`h-7 w-12 rounded-pill relative transition-colors ${
                 courtesy ? 'bg-amber' : 'bg-raised border border-edge'
               }`}
@@ -253,6 +367,25 @@ export default function CerrarCuentaModal({ total, customer, onClose, onConfirm 
               <span
                 className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
                   courtesy ? 'translate-x-5 bg-night' : 'bg-muted'
+                }`}
+              />
+            </button>
+          </div>
+        )}
+
+        {totalClickCount >= 3 && puedeDescuento && (
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-xs font-semibold text-muted">Descuento</span>
+            <button
+              type="button"
+              onClick={alternarDescuento}
+              className={`h-7 w-12 rounded-pill relative transition-colors ${
+                discountOpen ? 'bg-amber' : 'bg-raised border border-edge'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
+                  discountOpen ? 'translate-x-5 bg-night' : 'bg-muted'
                 }`}
               />
             </button>

@@ -23,7 +23,9 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
   }, [autoPrint])
 
   const items = order.items.filter((i) => i.status === 'ACTIVE')
-  const porPersona = splitCount > 1 ? order.total / splitCount : null
+  const descuento = Number(order.discountAmount) || 0
+  const totalPagado = order.total - descuento
+  const porPersona = splitCount > 1 ? totalPagado / splitCount : null
   const montoCredito = order.payments.filter((p) => p.method === 'CREDITO').reduce((s, p) => s + Number(p.amount), 0)
   const cambioTotal = order.payments
     .filter((p) => p.method === 'EFECTIVO' && Number(p.change) > 0)
@@ -67,10 +69,27 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
 
           <div className="my-2 border-t border-dashed border-black/40" />
 
-          <div className="flex justify-between font-bold text-sm">
-            <span>TOTAL</span>
-            <span>{money(order.total)}</span>
-          </div>
+          {descuento > 0 ? (
+            <>
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <span>{money(order.total)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Descuento</span>
+                <span>-{money(descuento)}</span>
+              </div>
+              <div className="flex justify-between font-bold text-sm">
+                <span>TOTAL PAGADO</span>
+                <span>{money(totalPagado)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-between font-bold text-sm">
+              <span>TOTAL</span>
+              <span>{money(order.total)}</span>
+            </div>
+          )}
 
           {order.isCourtesy ? (
             <p className="text-center font-bold text-lg my-3 tracking-wide">CORTESÍA</p>

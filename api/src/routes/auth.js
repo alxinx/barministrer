@@ -19,6 +19,7 @@ function tenantPublic(tenant) {
     cajeroGestionaInventario: tenant.cajeroGestionaInventario,
     cajeroGestionaDistribucion: tenant.cajeroGestionaDistribucion,
     cajeroGestionaUsuarios: tenant.cajeroGestionaUsuarios,
+    cajeroAplicaDescuentos: tenant.cajeroAplicaDescuentos,
   }
 }
 

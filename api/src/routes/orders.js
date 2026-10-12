@@ -2,6 +2,7 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
+import { tienePermiso } from '../middleware/permissions.js'
 import { avisarEncargados } from '../lib/realtime.js'
 
 export const orderRoutes = Router()
@@ -36,6 +37,63 @@ function total(order) {
   return order.items
     .filter((i) => i.status === 'ACTIVE')
     .reduce((sum, i) => sum + Number(i.price) * i.qty, 0)
+}
+
+// Costo de cada linea activa, para saber cuanta utilidad deja la cuenta antes
+// de aceptar un descuento. Una presentacion sellada (variantId) usa su propio
+// costo; un shot/coctel (productId sin variantId) no tiene costo propio, se
+// deriva de su receta: ml de un producto que se vende por botella (promedio
+// de costo-por-ml entre sus presentaciones, porque la receta no amarra a una
+// presentacion puntual) o unidades de una presentacion sellada. Si el costo
+// nunca se registro en el catalogo, queda en 0 (margen = precio completo):
+// un descuento repartido por utilidad va a cargarle mas a ese producto hasta
+// que alguien le ponga costo real en /productos.
+async function calcularCostos(items, tenantId) {
+  const activos = items.filter((i) => i.status === 'ACTIVE')
+  const variantIds = [...new Set(activos.filter((i) => i.variantId).map((i) => i.variantId))]
+  const recipeProductIds = [...new Set(activos.filter((i) => !i.variantId && i.productId).map((i) => i.productId))]
+
+  const variants = variantIds.length ? await prisma.variant.findMany({ where: { id: { in: variantIds } } }) : []
+  const costoVariante = new Map(variants.map((v) => [v.id, Number(v.cost)]))
+
+  const costoReceta = new Map()
+  if (recipeProductIds.length) {
+    const productos = await prisma.product.findMany({
+      where: { id: { in: recipeProductIds }, tenantId },
+      include: {
+        recipe: {
+          include: {
+            items: { include: { sourceProduct: { include: { variants: true } }, variant: true } },
+          },
+        },
+      },
+    })
+    for (const p of productos) {
+      let costo = 0
+      for (const ing of p.recipe?.items || []) {
+        if (ing.variantId) {
+          costo += Number(ing.variant?.cost || 0) * (ing.qty || 1)
+        } else if (ing.sourceProductId && ing.ml) {
+          const candidatas = (ing.sourceProduct?.variants || []).filter((v) => v.volumeMl && Number(v.cost) > 0)
+          const costoPorMl = candidatas.length
+            ? candidatas.reduce((s, v) => s + Number(v.cost) / v.volumeMl, 0) / candidatas.length
+            : 0
+          costo += costoPorMl * ing.ml
+        }
+      }
+      costoReceta.set(p.id, costo)
+    }
+  }
+
+  const porItem = new Map()
+  let total = 0
+  for (const item of activos) {
+    const unitario = item.variantId ? costoVariante.get(item.variantId) ?? 0 : costoReceta.get(item.productId) ?? 0
+    const linea = unitario * item.qty
+    porItem.set(item.id, linea)
+    total += linea
+  }
+  return { total, porItem }
 }
 
 async function verificarPin(tenantId, pin) {
@@ -185,6 +243,19 @@ orderRoutes.get('/orders/:id', async (req, res) => {
   })
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   res.json({ ...order, total: total(order) })
+})
+
+// Costo de la cuenta activa, para que el modal de cierre pueda avisar en vivo
+// si un descuento la deja en perdida antes de confirmar. Solo lo necesita
+// quien va a cobrar/aplicar el descuento.
+orderRoutes.get('/orders/:id/cost', puedeCerrar, async (req, res) => {
+  const order = await prisma.order.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId },
+    include: { items: true },
+  })
+  if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
+  const { total: cost } = await calcularCostos(order.items, req.auth.tenantId)
+  res.json({ cost })
 })
 
 // Abrir cuenta: toda venta va atada a un turno, asi que sin uno abierto no
@@ -351,6 +422,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
 
   const cuenta = total(order)
   const { courtesy, payments } = req.body || {}
+  const discountAmount = Number(req.body?.discountAmount) || 0
 
   if (courtesy) {
     if (!order.shiftId) return res.status(400).json({ error: 'Esta cuenta no tiene un turno asociado' })
@@ -388,9 +460,39 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
     if (!Array.isArray(payments) || !payments.length) {
       return res.status(400).json({ error: 'Elige cómo se paga la cuenta' })
     }
+
+    // El descuento edita directamente "lo que se va a cobrar", no un
+    // porcentaje: el cajero escribe el nuevo valor y esto es la diferencia
+    // contra el total de los items (que nunca se toca, sigue siendo la foto
+    // real de lo que se pidio).
+    let montoFinal = cuenta
+    let costos = null
+    let discountEncargadoId = null
+    if (discountAmount > 0) {
+      if (discountAmount > cuenta) {
+        return res.status(400).json({ error: 'El descuento no puede ser mayor al valor de la cuenta' })
+      }
+      if (!(await tienePermiso(req.auth, 'cajeroAplicaDescuentos'))) {
+        return res.status(403).json({ error: 'Tu rol no puede aplicar descuentos' })
+      }
+      // Igual que las devoluciones: el usuario logueado dice quien cobra, el
+      // PIN del encargado es lo que de verdad autoriza el descuento.
+      const { pin } = req.body || {}
+      if (!pin) return res.status(400).json({ error: 'El descuento necesita el PIN del encargado' })
+      const encargado = await verificarPin(req.auth.tenantId, pin)
+      if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+      discountEncargadoId = encargado.id
+
+      costos = await calcularCostos(order.items, req.auth.tenantId)
+      montoFinal = cuenta - discountAmount
+      if (montoFinal < costos.total) {
+        return res.status(400).json({ error: 'Ese descuento deja la cuenta en pérdida' })
+      }
+    }
+
     const sumaPagos = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
-    if (sumaPagos !== cuenta) {
-      return res.status(400).json({ error: `Los pagos suman ${sumaPagos} y la cuenta es ${cuenta}` })
+    if (sumaPagos !== montoFinal) {
+      return res.status(400).json({ error: `Los pagos suman ${sumaPagos} y la cuenta es ${montoFinal}` })
     }
     for (const p of payments) {
       if (!['EFECTIVO', 'TRANSFERENCIA', 'NEQUI', 'DATAFONO', 'CREDITO'].includes(p.method)) {
@@ -426,8 +528,27 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
           closedAt: new Date(),
           closedById: req.auth.userId,
           invoiceNumber: tenant.lastInvoiceNumber,
+          discountAmount,
+          ...(discountAmount > 0 && { discountAppliedById: discountEncargadoId }),
         },
       })
+      if (discountAmount > 0) {
+        // Se reparte segun la utilidad de cada linea (precio - costo): el
+        // producto que mas margen deja absorbe mas del descuento. Negativa se
+        // trata como 0 para repartir (una linea ya vendida a perdida no debe
+        // "ganar" descuento encima), pero sigue contando en costos.total para
+        // el chequeo de perdida de arriba.
+        const activos = order.items.filter((i) => i.status === 'ACTIVE')
+        const utilidades = activos.map((i) => ({
+          id: i.id,
+          utilidad: Math.max(0, Number(i.price) * i.qty - (costos.porItem.get(i.id) || 0)),
+        }))
+        const totalUtilidad = utilidades.reduce((s, u) => s + u.utilidad, 0)
+        for (const u of utilidades) {
+          const parte = totalUtilidad > 0 ? discountAmount * (u.utilidad / totalUtilidad) : 0
+          await tx.orderItem.update({ where: { id: u.id }, data: { discountAmount: parte } })
+        }
+      }
       await tx.orderPayment.createMany({
         data: payments.map((p) => {
           const amount = Number(p.amount)

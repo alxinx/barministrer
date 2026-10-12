@@ -153,6 +153,23 @@ usa hielo y el whisky no usa limón.
   dentro de la misma transacción del cierre para que dos cierres a la vez
   nunca repitan número. Las cuentas cerradas antes de este campo quedan sin
   número — no se rellena hacia atrás.
+- **Descuentos al cerrar:** escondido igual que la cortesía (triple clic,
+  ahora sobre el número de "Total a cobrar"), y solo lo puede usar el ADMIN o
+  un cajero con `cajeroAplicaDescuentos`. No es un porcentaje: se edita
+  directamente el valor que se va a cobrar, y la diferencia contra el total de
+  los items es el descuento. Se reparte entre las líneas según la utilidad de
+  cada una (precio − costo): el producto que más margen deja absorbe más del
+  descuento — así, si el total a cobrar no cae por debajo del costo total de
+  la cuenta, ninguna línea queda vendida a pérdida individualmente. Si cae por
+  debajo, el botón de pagar se bloquea y el modal avisa en rojo: nunca se
+  cierra una cuenta a pérdida. La factura imprime valor original, descuento y
+  valor pagado por separado; dividir el comprobante entre personas reparte el
+  valor **ya con descuento**, no el original. El costo de un shot/cóctel se
+  deriva de su receta (costo por ml de las presentaciones del ingrediente),
+  no es un campo propio — si un producto nunca tuvo costo registrado en el
+  catálogo, cuenta como costo 0 (margen = precio completo), así que absorbe
+  más descuento del que le tocaría de verdad: ponerle costo real es lo que
+  arregla eso, no el código.
 
 ### Precios con horario
 `active_from`/`active_until` **no** sirve para "los martes de 5 a 7": eso es
@@ -219,11 +236,12 @@ El bar opera de noche con poca luz. Interfaz **oscura**, tokens en
   se acabe primero).
 - Mutaciones de configuración: solo ADMIN. Mutaciones de operación (estado de
   mesa): cualquier rol. La distinción está en `PATCH /tables/:id`.
-- **Permisos delegables:** por defecto catálogo, inventario, distribución y
-  usuarios son solo-ADMIN. El dueño puede prenderle cada uno a CAJERO puntualmente
-  desde `/configuracion/permisos` (`Tenant.cajeroEditaCatalogo` /
-  `cajeroGestionaInventario` / `cajeroGestionaDistribucion` /
-  `cajeroGestionaUsuarios`, todos `false` por defecto). El middleware
+- **Permisos delegables:** por defecto catálogo, inventario, distribución,
+  usuarios y descuentos son solo-ADMIN. El dueño puede prenderle cada uno a
+  CAJERO puntualmente desde `/configuracion/permisos`
+  (`Tenant.cajeroEditaCatalogo` / `cajeroGestionaInventario` /
+  `cajeroGestionaDistribucion` / `cajeroGestionaUsuarios` /
+  `cajeroAplicaDescuentos`, todos `false` por defecto). El middleware
   `requirePermission(flag)` deja pasar a ADMIN siempre; a CAJERO solo si su
   tenant tiene ese flag en `true`. Aunque se le delegue usuarios, un cajero
   **nunca** puede crear ni tocar una cuenta ADMIN — evita que un permiso

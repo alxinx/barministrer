@@ -63,6 +63,7 @@ async function facturasDelTurno(tenantId, shiftId) {
       closedAt: true,
       isCourtesy: true,
       invoiceNumber: true,
+      discountAmount: true,
       table: { select: { number: true } },
       items: { select: { price: true, qty: true, status: true } },
       openedBy: { select: { name: true } },
@@ -75,6 +76,7 @@ async function facturasDelTurno(tenantId, shiftId) {
     closedAt: o.closedAt,
     isCourtesy: o.isCourtesy,
     invoiceNumber: o.invoiceNumber,
+    discountAmount: Number(o.discountAmount),
     openedByName: o.openedBy.name,
     total: o.items.filter((i) => i.status === 'ACTIVE').reduce((s, i) => s + Number(i.price) * i.qty, 0),
   }))
