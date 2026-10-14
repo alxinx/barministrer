@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Self-hosteada (antes Google Fonts): un origen externo menos que resolver
+   por DNS+TLS antes del primer render, lo que pesa mas en una conexion mala
+   que el peso del archivo en si. Un solo woff2 variable cubre los 5 pesos
+   que usa la app (400-800), en vez de una peticion por peso. */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('/fonts/archivo-variable.woff2') format('woff2-variations');
+}
+
 @layer base {
   html,
   body,

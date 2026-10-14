@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Icon } from './Icons'
 
 const CELL = 64 // px por celda de la cuadricula
 const GAP = 6
@@ -14,6 +15,14 @@ const statusDot = {
   RESERVED: 'bg-reservada',
   OCCUPIED: 'bg-ocupada',
   CLOSED: 'bg-muted',
+}
+
+// Mismo formato que usa el panel de la cuenta: nombre y apellido, con el
+// alias entre parentesis si tiene.
+function nombreCliente(c) {
+  if (!c) return ''
+  const base = [c.firstName, c.lastName].filter(Boolean).join(' ')
+  return c.alias ? `${base} (${c.alias})` : base
 }
 
 const elementStyle = {
@@ -46,14 +55,27 @@ export default function FloorPlan({
   onGestureStart,
   onGestureEnd,
   onContextMenu,
+  onElementContextMenu,
+  onTableContextMenu,
   elapsedByTable = {},
   pendingIds,
+  // Seleccion de varias mesas a la vez (solo en el POS, nunca en el editor):
+  // Ctrl/Cmd+clic suma o quita una mesa, y arrastrar sobre el fondo dibuja un
+  // recuadro que selecciona todas las que toque. selectedIds/onToggleSelect/
+  // onSelectRange los controla el padre; aqui solo se detecta el gesto.
+  multiSelectable = false,
+  selectedIds,
+  onToggleSelect,
+  onSelectRange,
+  onMultiContextMenu,
+  linkedIds,
 }) {
   const boardRef = useRef(null)
   const [dragging, setDragging] = useState(null)
   const [resizing, setResizing] = useState(null)
   const [rotating, setRotating] = useState(null)
   const [painting, setPainting] = useState(null)
+  const [seleccion, setSeleccion] = useState(null) // {x0,y0,x1,y1} en px relativos al tablero
 
   if (!zone) return null
 
@@ -61,6 +83,31 @@ export default function FloorPlan({
   const rows = zone.gridRows
   const blockedCells = zone.blockedCells || []
   const isBlocked = (x, y) => blockedCells.some((c) => c.x === x && c.y === y)
+
+  // Grupos de mesas fusionadas temporalmente (cada una ya trae su groupId
+  // desde /zones): un contorno por grupo, calculado del rectangulo que cubre
+  // a todas sus mesas, para que se vean como una sola figura en vez de solo
+  // el link de cada una por separado.
+  const gruposFusion = []
+  for (const t of zone.tables || []) {
+    if (!t.groupId) continue
+    let grupo = gruposFusion.find((g) => g.principalId === t.groupId)
+    if (!grupo) {
+      grupo = { principalId: t.groupId, ids: [t.groupId] }
+      gruposFusion.push(grupo)
+    }
+    grupo.ids.push(t.id)
+  }
+  function bboxDeGrupo(ids) {
+    const miembros = (zone.tables || []).filter((t) => ids.includes(t.id))
+    return {
+      left: Math.min(...miembros.map((t) => t.gridX)),
+      top: Math.min(...miembros.map((t) => t.gridY)),
+      right: Math.max(...miembros.map((t) => t.gridX + t.width)),
+      bottom: Math.max(...miembros.map((t) => t.gridY + t.height)),
+    }
+  }
+  const idsFusionados = new Set(gruposFusion.flatMap((g) => g.ids))
 
   function cellFromPointer(e) {
     const rect = boardRef.current.getBoundingClientRect()
@@ -87,6 +134,27 @@ export default function FloorPlan({
     const adding = !isBlocked(x, y)
     setPainting({ adding })
     onBlockCell?.(x, y, adding)
+  }
+
+  // Recuadro de seleccion: arrastrar sobre el fondo (nunca sobre una mesa,
+  // esas manejan su propio clic/ctrl+clic) para elegir varias de un tiron, en
+  // vez de ctrl+clic una por una.
+  function startSelectionDrag(e) {
+    if (editable || !multiSelectable || e.target.closest('button')) return
+    const rect = boardRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    setSeleccion({ x0: x, y0: y, x1: x, y1: y })
+  }
+
+  function tableRectPx(t) {
+    const rect = boardRef.current.getBoundingClientRect()
+    return {
+      left: (t.gridX / cols) * rect.width,
+      top: (t.gridY / rows) * rect.height,
+      right: ((t.gridX + t.width) / cols) * rect.width,
+      bottom: ((t.gridY + t.height) / rows) * rect.height,
+    }
   }
 
   // Redimensionar: arrastrar desde la esquina inferior derecha, como se agranda
@@ -154,6 +222,10 @@ export default function FloorPlan({
       const { x, y } = cellFromPointer(e)
       onBlockCell?.(x, y, painting.adding)
     }
+    if (seleccion) {
+      const rect = boardRef.current.getBoundingClientRect()
+      setSeleccion((s) => ({ ...s, x1: e.clientX - rect.left, y1: e.clientY - rect.top }))
+    }
   }
 
   function endPointer() {
@@ -163,6 +235,27 @@ export default function FloorPlan({
     setRotating(null)
     setPainting(null)
     if (hadGesture) onGestureEnd?.()
+
+    if (seleccion) {
+      const left = Math.min(seleccion.x0, seleccion.x1)
+      const right = Math.max(seleccion.x0, seleccion.x1)
+      const top = Math.min(seleccion.y0, seleccion.y1)
+      const bottom = Math.max(seleccion.y0, seleccion.y1)
+      setSeleccion(null)
+      // Un clic sin arrastrar sobre el fondo (sin soltar lejos de donde
+      // empezo) limpia la seleccion en vez de "elegir" un recuadro de 0px.
+      if (right - left < 4 && bottom - top < 4) {
+        onSelectRange?.([])
+        return
+      }
+      const idsEnRecuadro = (zone.tables || [])
+        .filter((t) => {
+          const r = tableRectPx(t)
+          return !(r.right < left || r.left > right || r.bottom < top || r.top > bottom)
+        })
+        .map((t) => t.id)
+      onSelectRange?.(idsEnRecuadro)
+    }
   }
 
   const style = (item) => ({
@@ -176,7 +269,10 @@ export default function FloorPlan({
   return (
     <div
       ref={boardRef}
-      onPointerDown={startPaint}
+      onPointerDown={(e) => {
+        startPaint(e)
+        startSelectionDrag(e)
+      }}
       onPointerMove={onPointerMove}
       onPointerUp={endPointer}
       onPointerLeave={endPointer}
@@ -207,11 +303,29 @@ export default function FloorPlan({
         />
       ))}
 
+      {/* Recuadro de seleccion en vivo mientras se arrastra. */}
+      {seleccion && (
+        <div
+          className="absolute z-20 border-2 border-amber bg-amber/10 pointer-events-none rounded-sm"
+          style={{
+            left: Math.min(seleccion.x0, seleccion.x1),
+            top: Math.min(seleccion.y0, seleccion.y1),
+            width: Math.abs(seleccion.x1 - seleccion.x0),
+            height: Math.abs(seleccion.y1 - seleccion.y0),
+          }}
+        />
+      )}
+
       {/* Elementos primero: quedan debajo de las mesas */}
       {zone.elements?.map((el) => (
         <div
           key={el.id}
           onPointerDown={(e) => startDrag(e, 'element', el)}
+          onContextMenu={(e) => {
+            if (!editable || blockMode || !onElementContextMenu) return
+            e.preventDefault()
+            onElementContextMenu(el)
+          }}
           style={{ ...style(el), transform: `rotate(${el.rotation || 0}deg)` }}
           className={`absolute rounded-lg grid place-items-center text-xs text-muted
             ${elementStyle[el.type]}
@@ -228,17 +342,92 @@ export default function FloorPlan({
         </div>
       ))}
 
+      {/* Contorno de cada grupo fusionado: un solo rectangulo punteado que
+          envuelve a todas sus mesas, para que se lean como una sola cuenta
+          de un vistazo y no solo por el link pequeño de cada una. */}
+      {gruposFusion.map((g) => {
+        const b = bboxDeGrupo(g.ids)
+        return (
+          <div
+            key={g.principalId}
+            className="absolute rounded-2xl border-2 border-dashed border-amber/70 pointer-events-none"
+            style={{
+              left: `calc(${(b.left / cols) * 100}% - 4px)`,
+              top: `calc(${(b.top / rows) * 100}% - 4px)`,
+              width: `calc(${((b.right - b.left) / cols) * 100}% + 8px)`,
+              height: `calc(${((b.bottom - b.top) / rows) * 100}% + 8px)`,
+            }}
+          />
+        )
+      })}
+
+      {/* Nombre del cliente asociado, como una etiqueta siempre visible
+          (no al pasar el mouse: en el POS nadie usa mouse) encima de la mesa
+          o, si esta fusionada, encima de todo el grupo. Solo en el POS: en
+          el editor de planos el cliente no pinta nada. */}
+      {!editable && (
+        <>
+          {gruposFusion.map((g) => {
+            const b = bboxDeGrupo(g.ids)
+            const cliente = (zone.tables || []).find((t) => g.ids.includes(t.id) && t.customer)?.customer
+            if (!cliente) return null
+            return (
+              <ClienteTag
+                key={`cliente-${g.principalId}`}
+                left={((b.left + b.right) / 2 / cols) * 100}
+                top={(b.top / rows) * 100}
+                nombre={nombreCliente(cliente)}
+              />
+            )
+          })}
+          {zone.tables
+            ?.filter((t) => t.customer && !idsFusionados.has(t.id))
+            .map((t) => (
+              <ClienteTag
+                key={`cliente-${t.id}`}
+                left={((t.gridX + t.width / 2) / cols) * 100}
+                top={(t.gridY / rows) * 100}
+                nombre={nombreCliente(t.customer)}
+              />
+            ))}
+        </>
+      )}
+
       {zone.tables?.map((t) => {
         const elapsed = elapsedByTable[t.id]
         const pendiente = pendingIds?.has(t.id)
+        // Una mesa angosta y alta (ej. una esquina pegada a la pared) no le
+        // alcanza el ancho al numero/nombre: se gira el texto 90 grados para
+        // que corra a lo largo del lado mas largo en vez de desbordarse.
+        const vertical = t.height > t.width
+        const multiSel = multiSelectable && selectedIds?.has(t.id)
+        const vinculada = linkedIds?.has(t.id)
         return (
           <button
             key={t.id}
             type="button"
             onPointerDown={(e) => startDrag(e, 'table', t)}
-            onClick={() => !editable && onSelect?.('table', t)}
+            onClick={(e) => {
+              if (editable) return
+              if (multiSelectable && (e.ctrlKey || e.metaKey)) {
+                onToggleSelect?.(t.id)
+                return
+              }
+              onSelect?.('table', t)
+            }}
             onContextMenu={(e) => {
-              if (editable || !onContextMenu) return
+              if (editable) {
+                if (blockMode || !onTableContextMenu) return
+                e.preventDefault()
+                onTableContextMenu(t)
+                return
+              }
+              if (multiSelectable && selectedIds?.size >= 2 && selectedIds.has(t.id)) {
+                e.preventDefault()
+                onMultiContextMenu?.([...selectedIds], e)
+                return
+              }
+              if (!onContextMenu) return
               e.preventDefault()
               onContextMenu(t, e)
             }}
@@ -247,17 +436,29 @@ export default function FloorPlan({
               transition-colors
               ${t.shape === 'ROUND' ? 'rounded-full' : 'rounded-xl'}
               ${selectedId === t.id ? 'border-amber bg-amber/10 animate-mesa-seleccionada' : statusRing[t.status]}
+              ${multiSel ? 'ring-2 ring-amber ring-offset-2 ring-offset-night' : ''}
               ${editable ? 'cursor-grab active:cursor-grabbing' : 'hover:border-amber'}`}
           >
             {pendiente && (
               <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-amber border-2 border-night animate-pulse" />
             )}
-            <span className={`w-2 h-2 rounded-full justify-self-center ${statusDot[t.status]}`} />
-            <span className={`text-mesa ${pendiente ? 'text-amber' : ''}`}>{t.number}</span>
-            <span className="text-[11px] text-muted">{t.seats} pers.</span>
-            {elapsed && (
-              <span className="text-[11px] font-semibold text-reservada">{elapsed}</span>
+            {vinculada && !pendiente && (
+              <span
+                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-night border border-amber/60
+                           text-amber grid place-items-center"
+                title="Fusionada temporalmente con otra mesa"
+              >
+                <Icon.link width={10} height={10} strokeWidth={2.2} />
+              </span>
             )}
+            <span className={`w-2 h-2 rounded-full justify-self-center ${statusDot[t.status]}`} />
+            <div className={`flex flex-col items-center gap-0.5 ${vertical ? '-rotate-90' : ''}`}>
+              <span className={`text-mesa whitespace-nowrap ${pendiente ? 'text-amber' : ''}`}>{t.number}</span>
+              <span className="text-[11px] text-muted whitespace-nowrap">{t.seats} pers.</span>
+              {elapsed && (
+                <span className="text-[11px] font-semibold text-reservada whitespace-nowrap">{elapsed}</span>
+              )}
+            </div>
             {editable && !blockMode && selectedId === t.id && (
               <ResizeHandle onPointerDown={(e) => startResize(e, 'table', t)} />
             )}
@@ -272,6 +473,22 @@ export default function FloorPlan({
             : 'Esta zona todavía no tiene mesas.'}
         </p>
       )}
+    </div>
+  )
+}
+
+// Etiqueta con el nombre del cliente, flotando justo encima de la mesa o del
+// contorno del grupo. z-30 para quedar por encima de las mesas vecinas (una
+// mesa alta puede meterse debajo del borde de arriba si no).
+function ClienteTag({ left, top, nombre }) {
+  return (
+    <div
+      className="absolute z-30 -translate-x-1/2 -translate-y-full -mt-1.5 px-2.5 py-1 rounded-lg
+                 bg-night border border-amber/60 text-amber text-[11px] font-semibold
+                 whitespace-nowrap pointer-events-none"
+      style={{ left: `${left}%`, top: `${top}%` }}
+    >
+      {nombre}
     </div>
   )
 }

@@ -27,7 +27,7 @@ function useUnMesSolo() {
 // el extremo mas cercano de ESE rango (el comportamiento normal de un
 // calendario de rango) en vez de empezar una seleccion nueva de fecha A a
 // fecha B, que es lo que se pidio.
-export default function RangoFechas({ rango, onElegir, activo = false }) {
+export default function RangoFechas({ rango, onElegir, activo = false, labelOcioso }) {
   const [abierto, setAbierto] = useState(false)
   const [seleccion, setSeleccion] = useState(undefined)
   const [alinear, setAlinear] = useState('right')
@@ -82,7 +82,7 @@ export default function RangoFechas({ rango, onElegir, activo = false }) {
         }`}
       >
         <Icon.calendar width={14} height={14} />
-        {formatCorto(rango.from)} – {formatCorto(rango.to)}
+        {activo || !labelOcioso ? `${formatCorto(rango.from)} – ${formatCorto(rango.to)}` : labelOcioso}
       </button>
 
       {abierto && (

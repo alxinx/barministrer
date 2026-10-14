@@ -52,6 +52,7 @@ services:
     volumes:
       - ./web/src:/app/src
       - ./web/index.html:/app/index.html
+      - ./web/public:/app/public
 
 volumes:
   db_data:

@@ -238,6 +238,28 @@ export const Icon = {
       <path d="M3 10h18M8 3v4M16 3v4" />
     </svg>
   ),
+  lShape: (p) => (
+    <svg {...base} {...p}>
+      <path d="M6 4v14h14" />
+    </svg>
+  ),
+  trendArrow: (p) => (
+    <svg {...base} {...p}>
+      <path d="M4 17l6-6 4 4 6-8" />
+      <path d="M14 7h6v6" />
+    </svg>
+  ),
+  filter: (p) => (
+    <svg {...base} {...p}>
+      <path d="M4 5h16M7 12h10M10.5 19h3" />
+    </svg>
+  ),
+  link: (p) => (
+    <svg {...base} {...p}>
+      <path d="M10 14a3.5 3.5 0 0 0 5 0l2-2a3.5 3.5 0 0 0-5-5l-1 1" />
+      <path d="M14 10a3.5 3.5 0 0 0-5 0l-2 2a3.5 3.5 0 0 0 5 5l1-1" />
+    </svg>
+  ),
 }
 
 export const zoneIcon = { table: Icon.tables, sun: Icon.sun, crown: Icon.crown, glass: Icon.glass }

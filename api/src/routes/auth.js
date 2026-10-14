@@ -2,6 +2,7 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { signToken, requireAuth } from '../middleware/auth.js'
+import { loginLimiter, pinLimiter } from '../middleware/rateLimit.js'
 
 export const authRoutes = Router()
 
@@ -23,7 +24,7 @@ function tenantPublic(tenant) {
   }
 }
 
-authRoutes.post('/login', async (req, res) => {
+authRoutes.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body || {}
   if (!email || !password) {
     return res.status(400).json({ error: 'Escribe tu correo y tu clave' })
@@ -50,7 +51,7 @@ authRoutes.post('/login', async (req, res) => {
 // Devolver un producto ya pedido necesita el PIN del encargado (ADMIN o
 // CAJERO), no el de quien esta operando: una mesera puede iniciar la
 // devolucion pero necesita que alguien con autoridad la apruebe.
-authRoutes.post('/verify-pin', requireAuth, async (req, res) => {
+authRoutes.post('/verify-pin', requireAuth, pinLimiter, async (req, res) => {
   const { pin } = req.body || {}
   if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN' })
 

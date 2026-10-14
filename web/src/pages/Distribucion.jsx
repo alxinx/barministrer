@@ -9,7 +9,7 @@ const PIEZAS = [
   { type: 'BAR', label: 'Barra', icon: Icon.glass, w: 3, h: 1 },
   { type: 'WALL', label: 'Pared', icon: Icon.wall, w: 1, h: 3 },
   { type: 'DOOR', label: 'Entrada', icon: Icon.door, w: 2, h: 1 },
-  { type: 'PLANT', label: 'Planta', icon: Icon.plant, w: 1, h: 1 },
+  { type: 'L', label: 'En L', icon: Icon.lShape },
   { type: 'STAGE', label: 'Tarima', icon: Icon.stage, w: 3, h: 2 },
 ]
 
@@ -359,25 +359,55 @@ export default function Distribucion() {
   }
 
   // --- Agregar -------------------------------------------------------------
+  // Una pieza nueva aparece en el centro del tablero, no en la esquina: asi
+  // siempre cae sobre un pedazo visible del plano (la esquina casi siempre
+  // tiene algo encima ya puesto) y el ojo la encuentra de una para arrastrarla
+  // a su lugar.
+  function centrar(width, height) {
+    const cols = zone?.gridCols || 16
+    const rows = zone?.gridRows || 10
+    return {
+      gridX: Math.max(0, Math.floor((cols - width) / 2)),
+      gridY: Math.max(0, Math.floor((rows - height) / 2)),
+    }
+  }
+
   async function agregar(pieza) {
     snapshot()
     try {
       if (pieza.type === 'TABLE') {
         const usados = zones.flatMap((z) => z.tables.map((t) => Number(t.number))).filter(Boolean)
         const siguiente = String((usados.length ? Math.max(...usados) : 0) + 1).padStart(2, '0')
+        const { gridX, gridY } = centrar(1, 1)
         await api('/tables', {
           method: 'POST',
-          body: { zoneId: activeId, number: siguiente, seats: 4, gridX: 0, gridY: 0 },
+          body: { zoneId: activeId, number: siguiente, seats: 4, gridX, gridY },
+        })
+      } else if (pieza.type === 'L') {
+        // Una barra en L no es una pieza nueva en el modelo: son dos barras
+        // normales, ya puestas tocandose en escuadra. Cada brazo se mueve,
+        // redimensiona o borra por separado despues, igual que cualquier
+        // otra barra — el boton solo ahorra el acomodo inicial. Se centra la
+        // L completa (su caja 3x4), no cada brazo por separado.
+        const { gridX, gridY } = centrar(3, 4)
+        await api('/elements', {
+          method: 'POST',
+          body: { zoneId: activeId, type: 'BAR', label: 'Barra', gridX, gridY, width: 3, height: 1 },
+        })
+        await api('/elements', {
+          method: 'POST',
+          body: { zoneId: activeId, type: 'BAR', label: 'Barra', gridX, gridY: gridY + 1, width: 1, height: 3 },
         })
       } else {
+        const { gridX, gridY } = centrar(pieza.w, pieza.h)
         await api('/elements', {
           method: 'POST',
           body: {
             zoneId: activeId,
             type: pieza.type,
             label: pieza.type === 'BAR' || pieza.type === 'DOOR' ? pieza.label : null,
-            gridX: 0,
-            gridY: 0,
+            gridX,
+            gridY,
             width: pieza.w,
             height: pieza.h,
           },
@@ -400,6 +430,102 @@ export default function Distribucion() {
     } catch (err) {
       show(err)
     }
+  }
+
+  // --- Fusionar piezas superpuestas o pegadas -------------------------------
+  // Clic derecho sobre un elemento o una mesa, en modo edicion: si hay otra
+  // pieza que se cruza con ella o que la toca borde con borde (asi se arman
+  // la mayoria de paredes y barras: segmento tras segmento, pegados, no uno
+  // encima del otro), se funden en una sola que cubre el area de las dos. La
+  // que se clickeo es la que sobrevive (se queda con su tipo/numero); la otra
+  // desaparece. Fusionar mesas ademas respeta la misma regla que ya existia
+  // para marcarlas disponibles: si cualquiera tiene una cuenta abierta con
+  // contenido real, el backend rechaza la fusion.
+  function sePuedenFusionar(a, b) {
+    const seCruzanEnX = a.gridX <= b.gridX + b.width && a.gridX + a.width >= b.gridX
+    const seCruzanEnY = a.gridY <= b.gridY + b.height && a.gridY + a.height >= b.gridY
+    return seCruzanEnX && seCruzanEnY
+  }
+
+  // Que tanto se tocan dos piezas, para elegir con cual fusionar cuando hay
+  // mas de una vecina. Si de verdad se cruzan, el area; si solo se tocan
+  // borde con borde (el caso mas comun: paredes o mesas puestas una al lado
+  // de la otra), el area siempre da 0 — ahi cuenta el largo del borde que
+  // comparten, para no quedar a la suerte del orden en que llegaron del
+  // servidor cuando dos vecinas tocan por igual en area.
+  function fuerzaContacto(a, b) {
+    const anchoX = Math.min(a.gridX + a.width, b.gridX + b.width) - Math.max(a.gridX, b.gridX)
+    const altoY = Math.min(a.gridY + a.height, b.gridY + b.height) - Math.max(a.gridY, b.gridY)
+    if (anchoX > 0 && altoY > 0) return anchoX * altoY
+    if (anchoX === 0 && altoY > 0) return altoY
+    if (altoY === 0 && anchoX > 0) return anchoX
+    return 0 // se tocan solo en una esquina
+  }
+
+  function nombreElemento(item) {
+    return item.label || PIEZAS.find((p) => p.type === item.type)?.label || 'elemento'
+  }
+
+  function fusionarElemento(elemento) {
+    const candidatos = zone.elements.filter((e) => e.id !== elemento.id && sePuedenFusionar(elemento, e))
+    if (!candidatos.length) return
+    // si hay mas de uno debajo, se funde con el que mas se solapa
+    const otro = candidatos.reduce((mejor, e) => (fuerzaContacto(elemento, e) > fuerzaContacto(elemento, mejor) ? e : mejor))
+
+    setConfirm({
+      title: 'Fusionar elementos',
+      message: `"${nombreElemento(otro)}" se va a fusionar dentro de "${nombreElemento(
+        elemento
+      )}": queda un solo elemento del tamaño de los dos juntos, tipo ${
+        PIEZAS.find((p) => p.type === elemento.type)?.label
+      }. No se puede deshacer.`,
+      confirmLabel: 'Fusionar',
+      confirmIcon: Icon.copy,
+      onConfirm: async () => {
+        const left = Math.min(elemento.gridX, otro.gridX)
+        const top = Math.min(elemento.gridY, otro.gridY)
+        const right = Math.max(elemento.gridX + elemento.width, otro.gridX + otro.width)
+        const bottom = Math.max(elemento.gridY + elemento.height, otro.gridY + otro.height)
+
+        snapshot()
+        try {
+          await api(`/elements/${elemento.id}`, {
+            method: 'PATCH',
+            body: { gridX: left, gridY: top, width: right - left, height: bottom - top, rotation: 0 },
+          })
+          await api(`/elements/${otro.id}`, { method: 'DELETE' })
+          setSelected(null)
+          await load()
+        } catch (err) {
+          show(err)
+        }
+      },
+    })
+  }
+
+  function fusionarMesa(mesa) {
+    const candidatas = zone.tables.filter((t) => t.id !== mesa.id && sePuedenFusionar(mesa, t))
+    if (!candidatas.length) return
+    const otra = candidatas.reduce((mejor, t) => (fuerzaContacto(mesa, t) > fuerzaContacto(mesa, mejor) ? t : mejor))
+
+    setConfirm({
+      title: 'Fusionar mesas',
+      message: `"Mesa ${otra.number}" se va a fusionar dentro de "Mesa ${mesa.number}": queda una sola mesa con ${
+        mesa.seats + otra.seats
+      } puestos. Si alguna tiene una cuenta abierta con productos o cliente, no se va a poder. No se puede deshacer.`,
+      confirmLabel: 'Fusionar',
+      confirmIcon: Icon.copy,
+      onConfirm: async () => {
+        snapshot()
+        try {
+          await api(`/tables/${mesa.id}/merge`, { method: 'POST', body: { withId: otra.id } })
+          setSelected(null)
+          await load()
+        } catch (err) {
+          show(err)
+        }
+      },
+    })
   }
 
   function eliminarSeleccion() {
@@ -637,6 +763,8 @@ export default function Distribucion() {
           onBlockCell={setBlockedCell}
           onGestureStart={iniciarGesto}
           onGestureEnd={terminarGesto}
+          onElementContextMenu={fusionarElemento}
+          onTableContextMenu={fusionarMesa}
         />
 
         <div className="space-y-5">
@@ -842,6 +970,8 @@ export default function Distribucion() {
         <ConfirmModal
           title={confirm.title}
           message={confirm.message}
+          confirmLabel={confirm.confirmLabel}
+          confirmIcon={confirm.confirmIcon}
           onCancel={() => setConfirm(null)}
           onConfirm={async () => {
             await confirm.onConfirm()

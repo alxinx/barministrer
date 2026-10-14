@@ -1,11 +1,34 @@
 services:
-  api:
-    build: ./api
-    container_name: licorplus_api
+  db:
+    image: mysql:8.0
+    container_name: licorplus_db
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-licorplus}
+      MYSQL_USER: ${MYSQL_USER:-licorplus}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: 211125394239.dkr.ecr.us-east-1.amazonaws.com/barministrer-app:latest
+    container_name: licorplus_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-licorplus}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-licorplus}
       JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://app.barministrer.com}
       PORT: 4000
       NODE_ENV: production
       R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
@@ -14,17 +37,16 @@ services:
       R2_BUCKET: ${R2_BUCKET}
       R2_PUBLIC_URL: ${R2_PUBLIC_URL}
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
 
   web:
-    build:
-      context: ./web
-      dockerfile: Dockerfile.prod
-      args:
-        VITE_API_URL: ${VITE_API_URL}
+    image: 211125394239.dkr.ecr.us-east-1.amazonaws.com/barministrer-web:latest
     container_name: licorplus_web
     restart: unless-stopped
     depends_on:
       - api
     ports:
-      - "80:80"
+      - "127.0.0.1:8080:80"
+
+volumes:
+  db_data:

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, money } from '../lib/api'
 import { categoryTree } from '../lib/categories'
+import { getCategories, invalidateCategories } from '../lib/categoriesStore'
 import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import ProductoForm from '../components/ProductoForm'
@@ -23,7 +24,7 @@ export default function Productos() {
   }, [])
 
   async function load() {
-    const [p, c] = await Promise.all([api('/products'), api('/categories')])
+    const [p, c] = await Promise.all([api('/products'), getCategories(session?.tenant.id)])
     setProducts(p)
     setCategories(c)
   }
@@ -72,6 +73,7 @@ export default function Productos() {
   function categoriaGuardada() {
     cerrarCategoria()
     setFilter('')
+    invalidateCategories()
     load()
   }
 

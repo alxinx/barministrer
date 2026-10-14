@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
+import { diaLocal, rangoEntreFechas, rangoValido } from '../lib/fechas.js'
 
 export const shiftRoutes = Router()
 const cajero = requireRole('ADMIN', 'CAJERO')
@@ -8,6 +9,13 @@ const cajero = requireRole('ADMIN', 'CAJERO')
 // Medios que se cuentan a ciegas al cerrar caja. Credito no entra: el fiado
 // es una cuenta por cobrar, nunca efectivo ni plastico en el cajon.
 const METHODS = ['EFECTIVO', 'NEQUI', 'TRANSFERENCIA', 'DATAFONO']
+const METHOD_LABEL = {
+  EFECTIVO: 'Efectivo',
+  NEQUI: 'Nequi',
+  TRANSFERENCIA: 'Transferencia',
+  DATAFONO: 'Datáfono',
+  CREDITO: 'Crédito',
+}
 
 // Ventas reales del turno, agrupadas por medio de pago. Se usa en vivo (para
 // mostrar el movimiento del dia con el turno todavia abierto) y una sola vez
@@ -44,13 +52,146 @@ async function resumenVentas(tenantId, shiftId) {
   }
   const totalAbonos = Object.values(abonosByMethod).reduce((s, v) => s + v, 0)
 
-  const [tickets, cortesias] = await Promise.all([
+  const [tickets, cortesias, devueltos] = await Promise.all([
     prisma.order.count({ where: { tenantId, shiftId, status: 'CLOSED' } }),
     prisma.order.count({ where: { tenantId, shiftId, status: 'CLOSED', isCourtesy: true } }),
+    // Una devolucion solo puede pasar con la cuenta todavia abierta (ver
+    // /orders/:id/items/:itemId/void): no es plata que sale del cajon, es
+    // valor que se quito antes de cobrar. Se cuenta igual porque informa
+    // cuanto se esta corrigiendo antes de facturar.
+    prisma.orderItem.findMany({
+      where: { status: 'VOIDED', order: { tenantId, shiftId } },
+      select: { price: true, qty: true },
+    }),
   ])
+  const devoluciones = devueltos.reduce((s, i) => s + Number(i.price) * i.qty, 0)
 
   const totalVentas = Object.values(byMethod).reduce((s, v) => s + v, 0) + fiado
-  return { byMethod, fiado, totalVentas, tickets, cortesias, abonos: { byMethod: abonosByMethod, total: totalAbonos } }
+  return {
+    byMethod,
+    fiado,
+    totalVentas,
+    tickets,
+    cortesias,
+    devoluciones,
+    abonos: { byMethod: abonosByMethod, total: totalAbonos },
+  }
+}
+
+function sumarDias(fechaStr, delta) {
+  return new Date(Date.parse(`${fechaStr}T00:00:00Z`) + delta * 86400000).toISOString().slice(0, 10)
+}
+
+function calcularVariacion(actual, anterior) {
+  if (!anterior) return null
+  return ((actual - anterior) / anterior) * 100
+}
+
+// Movimientos de caja (ventas facturadas + devoluciones) entre dos fechas,
+// sin importar a que turno pertenezcan: esto es para que el dueño navegue
+// "que paso hoy/esta semana", no para el cuadre de un turno puntual (eso
+// sigue siendo por turno, con conteo ciego, en /shifts/:id/close). Ventas en
+// base de caja (cuando entro el pago, igual que "recaudado" en el reporte de
+// ventas), devoluciones por cuando se anularon.
+async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
+  const { etiquetas, desde, hasta } = rangoEntreFechas(desdeStr, hastaStr)
+  // rangoEntreFechas da un colchon de hasta 2 dias extra en UTC a cada lado
+  // (para no tener que calcular la medianoche local exacta): hay que filtrar
+  // fino aqui comparando el dia local real de cada registro contra el pedido,
+  // o un rango de "hoy"/"ayer" de un solo dia terminaria trayendo movimientos
+  // de otros dias.
+  const enRango = (fecha) => etiquetas.includes(diaLocal(fecha, timezone))
+
+  const [pagosCrudo, abonosCrudo, ordenesCrudo, devueltosCrudo] = await Promise.all([
+    prisma.orderPayment.findMany({
+      where: { tenantId, method: { not: 'CREDITO' }, createdAt: { gte: desde, lte: hasta } },
+      select: { amount: true, method: true, createdAt: true },
+    }),
+    prisma.customerPayment.findMany({
+      where: { tenantId, createdAt: { gte: desde, lte: hasta } },
+      select: { amount: true, method: true, createdAt: true },
+    }),
+    prisma.order.findMany({
+      where: { tenantId, status: 'CLOSED', isCourtesy: false, closedAt: { gte: desde, lte: hasta } },
+      select: {
+        id: true,
+        closedAt: true,
+        table: { select: { number: true } },
+        items: { where: { status: 'ACTIVE' }, select: { name: true, variantName: true, qty: true, price: true } },
+        payments: { select: { method: true } },
+      },
+      orderBy: { closedAt: 'desc' },
+    }),
+    prisma.orderItem.findMany({
+      where: { status: 'VOIDED', voidedAt: { gte: desde, lte: hasta }, order: { tenantId } },
+      select: {
+        id: true,
+        name: true,
+        variantName: true,
+        qty: true,
+        price: true,
+        voidedAt: true,
+        orderId: true,
+        order: { select: { table: { select: { number: true } } } },
+      },
+      orderBy: { voidedAt: 'desc' },
+    }),
+  ])
+
+  const pagos = pagosCrudo.filter((p) => enRango(p.createdAt))
+  const abonos = abonosCrudo.filter((a) => enRango(a.createdAt))
+  const ordenes = ordenesCrudo.filter((o) => enRango(o.closedAt))
+  const devueltos = devueltosCrudo.filter((i) => enRango(i.voidedAt))
+
+  let efectivo = 0
+  let tarjetaTransferencia = 0
+  for (const p of [...pagos, ...abonos]) {
+    if (p.method === 'EFECTIVO') efectivo += Number(p.amount)
+    else tarjetaTransferencia += Number(p.amount)
+  }
+
+  let devoluciones = 0
+  const movimientosDevolucion = devueltos.map((i) => {
+    const monto = Number(i.price) * i.qty
+    devoluciones += monto
+    return {
+      id: `dev-${i.id}`,
+      orderId: i.orderId,
+      hora: i.voidedAt,
+      tipo: 'DEVOLUCION',
+      descripcion: `Mesa ${i.order.table.number}`,
+      detalle: `${i.qty} × ${i.name}${i.variantName ? ` · ${i.variantName}` : ''}`,
+      // Una devolucion pasa antes de cobrar: nunca tuvo un medio de pago
+      // propio, por eso no hay nada que mostrar aqui.
+      metodo: null,
+      monto: -monto,
+    }
+  })
+
+  const movimientosVenta = ordenes.map((o) => {
+    const metodos = [...new Set(o.payments.map((p) => METHOD_LABEL[p.method] || p.method))]
+    const monto = o.items.reduce((s, i) => s + Number(i.price) * i.qty, 0)
+    const detalle = o.items.map((i) => `${i.qty} × ${i.name}${i.variantName ? ` ${i.variantName}` : ''}`).join(', ')
+    return {
+      id: `venta-${o.id}`,
+      orderId: o.id,
+      hora: o.closedAt,
+      tipo: 'VENTA',
+      descripcion: `Mesa ${o.table.number}`,
+      detalle: detalle || 'Sin productos',
+      metodo: metodos.length ? metodos.join(' + ') : 'Crédito',
+      monto,
+    }
+  })
+
+  const movimientos = [...movimientosVenta, ...movimientosDevolucion].sort(
+    (a, b) => new Date(b.hora) - new Date(a.hora)
+  )
+
+  return {
+    totales: { totalVentas: efectivo + tarjetaTransferencia, efectivo, tarjetaTransferencia, devoluciones },
+    movimientos,
+  }
 }
 
 // Lista liviana de las cuentas cerradas del turno, para "ver la factura" de
@@ -116,6 +257,52 @@ shiftRoutes.get('/shifts', async (req, res) => {
     take: 30,
   })
   res.json(shifts)
+})
+
+// Movimientos de caja por calendario (hoy/ayer/N dias/rango), para la vista
+// de "Caja" en vivo: no reemplaza el cuadre por turno, es para navegar que
+// paso sin tener que entrar turno por turno. Va antes de /shifts/:id para
+// que Express no confunda "movimientos" con un id.
+shiftRoutes.get('/shifts/movimientos', cajero, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.auth.tenantId }, select: { timezone: true } })
+  const hoy = diaLocal(new Date(), tenant.timezone)
+  const { modo, desde: desdeQ, hasta: hastaQ } = req.query
+
+  let desdeStr
+  let hastaStr
+  if (rangoValido(desdeQ, hastaQ)) {
+    desdeStr = desdeQ
+    hastaStr = hastaQ
+  } else if (modo === 'ayer') {
+    desdeStr = hastaStr = sumarDias(hoy, -1)
+  } else if (modo === '7d') {
+    desdeStr = sumarDias(hoy, -6)
+    hastaStr = hoy
+  } else if (modo === '30d') {
+    desdeStr = sumarDias(hoy, -29)
+    hastaStr = hoy
+  } else {
+    desdeStr = hastaStr = hoy
+  }
+
+  const dias = Math.round((Date.parse(hastaStr) - Date.parse(desdeStr)) / 86400000) + 1
+  const desdeAnteriorStr = sumarDias(desdeStr, -dias)
+  const hastaAnteriorStr = sumarDias(desdeStr, -1)
+
+  const [actual, anterior] = await Promise.all([
+    calcularMovimientos(req.auth.tenantId, desdeStr, hastaStr, tenant.timezone),
+    calcularMovimientos(req.auth.tenantId, desdeAnteriorStr, hastaAnteriorStr, tenant.timezone),
+  ])
+
+  res.json({
+    desde: desdeStr,
+    hasta: hastaStr,
+    totales: {
+      ...actual.totales,
+      variacion: calcularVariacion(actual.totales.totalVentas, anterior.totales.totalVentas),
+    },
+    movimientos: actual.movimientos,
+  })
 })
 
 // Detalle de un turno (pasado o actual) para el drill-down desde el

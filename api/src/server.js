@@ -13,15 +13,23 @@ import { userRoutes } from './routes/users.js'
 import { tenantRoutes } from './routes/tenant.js'
 import { reportRoutes } from './routes/reports.js'
 import { requireAuth } from './middleware/auth.js'
+import { apiLimiter } from './middleware/rateLimit.js'
 import { initRealtime } from './lib/realtime.js'
 
 const app = express()
 
-app.use(cors())
+// El navegador llama la API en un origen distinto al que sirve nginx (ver
+// web/nginx.conf: no hace proxy de /api), asi que no puede ir sin CORS. Pero
+// "sin opciones" acepta cualquier origen: se restringe a los que de verdad
+// sirven el frontend (el propio deploy + localhost en dev), no a internet
+// entero. CORS_ORIGIN es una lista separada por comas.
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((o) => o.trim())
+app.use(cors({ origin: corsOrigins }))
 app.use(express.json({ limit: '2mb' }))
 
 app.get('/health', (_req, res) => res.json({ ok: true }))
 
+app.use('/api', apiLimiter)
 app.use('/api/auth', authRoutes)
 app.use('/api', requireAuth, catalogRoutes)
 app.use('/api', requireAuth, layoutRoutes)

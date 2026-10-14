@@ -285,12 +285,22 @@ model BarTable {
   height   Int         @default(1)
   active   Boolean     @default(true)
 
+  /// Fusion temporal para una cuenta grande repartida en varias mesas (ej.
+  /// mesa 21 y 22 para un grupo). Null = mesa independiente. Si tiene valor,
+  /// es satelite de la mesa principal con ese id: sus pedidos van a la cuenta
+  /// de la principal, nunca a una propia. La principal misma nunca apunta a
+  /// si misma aqui (se detecta por tener satelites, no por un auto-apuntador)
+  /// asi "null" siempre significa "libre", sin un caso especial para ella.
+  /// Se limpia solo al cerrar esa cuenta (ver /orders/:id/close).
+  groupId String?
+
   tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   zone   Zone    @relation(fields: [zoneId], references: [id], onDelete: Cascade)
   orders Order[]
 
   @@unique([tenantId, number])
   @@index([zoneId])
+  @@index([groupId])
 }
 
 enum ElementType {

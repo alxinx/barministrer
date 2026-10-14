@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, money } from '../lib/api'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
+import { useShift } from '../context/ShiftContext'
 import FloorPlan from '../components/FloorPlan'
 import MoneyInput from '../components/MoneyInput'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
@@ -29,7 +30,7 @@ export default function NuevaVenta() {
   const [products, setProducts] = useState([])
   const [search, setSearch] = useState('')
   const [lines, setLines] = useState([]) // nueva ronda, aun no enviada
-  const [shift, setShift] = useState(undefined) // undefined = cargando, null = sin turno abierto
+  const { shift, setShift } = useShift() // compartido con Caja: un solo fetch por sesion
   const [avisoVisto, setAvisoVisto] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [cerrando, setCerrando] = useState(false)
@@ -41,6 +42,9 @@ export default function NuevaVenta() {
   const [justSent, setJustSent] = useState(false) // confirmacion en la tarjeta, no un aviso aparte
   const [popular, setPopular] = useState([]) // [{productId, qty}] mas pedido en la zona activa
   const [menu, setMenu] = useState(null) // {table, x, y} del clic derecho sobre una mesa
+  const [seleccionMultiple, setSeleccionMultiple] = useState(() => new Set()) // mesas elegidas para fusionar
+  const [menuMultiple, setMenuMultiple] = useState(null) // {tableIds, x, y} del clic derecho sobre la seleccion
+  const [fusionando, setFusionando] = useState(false)
   const [trasladando, setTrasladando] = useState(null) // {order, fromTableId} en traslado
   const [historial, setHistorial] = useState(null) // mesa cuyo historial se esta viendo
   const [recibo, setRecibo] = useState(null) // {order, splitCount} de la ultima cuenta cerrada, para la tirilla
@@ -62,7 +66,6 @@ export default function NuevaVenta() {
       setActiveZone(z[0]?.id || null)
     })
     api('/products').then(setProducts)
-    api('/shifts/current').then(setShift)
   }, [])
 
   const esAdmin = session?.user.role === 'ADMIN'
@@ -168,6 +171,20 @@ export default function NuevaVenta() {
     () => Object.fromEntries(prePedidos.map((p) => [p.tableId, `hace ${minutosDesde(p.since, ahora)}m`])),
     [prePedidos, ahora]
   )
+
+  // Mesas fusionadas temporalmente en la zona activa (principal y satelites):
+  // solo para pintar el link visual, la cuenta compartida ya la resuelve el
+  // backend sin que esto importe.
+  const linkedIds = useMemo(() => {
+    const ids = new Set()
+    for (const t of zone?.tables || []) {
+      if (t.groupId) {
+        ids.add(t.id)
+        ids.add(t.groupId)
+      }
+    }
+    return ids
+  }, [zone])
 
   async function recargarZonas() {
     setZones(await api('/zones'))
@@ -378,6 +395,88 @@ export default function NuevaVenta() {
     recargarZonas()
   }
 
+  // --- Fusionar mesas temporalmente (cuenta grande repartida en varias) ----
+  // Ctrl+clic o arrastrar un recuadro va armando este set; clic derecho sobre
+  // alguna de las elegidas abre el menu para confirmar. Separarlas de nuevo
+  // no hace falta: se sueltan solas al cerrar esa cuenta (ver backend).
+  function alternarSeleccionMultiple(id) {
+    setSeleccionMultiple((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function elegirRango(ids) {
+    setSeleccionMultiple(new Set(ids))
+  }
+
+  function abrirMenuMultiple(ids, e) {
+    if (ids.length < 2) return
+    setMenuMultiple({ tableIds: ids, x: e.clientX, y: e.clientY })
+  }
+
+  async function fusionarMesas(tableIds) {
+    setFusionando(true)
+    try {
+      await api('/tables/group', { method: 'POST', body: { tableIds } })
+      setSeleccionMultiple(new Set())
+      notify('Mesas fusionadas')
+      recargarZonas()
+    } catch (err) {
+      show(err)
+    } finally {
+      setFusionando(false)
+    }
+  }
+
+  async function separarMesas(tableIds) {
+    setFusionando(true)
+    try {
+      await api('/tables/ungroup', { method: 'POST', body: { tableIds } })
+      setSeleccionMultiple(new Set())
+      setMenuMultiple(null)
+      notify('Mesas separadas')
+      recargarZonas()
+    } catch (err) {
+      show(err)
+    } finally {
+      setFusionando(false)
+    }
+  }
+
+  // Si todo lo seleccionado ya es la MISMA fusion activa, el clic derecho
+  // ofrece separarlas en vez de fusionarlas de nuevo (lo cual fallaria igual
+  // del lado del servidor, pero asi el menu dice lo que de verdad va a pasar).
+  function esMismaFusionActiva(ids) {
+    const mesas = ids.map((id) => zone?.tables.find((t) => t.id === id)).filter(Boolean)
+    if (mesas.length !== ids.length) return false
+    const anclas = new Set(mesas.map((t) => t.groupId || t.id))
+    if (anclas.size !== 1) return false
+    const anclaId = [...anclas][0]
+    const miembros = zone.tables.filter((t) => t.id === anclaId || t.groupId === anclaId).length
+    return miembros >= 2
+  }
+
+  const menuItemsMultiple = menuMultiple
+    ? esMismaFusionActiva(menuMultiple.tableIds)
+      ? [
+          {
+            label: fusionando ? 'Separando…' : `Separar ${menuMultiple.tableIds.length} mesas de la fusión`,
+            disabled: fusionando,
+            onClick: () => separarMesas(menuMultiple.tableIds),
+          },
+        ]
+      : [
+          {
+            label: fusionando ? 'Fusionando…' : `Fusionar ${menuMultiple.tableIds.length} mesas`,
+            disabled: fusionando,
+            onClick: () => fusionarMesas(menuMultiple.tableIds),
+          },
+        ]
+    : []
+
   const menuItems = menu
     ? [
         // Cerrada no deja hacer nada mas hasta abrirla: por eso va primero y
@@ -412,6 +511,9 @@ export default function NuevaVenta() {
           disabled: menu.table.status !== 'OCCUPIED',
           onClick: () => abrirTraslado(menu.table),
         },
+        ...(linkedIds.has(menu.table.id)
+          ? [{ label: 'Separar de la fusión', onClick: () => separarMesas([menu.table.id]) }]
+          : []),
         { divider: true },
         {
           label: 'Historial',
@@ -454,7 +556,10 @@ export default function NuevaVenta() {
               return (
                 <button
                   key={z.id}
-                  onClick={() => setActiveZone(z.id)}
+                  onClick={() => {
+                    setActiveZone(z.id)
+                    setSeleccionMultiple(new Set())
+                  }}
                   className={`relative flex items-center gap-2 h-11 px-4 rounded-xl text-sm font-semibold border transition-colors ${
                     z.id === activeZone
                       ? 'bg-amber text-night border-amber'
@@ -483,15 +588,34 @@ export default function NuevaVenta() {
             onContextMenu={(t, e) => setMenu({ table: t, x: e.clientX, y: e.clientY })}
             pendingIds={esEncargado ? pendingTableIds : undefined}
             elapsedByTable={esEncargado ? elapsedByTable : undefined}
+            multiSelectable
+            selectedIds={seleccionMultiple}
+            onToggleSelect={alternarSeleccionMultiple}
+            onSelectRange={elegirRango}
+            onMultiContextMenu={abrirMenuMultiple}
+            linkedIds={linkedIds}
           />
 
-          <div className="flex gap-4 flex-wrap mt-4 text-xs text-muted">
+          <div className="flex items-center gap-4 flex-wrap mt-4 text-xs text-muted">
             {estados.map((e) => (
               <span key={e.key} className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${e.dot}`} />
                 {e.label}
               </span>
             ))}
+            {seleccionMultiple.size > 0 && (
+              <span className="flex items-center gap-2 ml-auto text-amber font-semibold">
+                {seleccionMultiple.size} mesa{seleccionMultiple.size > 1 ? 's' : ''} seleccionada
+                {seleccionMultiple.size > 1 ? 's' : ''} · clic derecho para fusionar
+                <button
+                  type="button"
+                  onClick={() => setSeleccionMultiple(new Set())}
+                  className="text-muted hover:text-ink underline font-normal"
+                >
+                  limpiar
+                </button>
+              </span>
+            )}
           </div>
         </section>
 
@@ -706,7 +830,7 @@ export default function NuevaVenta() {
                         style={!l.imageUrl ? { background: l.color } : undefined}
                       >
                         {l.imageUrl ? (
-                          <img src={l.imageUrl} alt="" className="w-full h-full object-contain" />
+                          <img src={l.imageUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
                         ) : (
                           l.name.slice(0, 2).toUpperCase()
                         )}
@@ -792,7 +916,7 @@ export default function NuevaVenta() {
                       style={!p.imageUrl ? { background: p.category.color } : undefined}
                     >
                       {p.imageUrl ? (
-                        <img src={p.imageUrl} alt="" className="w-full h-full object-contain" />
+                        <img src={p.imageUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
                       ) : (
                         <span className="text-night font-bold text-xs">{p.name.slice(0, 2).toUpperCase()}</span>
                       )}
@@ -837,6 +961,15 @@ export default function NuevaVenta() {
 
       {menu && <TableContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 
+      {menuMultiple && (
+        <TableContextMenu
+          x={menuMultiple.x}
+          y={menuMultiple.y}
+          items={menuItemsMultiple}
+          onClose={() => setMenuMultiple(null)}
+        />
+      )}
+
       {trasladando && (
         <TrasladarMesaModal
           order={trasladando.order}
@@ -875,7 +1008,7 @@ function ItemThumb({ item }) {
   return (
     <span className="w-9 h-9 rounded-lg shrink-0 grid place-items-center overflow-hidden bg-raised border border-edge text-[11px] font-bold text-muted">
       {item.product?.imageUrl ? (
-        <img src={item.product.imageUrl} alt="" className="w-full h-full object-contain" />
+        <img src={item.product.imageUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
       ) : (
         item.name.slice(0, 2).toUpperCase()
       )}

@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, money } from '../lib/api'
+import { getCategories } from '../lib/categoriesStore'
+import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
 import ProductoForm from '../components/ProductoForm'
 
 export default function AgregarInventario() {
+  const { session } = useAuth()
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
   const [search, setSearch] = useState('')
@@ -18,7 +21,11 @@ export default function AgregarInventario() {
   }, [])
 
   async function load() {
-    const [p, c, m] = await Promise.all([api('/products'), api('/categories'), api('/inventory/movements')])
+    const [p, c, m] = await Promise.all([
+      api('/products'),
+      getCategories(session?.tenant.id),
+      api('/inventory/movements'),
+    ])
     setProducts(p)
     setCategories(c)
     setMovements(m)

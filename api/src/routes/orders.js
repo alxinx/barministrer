@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { tienePermiso } from '../middleware/permissions.js'
+import { pinLimiter, pinLimitExcedido } from '../middleware/rateLimit.js'
 import { avisarEncargados } from '../lib/realtime.js'
 import { calcularCostos } from '../lib/costos.js'
 
@@ -108,6 +109,10 @@ orderRoutes.patch('/orders/:id/table', async (req, res) => {
     prisma.order.update({ where: { id: order.id }, data: { tableId: destino.id } }),
     prisma.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } }),
     prisma.barTable.update({ where: { id: destino.id }, data: { status: 'OCCUPIED' } }),
+    // Si la mesa de origen tenia satelites fusionados, se mudan con la
+    // cuenta: siguen apuntando a donde quedo la cuenta, no a donde ya no hay
+    // nada.
+    prisma.barTable.updateMany({ where: { groupId: order.tableId }, data: { groupId: destino.id } }),
   ])
 
   const actualizada = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
@@ -117,8 +122,12 @@ orderRoutes.patch('/orders/:id/table', async (req, res) => {
 // --- Cuenta de la mesa -------------------------------------------------------
 
 orderRoutes.get('/orders/by-table/:tableId', async (req, res) => {
+  const table = await prisma.barTable.findFirst({ where: { id: req.params.tableId, tenantId: req.auth.tenantId } })
+  if (!table) return res.status(404).json({ error: 'Mesa no encontrada' })
+  // Una mesa fusionada temporalmente no tiene cuenta propia: la cuenta vive
+  // en la principal, aunque se haya pedido parado en la satelite.
   const order = await prisma.order.findFirst({
-    where: { tableId: req.params.tableId, tenantId: req.auth.tenantId, status: 'OPEN' },
+    where: { tableId: table.groupId || table.id, tenantId: req.auth.tenantId, status: 'OPEN' },
     include: ORDER_INCLUDE,
   })
   res.json(order ? { ...order, total: total(order) } : null)
@@ -206,11 +215,15 @@ orderRoutes.get('/orders/:id/cost', puedeCerrar, async (req, res) => {
 // hay donde registrarla. Si la mesa ya tiene una cuenta abierta, se reutiliza
 // en vez de abrir otra: todo se va sumando a la misma hasta que se cobre.
 orderRoutes.post('/orders', async (req, res) => {
-  const { tableId } = req.body || {}
-  if (!tableId) return res.status(400).json({ error: 'Elige una mesa' })
+  const { tableId: tableIdPedida } = req.body || {}
+  if (!tableIdPedida) return res.status(400).json({ error: 'Elige una mesa' })
 
-  const table = await prisma.barTable.findFirst({ where: { id: tableId, tenantId: req.auth.tenantId } })
-  if (!table) return res.status(400).json({ error: 'La mesa no existe' })
+  const tablaPedida = await prisma.barTable.findFirst({ where: { id: tableIdPedida, tenantId: req.auth.tenantId } })
+  if (!tablaPedida) return res.status(400).json({ error: 'La mesa no existe' })
+  // Pedir parado en una mesa fusionada temporalmente abre/usa la cuenta de la
+  // principal, no una propia: asi "mesa 22" y "mesa 21" fusionadas siempre
+  // terminan en la misma cuenta sin que la mesera tenga que saberlo.
+  const tableId = tablaPedida.groupId || tablaPedida.id
 
   const existente = await prisma.order.findFirst({
     where: { tableId, tenantId: req.auth.tenantId, status: 'OPEN' },
@@ -333,7 +346,7 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
 
 // Devolver un producto: necesita el PIN de un encargado (ADMIN o CAJERO) y un
 // motivo. No se borra, queda marcado como devuelto con quien lo autorizo.
-orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
+orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res) => {
   const order = await prisma.order.findFirst({ where: { id: req.params.id, tenantId: req.auth.tenantId } })
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
@@ -399,6 +412,9 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
         },
       })
       await tx.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } })
+      // Si esta cuenta tenia mesas fusionadas temporalmente, se sueltan solas
+      // aqui: la fusion dura lo que dura la cuenta, nunca mas.
+      await tx.barTable.updateMany({ where: { groupId: order.tableId }, data: { groupId: null, status: 'AVAILABLE' } })
     })
   } else {
     if (!Array.isArray(payments) || !payments.length) {
@@ -423,6 +439,9 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       // PIN del encargado es lo que de verdad autoriza el descuento.
       const { pin } = req.body || {}
       if (!pin) return res.status(400).json({ error: 'El descuento necesita el PIN del encargado' })
+      // Solo se limita aqui, no toda la ruta: cerrar sin descuento no toca
+      // PIN y no tiene por que competir por la misma cuota.
+      if (await pinLimitExcedido(req, res)) return
       const encargado = await verificarPin(req.auth.tenantId, pin)
       if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
       discountEncargadoId = encargado.id
@@ -508,6 +527,9 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
         }),
       })
       await tx.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } })
+      // Si esta cuenta tenia mesas fusionadas temporalmente, se sueltan solas
+      // aqui: la fusion dura lo que dura la cuenta, nunca mas.
+      await tx.barTable.updateMany({ where: { groupId: order.tableId }, data: { groupId: null, status: 'AVAILABLE' } })
       if (montoCredito > 0) {
         await tx.customerCharge.create({
           data: {
