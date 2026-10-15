@@ -15,6 +15,7 @@ import { reportRoutes } from './routes/reports.js'
 import { requireAuth } from './middleware/auth.js'
 import { apiLimiter } from './middleware/rateLimit.js'
 import { initRealtime } from './lib/realtime.js'
+import { expirarPrePedidosVencidos } from './lib/prePedidos.js'
 
 const app = express()
 
@@ -53,3 +54,11 @@ initRealtime(httpServer)
 
 const port = process.env.PORT || 4000
 httpServer.listen(port, () => console.log(`API en http://localhost:${port}`))
+
+// Revisa cada minuto si hay pre-pedidos de mas de 45 minutos para borrarlos
+// solos (ver lib/prePedidos.js). Corre una vez al arrancar por si el servidor
+// estuvo caido mas de un minuto con algo ya vencido esperando.
+expirarPrePedidosVencidos().catch((err) => console.error('Error expirando pre-pedidos', err))
+setInterval(() => {
+  expirarPrePedidosVencidos().catch((err) => console.error('Error expirando pre-pedidos', err))
+}, 60_000)

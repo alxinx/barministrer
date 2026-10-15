@@ -7,6 +7,7 @@ import FloorPlan from '../components/FloorPlan'
 import MoneyInput from '../components/MoneyInput'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import DevolverModal from '../components/DevolverModal'
+import ConfirmModal from '../components/ConfirmModal'
 import VincularClienteModal from '../components/VincularClienteModal'
 import TableContextMenu from '../components/TableContextMenu'
 import TrasladarMesaModal from '../components/TrasladarMesaModal'
@@ -35,6 +36,8 @@ export default function NuevaVenta() {
   const [enviando, setEnviando] = useState(false)
   const [cerrando, setCerrando] = useState(false)
   const [devolviendo, setDevolviendo] = useState(null) // item a devolver
+  const [eliminandoPrePedido, setEliminandoPrePedido] = useState(null) // item PENDING a quitar, a confirmar
+  const [borrandoPrePedido, setBorrandoPrePedido] = useState(false)
   const [vinculando, setVinculando] = useState(false) // modal de cliente de la mesa
   const [clienteDetalle, setClienteDetalle] = useState(null) // saldo real del cliente vinculado
   const [error, setError] = useState('')
@@ -51,6 +54,9 @@ export default function NuevaVenta() {
   const [prePedidos, setPrePedidos] = useState([]) // cola de pre-pedidos esperando que el admin los envie
   const [enviandoPrePedido, setEnviandoPrePedido] = useState(false)
   const [ahora, setAhora] = useState(() => Date.now()) // tick para refrescar "hace Xm" sin recargar nada
+  const [vuelos, setVuelos] = useState([]) // clones animados "volando" del producto tocado a la cuenta
+  const [hayMasPorEnviar, setHayMasPorEnviar] = useState(false) // "por enviar" desbordo sus 3 filas visibles, hay mas abajo
+  const [hayMasArribaPorEnviar, setHayMasArribaPorEnviar] = useState(false) // se hizo scroll: quedaron productos tapados arriba
 
   // abrirVincular crea la cuenta antes de saber si el usuario de verdad va a
   // asociar un cliente; si en ese tiempo ya cambio de mesa, esta referencia es
@@ -59,6 +65,30 @@ export default function NuevaVenta() {
   useEffect(() => {
     tableRef.current = table
   }, [table])
+
+  // Con pocas lineas "por enviar" cabe todo; con muchas, empuja productos
+  // sugeridos fuera de pantalla y toca bajar para seguir agregando. Se tapa
+  // la lista a 3 filas (ver abajo) y esto detecta si quedo algo mas abajo sin
+  // ver, para mostrar la flecha de scroll.
+  const porEnviarRef = useRef(null)
+  useEffect(() => {
+    const el = porEnviarRef.current
+    if (!el) {
+      setHayMasPorEnviar(false)
+      setHayMasArribaPorEnviar(false)
+      return
+    }
+    const check = () => {
+      setHayMasPorEnviar(el.scrollHeight - el.scrollTop - el.clientHeight > 1)
+      setHayMasArribaPorEnviar(el.scrollTop > 1)
+    }
+    check()
+    el.addEventListener('scroll', check)
+    return () => el.removeEventListener('scroll', check)
+  }, [lines])
+
+  // Tarjeta de destino del "vuelo" al agregar un producto.
+  const cuentaCardRef = useRef(null)
 
   useEffect(() => {
     api('/zones').then((z) => {
@@ -95,9 +125,13 @@ export default function NuevaVenta() {
     }
     socket.on('pre-pedido:nuevo', onNuevo)
     socket.on('pre-pedido:enviado', onEnviado)
+    // Mismo efecto que "enviado" sobre la cola: si ya no queda nada
+    // pendiente en esa mesa, el aviso desaparece igual.
+    socket.on('pre-pedido:cancelado', onEnviado)
     return () => {
       socket.off('pre-pedido:nuevo', onNuevo)
       socket.off('pre-pedido:enviado', onEnviado)
+      socket.off('pre-pedido:cancelado', onEnviado)
     }
   }, [esEncargado])
 
@@ -199,7 +233,34 @@ export default function NuevaVenta() {
     setTimeout(() => setNotice(''), 2500)
   }
 
-  function agregar(product) {
+  // Vuelo visual del producto tocado hasta la tarjeta de "Cuenta de la mesa":
+  // nada de estado real, solo un clon que recorre la distancia y desaparece,
+  // para que agregar no se sienta invisible cuando hay que bajar a ver la
+  // cuenta. sourceEl es el boton tocado (no el evento: con varios taps
+  // seguidos un SyntheticEvent reciclado ya no sirve para medir posicion).
+  function lanzarVuelo(product, sourceEl) {
+    if (!sourceEl || !cuentaCardRef.current) return
+    const from = sourceEl.getBoundingClientRect()
+    const to = cuentaCardRef.current.getBoundingClientRect()
+    const id = `${Date.now()}-${Math.random()}`
+    setVuelos((prev) => [
+      ...prev,
+      {
+        id,
+        imageUrl: product.imageUrl,
+        color: product.category.color,
+        inicial: product.name.slice(0, 2).toUpperCase(),
+        fromX: from.left + from.width / 2 - 18,
+        fromY: from.top + from.height / 2 - 18,
+        toX: to.left + 24,
+        toY: to.top + 24,
+      },
+    ])
+    setTimeout(() => setVuelos((prev) => prev.filter((v) => v.id !== id)), 550)
+  }
+
+  function agregar(product, sourceEl) {
+    lanzarVuelo(product, sourceEl)
     if (product.kind === 'PREPARED') {
       if (!product.recipe) return
       const key = `product:${product.id}`
@@ -299,6 +360,23 @@ export default function NuevaVenta() {
   function manejarDevuelto() {
     setDevolviendo(null)
     api(`/orders/${order.id}`).then(setOrder)
+  }
+
+  // Quitar una linea del pre-pedido antes de enviarla a la barra: todavia es
+  // un borrador, por eso solo pide confirmar (sin PIN ni motivo, a
+  // diferencia de devolver algo ya servido).
+  async function eliminarPrePedido() {
+    if (!eliminandoPrePedido) return
+    setBorrandoPrePedido(true)
+    try {
+      const actualizada = await api(`/orders/${order.id}/items/${eliminandoPrePedido.id}`, { method: 'DELETE' })
+      setOrder(actualizada)
+      setEliminandoPrePedido(null)
+    } catch (err) {
+      show(err)
+    } finally {
+      setBorrandoPrePedido(false)
+    }
   }
 
   async function cerrarCuenta(payload) {
@@ -524,6 +602,22 @@ export default function NuevaVenta() {
 
   return (
     <div className="p-5 md:p-7 max-w-[1500px] mx-auto">
+      {vuelos.map((v) => (
+        <span
+          key={v.id}
+          aria-hidden
+          className="fixed z-50 top-0 left-0 w-9 h-9 rounded-lg grid place-items-center overflow-hidden
+                     text-[11px] font-bold text-night pointer-events-none animate-vuelo-agregar"
+          style={{
+            '--vuelo-from': `translate(${v.fromX}px, ${v.fromY}px)`,
+            '--vuelo-to': `translate(${v.toX}px, ${v.toY}px) scale(0.35)`,
+            background: !v.imageUrl ? v.color : undefined,
+          }}
+        >
+          {v.imageUrl ? <img src={v.imageUrl} alt="" className="w-full h-full object-contain" /> : v.inicial}
+        </span>
+      ))}
+
       <header className="mb-6">
         <h1 className="text-2xl font-bold">POS y pedidos</h1>
       </header>
@@ -585,10 +679,14 @@ export default function NuevaVenta() {
             zone={zone}
             selectedId={table?.id}
             onSelect={(_kind, item) => setTable(item)}
-            onContextMenu={(t, e) => setMenu({ table: t, x: e.clientX, y: e.clientY })}
+            // El clic derecho (reservar, cerrar, liquidar, fusionar) es para
+            // quien administra el salon, no para quien solo toma pedidos: la
+            // mesera sigue abriendo mesas con clic normal, pero no le
+            // aparece el menu de contexto ni la seleccion multiple.
+            onContextMenu={esEncargado ? (t, e) => setMenu({ table: t, x: e.clientX, y: e.clientY }) : undefined}
             pendingIds={esEncargado ? pendingTableIds : undefined}
             elapsedByTable={esEncargado ? elapsedByTable : undefined}
-            multiSelectable
+            multiSelectable={esEncargado}
             selectedIds={seleccionMultiple}
             onToggleSelect={alternarSeleccionMultiple}
             onSelectRange={elegirRango}
@@ -626,24 +724,39 @@ export default function NuevaVenta() {
                 <Icon.bell width={18} height={18} className="text-amber" />
                 Pre-pedidos esperando envío
               </h2>
-              {prePedidos.map((p) => (
-                <button
-                  key={p.orderId}
-                  type="button"
-                  onClick={() => irAMesa(p)}
-                  className="w-full flex items-center gap-3 bg-amber/10 border border-amber/40 rounded-xl px-3 py-2.5 text-left hover:border-amber transition-colors"
-                >
-                  <span className="w-10 h-10 rounded-xl bg-night border border-amber/40 grid place-items-center text-amber font-bold shrink-0">
-                    {p.tableNumber}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">
-                      {p.zoneName} · {p.meseras.join(', ') || 'Sin registrar'}
-                    </p>
-                    <p className="text-xs text-amber/80">hace {minutosDesde(p.since, ahora)}m</p>
-                  </div>
-                </button>
-              ))}
+              {prePedidos.map((p) => {
+                // Entre mas lleva esperando, mas urgente se ve: de un tono
+                // casi negro a rojo en 5 minutos (el CSS hace el crawl solo,
+                // sincronizado con animationDelay negativo), y pasado ese
+                // punto se cambia el brillo suave por la variante
+                // estroboscopica para que sea imposible no notarla.
+                const antiguedad = antiguedadMs(p.since, ahora)
+                const esCritico = antiguedad >= PRE_PEDIDO_CRITICO_MS
+                return (
+                  <button
+                    key={p.orderId}
+                    type="button"
+                    onClick={() => irAMesa(p)}
+                    style={!esCritico ? { animationDelay: `-${antiguedad}ms` } : undefined}
+                    className={`w-full flex items-center gap-3 border rounded-xl px-3 py-2.5 text-left transition-colors
+                                ${
+                                  esCritico
+                                    ? 'border-ocupada animate-pre-pedido-critico'
+                                    : 'bg-amber/10 border-amber/40 hover:border-amber animate-pre-pedido-urgencia'
+                                }`}
+                  >
+                    <span className="w-10 h-10 rounded-xl bg-night border border-amber/40 grid place-items-center text-amber font-bold shrink-0">
+                      {p.tableNumber}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">
+                        {p.zoneName} · {p.meseras.join(', ') || 'Sin registrar'}
+                      </p>
+                      <p className="text-xs text-amber/80">hace {minutosDesde(p.since, ahora)}m</p>
+                    </div>
+                  </button>
+                )
+              })}
             </section>
           )}
 
@@ -698,7 +811,7 @@ export default function NuevaVenta() {
             </div>
           ) : (
           <>
-          <div className={`card p-4 ${justSent ? 'animate-card-confirm' : ''}`}>
+          <div ref={cuentaCardRef} className={`card p-4 ${justSent ? 'animate-card-confirm' : ''}`}>
             <h2 className="font-semibold mb-3 flex items-center gap-2">
               Cuenta de la mesa
               {justSent && (
@@ -770,6 +883,14 @@ export default function NuevaVenta() {
                         {formatHora(it.orderedAt)} · {money(it.price)}
                       </p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setEliminandoPrePedido(it)}
+                      aria-label={`Eliminar ${it.name} del pre-pedido`}
+                      className="text-muted hover:text-ocupada shrink-0 p-1"
+                    >
+                      <Icon.trash width={16} height={16} />
+                    </button>
                   </div>
                 ))}
                 {esEncargado ? (
@@ -822,7 +943,8 @@ export default function NuevaVenta() {
             {lines.length > 0 && (
               <>
                 <p className="label">Por enviar</p>
-                <ul className="space-y-2.5">
+                <div className="relative">
+                  <ul ref={porEnviarRef} className="space-y-2.5 max-h-32 overflow-y-auto scroll-smooth pr-1">
                   {lines.map((l) => (
                     <li key={l.key} className="flex items-center gap-3">
                       <span
@@ -860,7 +982,42 @@ export default function NuevaVenta() {
                       </div>
                     </li>
                   ))}
-                </ul>
+                  </ul>
+
+                  {/* Degradado de continuidad (no clicable) + una insignia ambar
+                      rellena encima, centrada para no taparle los botones +/-
+                      a la fila del borde: un icono suelto sin fondo se pierde
+                      contra el plano en una noche llena. Arriba o abajo segun
+                      de que lado quedo tapado algo al hacer scroll. */}
+                  {hayMasArribaPorEnviar && (
+                    <div className="pointer-events-none absolute top-0 inset-x-0 h-7 bg-gradient-to-b from-surface to-transparent rounded-t-xl" />
+                  )}
+                  {hayMasPorEnviar && (
+                    <div className="pointer-events-none absolute bottom-0 inset-x-0 h-7 bg-gradient-to-t from-surface to-transparent rounded-b-xl" />
+                  )}
+                  {hayMasArribaPorEnviar && (
+                    <button
+                      type="button"
+                      onClick={() => porEnviarRef.current?.scrollBy({ top: -100, behavior: 'smooth' })}
+                      aria-label="Ver productos anteriores"
+                      className="absolute top-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
+                                 shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
+                    >
+                      <Icon.chevronDown width={16} height={16} className="rotate-180" />
+                    </button>
+                  )}
+                  {hayMasPorEnviar && (
+                    <button
+                      type="button"
+                      onClick={() => porEnviarRef.current?.scrollBy({ top: 100, behavior: 'smooth' })}
+                      aria-label="Ver más productos por enviar"
+                      className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
+                                 shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
+                    >
+                      <Icon.chevronDown width={16} height={16} />
+                    </button>
+                  )}
+                </div>
                 <div className="flex items-baseline justify-between mt-4 pt-4 border-t border-edge">
                   <span className="text-muted text-sm">Nuevo</span>
                   <span className="text-xl font-bold">{money(total)}</span>
@@ -906,7 +1063,7 @@ export default function NuevaVenta() {
                 return (
                   <button
                     key={p.id}
-                    onClick={() => agregar(p)}
+                    onClick={(e) => agregar(p, e.currentTarget)}
                     style={{ borderColor: p.category.color }}
                     className="flex items-center gap-2.5 text-left p-2.5 rounded-xl bg-raised border
                                hover:bg-surface transition-colors"
@@ -957,6 +1114,18 @@ export default function NuevaVenta() {
 
       {devolviendo && (
         <DevolverModal item={devolviendo} onCancel={() => setDevolviendo(null)} onDevuelto={manejarDevuelto} />
+      )}
+
+      {eliminandoPrePedido && (
+        <ConfirmModal
+          title="Eliminar del pre-pedido"
+          message={`"${eliminandoPrePedido.name}${
+            eliminandoPrePedido.variantName ? ` · ${eliminandoPrePedido.variantName}` : ''
+          }" todavía no se envió a la barra. Se quita de la cuenta, no se puede deshacer.`}
+          confirmLabel={borrandoPrePedido ? 'Eliminando…' : 'Eliminar'}
+          onCancel={() => setEliminandoPrePedido(null)}
+          onConfirm={eliminarPrePedido}
+        />
       )}
 
       {menu && <TableContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
@@ -1023,6 +1192,15 @@ function formatHora(iso) {
 
 function minutosDesde(iso, ahora) {
   return Math.max(0, Math.round((ahora - new Date(iso).getTime()) / 60000))
+}
+
+// Ventana de "negro a rojo" del pre-pedido sin enviar: a los 5 minutos ya
+// esta critico. El crawl de color lo hace el CSS solo (animation-delay
+// negativo = lo que ya lleva esperando), esto solo decide cuando saltar a
+// la variante estroboscopica.
+const PRE_PEDIDO_CRITICO_MS = 5 * 60 * 1000
+function antiguedadMs(iso, ahora) {
+  return Math.min(PRE_PEDIDO_CRITICO_MS, Math.max(0, ahora - new Date(iso).getTime()))
 }
 
 function SinTurnoOverlay({ puedeAbrirTurno, onDismiss, onAbrir }) {

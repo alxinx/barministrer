@@ -344,6 +344,36 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
   res.json({ ...updated, total: total(updated) })
 })
 
+// Quitar una linea de un pre-pedido ANTES de que se envie a la barra:
+// todavia es un borrador, no hace falta el PIN ni el motivo que pide
+// devolver algo ya servido -- eso es para lo que de verdad se pidio. Solo
+// acepta items PENDING; uno ya ACTIVE se devuelve con /void, nunca se borra
+// de verdad (ahi si queda el rastro).
+orderRoutes.delete('/orders/:id/items/:itemId', async (req, res) => {
+  const order = await prisma.order.findFirst({ where: { id: req.params.id, tenantId: req.auth.tenantId } })
+  if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
+  if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
+
+  const item = await prisma.orderItem.findFirst({ where: { id: req.params.itemId, orderId: order.id } })
+  if (!item) return res.status(404).json({ error: 'Producto no encontrado en esta cuenta' })
+  if (item.status !== 'PENDING') {
+    return res.status(400).json({ error: 'Ese producto ya se envio a la barra; para quitarlo usa Devolver' })
+  }
+
+  await prisma.orderItem.delete({ where: { id: item.id } })
+
+  // Si era la ultima linea pendiente, el aviso de "pre-pedido esperando" en
+  // el panel de los encargados tiene que desaparecer igual que cuando se
+  // envia -- ya no hay nada que aprobar en esta mesa.
+  const quedanPendientes = await prisma.orderItem.count({ where: { orderId: order.id, status: 'PENDING' } })
+  if (quedanPendientes === 0) {
+    avisarEncargados(req.auth.tenantId, 'pre-pedido:cancelado', { orderId: order.id })
+  }
+
+  const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
+  res.json({ ...updated, total: total(updated) })
+})
+
 // Devolver un producto: necesita el PIN de un encargado (ADMIN o CAJERO) y un
 // motivo. No se borra, queda marcado como devuelto con quien lo autorizo.
 orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res) => {
