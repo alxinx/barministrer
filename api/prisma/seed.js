@@ -33,7 +33,7 @@ async function main() {
         email: u.email,
         role: u.role,
         passwordHash: await bcrypt.hash(u.pass, 10),
-        pinHash: await bcrypt.hash('1234', 10),
+        pinHash: await bcrypt.hash('12345', 10),
       },
     })
   }

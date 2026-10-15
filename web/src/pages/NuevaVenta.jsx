@@ -55,6 +55,12 @@ export default function NuevaVenta() {
   const [enviandoPrePedido, setEnviandoPrePedido] = useState(false)
   const [ahora, setAhora] = useState(() => Date.now()) // tick para refrescar "hace Xm" sin recargar nada
   const [vuelos, setVuelos] = useState([]) // clones animados "volando" del producto tocado a la cuenta
+  // "Ya enviado" (lo facturado) y "Por enviar" (la ronda nueva) en pestanas
+  // separadas cuando hay de los dos: apiladas, las dos listas empujan
+  // productos sugeridos fuera de pantalla igual que pasaba antes del tope de
+  // 3 filas. Arranca en "enviados" (lo que ya tiene la mesa al abrirla) y
+  // salta sola a "porEnviar" en cuanto se toca el primer producto nuevo.
+  const [pestanaCuenta, setPestanaCuenta] = useState('enviados')
   const [hayMasPorEnviar, setHayMasPorEnviar] = useState(false) // "por enviar" desbordo sus 3 filas visibles, hay mas abajo
   const [hayMasArribaPorEnviar, setHayMasArribaPorEnviar] = useState(false) // se hizo scroll: quedaron productos tapados arriba
 
@@ -96,6 +102,19 @@ export default function NuevaVenta() {
       setActiveZone(z[0]?.id || null)
     })
     api('/products').then(setProducts)
+  }, [])
+
+  // El numerito de "ocupadas" sobre cada zona es de todo el equipo, no solo
+  // de quien lo mira: si otra persona abre o cierra una mesa desde su propio
+  // celular, esto se entera por socket en vez de obligar a refrescar la
+  // pagina para que el plano deje de mentir.
+  useEffect(() => {
+    const socket = getSocket()
+    function onMesasActualizadas() {
+      recargarZonas()
+    }
+    socket.on('mesas:actualizadas', onMesasActualizadas)
+    return () => socket.off('mesas:actualizadas', onMesasActualizadas)
   }, [])
 
   const esAdmin = session?.user.role === 'ADMIN'
@@ -147,9 +166,19 @@ export default function NuevaVenta() {
   useEffect(() => {
     setLines([])
     setSearch('')
+    setPestanaCuenta('enviados')
     if (table) api(`/orders/by-table/${table.id}`).then(setOrder)
     else setOrder(null)
   }, [table?.id])
+
+  // Primer producto de una ronda nueva: salta a la pestana "Por enviar" para
+  // que el vuelo del producto aterrice en algo visible, en vez de quedar
+  // detras de "Ya enviado" sin que se note que se agrego.
+  const lineasPreviasRef = useRef(0)
+  useEffect(() => {
+    if (lineasPreviasRef.current === 0 && lines.length > 0) setPestanaCuenta('porEnviar')
+    lineasPreviasRef.current = lines.length
+  }, [lines.length])
 
   useEffect(() => {
     setSearch('')
@@ -600,6 +629,95 @@ export default function NuevaVenta() {
       ]
     : []
 
+  // Contenido de "Por enviar": se usa tal cual con o sin pestanas (cuando no
+  // hay nada ya facturado, no hace falta separar nada y esto va directo).
+  const listaPorEnviar =
+    lines.length === 0 ? (
+      <p className="text-sm text-muted">Nada agregado todavía. Toca un producto de abajo para empezar una ronda nueva.</p>
+    ) : (
+      <>
+        <div className="relative">
+          <ul ref={porEnviarRef} className="space-y-2.5 max-h-32 overflow-y-auto scroll-smooth pr-1">
+            {lines.map((l) => (
+              <li key={l.key} className="flex items-center gap-3">
+                <span
+                  className="w-9 h-9 rounded-lg shrink-0 grid place-items-center overflow-hidden text-[11px] font-bold text-night"
+                  style={!l.imageUrl ? { background: l.color } : undefined}
+                >
+                  {l.imageUrl ? (
+                    <img src={l.imageUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
+                  ) : (
+                    l.name.slice(0, 2).toUpperCase()
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{l.name}</p>
+                  <p className="text-xs text-muted">
+                    {l.variantName || 'Shot'} · {money(l.price)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => cambiarCantidad(l.key, -1)}
+                    className="w-8 h-8 rounded-lg bg-raised border border-edge text-muted hover:text-ink"
+                    aria-label={`Quitar uno de ${l.name}`}
+                  >
+                    −
+                  </button>
+                  <span className="w-6 text-center text-sm font-semibold">{l.qty}</span>
+                  <button
+                    onClick={() => cambiarCantidad(l.key, 1)}
+                    className="w-8 h-8 rounded-lg bg-raised border border-edge text-muted hover:text-ink"
+                    aria-label={`Agregar uno de ${l.name}`}
+                  >
+                    +
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {/* Degradado de continuidad (no clicable) + una insignia ambar
+              rellena encima, centrada para no taparle los botones +/-
+              a la fila del borde: un icono suelto sin fondo se pierde
+              contra el plano en una noche llena. Arriba o abajo segun
+              de que lado quedo tapado algo al hacer scroll. */}
+          {hayMasArribaPorEnviar && (
+            <div className="pointer-events-none absolute top-0 inset-x-0 h-7 bg-gradient-to-b from-surface to-transparent rounded-t-xl" />
+          )}
+          {hayMasPorEnviar && (
+            <div className="pointer-events-none absolute bottom-0 inset-x-0 h-7 bg-gradient-to-t from-surface to-transparent rounded-b-xl" />
+          )}
+          {hayMasArribaPorEnviar && (
+            <button
+              type="button"
+              onClick={() => porEnviarRef.current?.scrollBy({ top: -100, behavior: 'smooth' })}
+              aria-label="Ver productos anteriores"
+              className="absolute top-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
+                         shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
+            >
+              <Icon.chevronDown width={16} height={16} className="rotate-180" />
+            </button>
+          )}
+          {hayMasPorEnviar && (
+            <button
+              type="button"
+              onClick={() => porEnviarRef.current?.scrollBy({ top: 100, behavior: 'smooth' })}
+              aria-label="Ver más productos por enviar"
+              className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
+                         shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
+            >
+              <Icon.chevronDown width={16} height={16} />
+            </button>
+          )}
+        </div>
+        <div className="flex items-baseline justify-between mt-4 pt-4 border-t border-edge">
+          <span className="text-muted text-sm">Nuevo</span>
+          <span className="text-xl font-bold">{money(total)}</span>
+        </div>
+      </>
+    )
+
   return (
     <div className="p-5 md:p-7 max-w-[1500px] mx-auto">
       {vuelos.map((v) => (
@@ -907,122 +1025,75 @@ export default function NuevaVenta() {
               </div>
             )}
 
-            {itemsEnviados.length > 0 && (
-              <div className="space-y-2.5 mb-4">
-                {itemsEnviados.map((it) => (
-                  <div key={it.id} className="flex items-center gap-3">
-                    <ItemThumb item={it} />
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-medium truncate ${it.status === 'VOIDED' ? 'line-through text-muted' : ''}`}>
-                        {it.name}
-                        {it.variantName ? ` · ${it.variantName}` : ''}
-                        {it.qty > 1 ? ` ×${it.qty}` : ''}
-                      </p>
-                      <p className="text-xs text-muted">
-                        {formatHora(it.orderedAt)} · {money(it.price)}
-                        {it.status === 'VOIDED' && ` · Devuelto: ${it.voidReason}`}
-                      </p>
-                    </div>
-                    {it.status === 'ACTIVE' && (
-                      <button
-                        onClick={() => setDevolviendo(it)}
-                        className="text-xs font-semibold text-ocupada hover:underline shrink-0"
-                      >
-                        Devolver
-                      </button>
-                    )}
-                  </div>
-                ))}
-                <div className="flex items-baseline justify-between pt-3 border-t border-edge">
-                  <span className="text-muted text-sm">Ya enviado</span>
-                  <span className="font-semibold">{money(order.total)}</span>
+            {itemsEnviados.length > 0 ? (
+              <div className="mb-4">
+                {/* Ya facturado + ronda nueva en pestanas: apiladas, las dos
+                    listas empujan productos sugeridos fuera de pantalla con
+                    cuentas largas. Sin nada enviado todavia no hay que
+                    separar de nada, asi que "Por enviar" va directo abajo. */}
+                <div className="flex gap-1 mb-3 p-1 rounded-lg bg-raised border border-edge">
+                  <button
+                    type="button"
+                    onClick={() => setPestanaCuenta('enviados')}
+                    className={`flex-1 h-8 rounded-md text-xs font-semibold transition-colors ${
+                      pestanaCuenta === 'enviados' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+                    }`}
+                  >
+                    Ya enviado
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPestanaCuenta('porEnviar')}
+                    className={`flex-1 h-8 rounded-md text-xs font-semibold transition-colors ${
+                      pestanaCuenta === 'porEnviar' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+                    }`}
+                  >
+                    Por enviar{lines.length > 0 ? ` (${lines.length})` : ''}
+                  </button>
                 </div>
-              </div>
-            )}
 
-            {lines.length > 0 && (
-              <>
-                <p className="label">Por enviar</p>
-                <div className="relative">
-                  <ul ref={porEnviarRef} className="space-y-2.5 max-h-32 overflow-y-auto scroll-smooth pr-1">
-                  {lines.map((l) => (
-                    <li key={l.key} className="flex items-center gap-3">
-                      <span
-                        className="w-9 h-9 rounded-lg shrink-0 grid place-items-center overflow-hidden text-[11px] font-bold text-night"
-                        style={!l.imageUrl ? { background: l.color } : undefined}
-                      >
-                        {l.imageUrl ? (
-                          <img src={l.imageUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
-                        ) : (
-                          l.name.slice(0, 2).toUpperCase()
+                {pestanaCuenta === 'enviados' ? (
+                  <div className="space-y-2.5">
+                    {itemsEnviados.map((it) => (
+                      <div key={it.id} className="flex items-center gap-3">
+                        <ItemThumb item={it} />
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-sm font-medium truncate ${it.status === 'VOIDED' ? 'line-through text-muted' : ''}`}>
+                            {it.name}
+                            {it.variantName ? ` · ${it.variantName}` : ''}
+                            {it.qty > 1 ? ` ×${it.qty}` : ''}
+                          </p>
+                          <p className="text-xs text-muted">
+                            {formatHora(it.orderedAt)} · {money(it.price)}
+                            {it.status === 'VOIDED' && ` · Devuelto: ${it.voidReason}`}
+                          </p>
+                        </div>
+                        {it.status === 'ACTIVE' && (
+                          <button
+                            onClick={() => setDevolviendo(it)}
+                            className="text-xs font-semibold text-ocupada hover:underline shrink-0"
+                          >
+                            Devolver
+                          </button>
                         )}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{l.name}</p>
-                        <p className="text-xs text-muted">
-                          {l.variantName || 'Shot'} · {money(l.price)}
-                        </p>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => cambiarCantidad(l.key, -1)}
-                          className="w-8 h-8 rounded-lg bg-raised border border-edge text-muted hover:text-ink"
-                          aria-label={`Quitar uno de ${l.name}`}
-                        >
-                          −
-                        </button>
-                        <span className="w-6 text-center text-sm font-semibold">{l.qty}</span>
-                        <button
-                          onClick={() => cambiarCantidad(l.key, 1)}
-                          className="w-8 h-8 rounded-lg bg-raised border border-edge text-muted hover:text-ink"
-                          aria-label={`Agregar uno de ${l.name}`}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                  </ul>
-
-                  {/* Degradado de continuidad (no clicable) + una insignia ambar
-                      rellena encima, centrada para no taparle los botones +/-
-                      a la fila del borde: un icono suelto sin fondo se pierde
-                      contra el plano en una noche llena. Arriba o abajo segun
-                      de que lado quedo tapado algo al hacer scroll. */}
-                  {hayMasArribaPorEnviar && (
-                    <div className="pointer-events-none absolute top-0 inset-x-0 h-7 bg-gradient-to-b from-surface to-transparent rounded-t-xl" />
-                  )}
-                  {hayMasPorEnviar && (
-                    <div className="pointer-events-none absolute bottom-0 inset-x-0 h-7 bg-gradient-to-t from-surface to-transparent rounded-b-xl" />
-                  )}
-                  {hayMasArribaPorEnviar && (
-                    <button
-                      type="button"
-                      onClick={() => porEnviarRef.current?.scrollBy({ top: -100, behavior: 'smooth' })}
-                      aria-label="Ver productos anteriores"
-                      className="absolute top-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
-                                 shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
-                    >
-                      <Icon.chevronDown width={16} height={16} className="rotate-180" />
-                    </button>
-                  )}
-                  {hayMasPorEnviar && (
-                    <button
-                      type="button"
-                      onClick={() => porEnviarRef.current?.scrollBy({ top: 100, behavior: 'smooth' })}
-                      aria-label="Ver más productos por enviar"
-                      className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
-                                 shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
-                    >
-                      <Icon.chevronDown width={16} height={16} />
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-baseline justify-between mt-4 pt-4 border-t border-edge">
-                  <span className="text-muted text-sm">Nuevo</span>
-                  <span className="text-xl font-bold">{money(total)}</span>
-                </div>
-              </>
+                    ))}
+                    <div className="flex items-baseline justify-between pt-3 border-t border-edge">
+                      <span className="text-muted text-sm">Ya enviado</span>
+                      <span className="font-semibold">{money(order.total)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  listaPorEnviar
+                )}
+              </div>
+            ) : (
+              lines.length > 0 && (
+                <>
+                  <p className="label">Por enviar</p>
+                  {listaPorEnviar}
+                </>
+              )
             )}
 
             {lines.length > 0 && (
@@ -1037,7 +1108,7 @@ export default function NuevaVenta() {
             )}
 
             {puedeCobrar && order && itemsActivos.length > 0 && (
-              <button onClick={() => setCerrando(true)} className="btn-ghost w-full mt-4">
+              <button onClick={() => setCerrando(true)} className="btn bg-ocupada text-white hover:bg-ocupada/90 w-full mt-4">
                 Cerrar cuenta · {money(order.total)}
               </button>
             )}
@@ -1065,7 +1136,7 @@ export default function NuevaVenta() {
                     key={p.id}
                     onClick={(e) => agregar(p, e.currentTarget)}
                     style={{ borderColor: p.category.color }}
-                    className="flex items-center gap-2.5 text-left p-2.5 rounded-xl bg-raised border
+                    className="grupo-cenefa flex items-center gap-2.5 text-left p-2.5 rounded-xl bg-raised border
                                hover:bg-surface transition-colors"
                   >
                     <span
@@ -1079,7 +1150,7 @@ export default function NuevaVenta() {
                       )}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold leading-tight truncate">{p.name}</p>
+                      <NombreCenefa text={p.name} className="text-sm font-semibold leading-tight" />
                       <p className="text-xs text-muted mt-0.5 truncate">
                         {p.kind === 'PREPARED' ? 'Shot' : v.name}
                         {v?.volumeMl ? ` · ${v.volumeMl} ml` : ''}
@@ -1102,6 +1173,7 @@ export default function NuevaVenta() {
           orderId={order.id}
           total={order.total}
           customer={order.customer}
+          saldoCliente={clienteDetalle?.balance ?? 0}
           puedeDescuento={puedeDescuento}
           onClose={() => setCerrando(false)}
           onConfirm={cerrarCuenta}
@@ -1182,6 +1254,57 @@ function ItemThumb({ item }) {
         item.name.slice(0, 2).toUpperCase()
       )}
     </span>
+  )
+}
+
+// Nombre de producto sugerido mas largo que la tarjeta: en vez de dejarlo
+// cortado con "...", se desliza como una cenefa al pasar el cursor para que
+// se pueda leer completo sin agrandar la tarjeta. Mide una sola vez si el
+// texto de verdad se pasa de su caja (si no, se queda con el truncado normal
+// y ni siquiera monta la animacion).
+function NombreCenefa({ text, className }) {
+  const cajaRef = useRef(null)
+  const textoRef = useRef(null)
+  const [desborda, setDesborda] = useState(false)
+  const [duracion, setDuracion] = useState(1.5)
+
+  useEffect(() => {
+    function medir() {
+      const caja = cajaRef.current
+      const texto = textoRef.current
+      if (!caja || !texto) return
+      // texto es un <span> inline: scrollWidth no sirve ahi (los elementos
+      // inline reportan 0), por eso el ancho real sale de getBoundingClientRect.
+      const anchoTexto = texto.getBoundingClientRect().width
+      const sobra = anchoTexto - caja.clientWidth
+      setDesborda(sobra > 2)
+      // Velocidad fija (px/seg), no duracion fija: un nombre largo no se debe
+      // sentir mas lento que uno corto, los dos cruzan a la misma velocidad.
+      if (sobra > 2) setDuracion(Math.max(1, (anchoTexto + 24) / 90))
+    }
+    // La fuente (Archivo, self-hosteada) carga con font-display:swap: medir
+    // apenas monta usa todavia la fuente de reemplazo, mas angosta, y puede
+    // decir "cabe" cuando en realidad no cabe con la fuente real. document
+    // .fonts.ready espera a que ya este puesta la de verdad antes de medir.
+    medir()
+    document.fonts?.ready.then(medir)
+  }, [text])
+
+  if (!desborda) {
+    return (
+      <p ref={cajaRef} className={`${className} truncate`}>
+        <span ref={textoRef}>{text}</span>
+      </p>
+    )
+  }
+
+  return (
+    <p ref={cajaRef} className={`${className} overflow-hidden whitespace-nowrap`}>
+      <span className="cenefa-pista inline-flex gap-6" style={{ animationDuration: `${duracion}s` }}>
+        <span ref={textoRef}>{text}</span>
+        <span aria-hidden="true">{text}</span>
+      </span>
+    </p>
   )
 }
 

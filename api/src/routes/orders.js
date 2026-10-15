@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { tienePermiso } from '../middleware/permissions.js'
 import { pinLimiter, pinLimitExcedido } from '../middleware/rateLimit.js'
-import { avisarEncargados } from '../lib/realtime.js'
+import { avisarEncargados, avisarTenant } from '../lib/realtime.js'
 import { calcularCostos } from '../lib/costos.js'
 
 export const orderRoutes = Router()
@@ -114,6 +114,8 @@ orderRoutes.patch('/orders/:id/table', async (req, res) => {
     // nada.
     prisma.barTable.updateMany({ where: { groupId: order.tableId }, data: { groupId: destino.id } }),
   ])
+
+  avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
 
   const actualizada = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   res.json({ ...actualizada, total: total(actualizada) })
@@ -239,6 +241,7 @@ orderRoutes.post('/orders', async (req, res) => {
     include: ORDER_INCLUDE,
   })
   await prisma.barTable.update({ where: { id: tableId }, data: { status: 'OCCUPIED' } })
+  avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
   res.status(201).json({ ...order, total: total(order) })
 })
 
@@ -497,15 +500,39 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
     }
 
     // Credito: no entra a caja, se carga como deuda al cliente vinculado a la
-    // cuenta. Necesita cliente con credito habilitado; el 90% del limite ya
-    // se avisa antes de llegar aqui, no se bloquea por eso.
+    // cuenta. Sin credito habilitado, o si este fiado deja el saldo por
+    // encima del cupo, no se bloquea del todo -es decision del encargado, no
+    // del codigo- pero igual que el descuento, necesita su PIN para que quede
+    // quien autorizo cuando se audite.
     const montoCredito = payments
       .filter((p) => p.method === 'CREDITO')
       .reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    let creditoEncargadoId = null
     if (montoCredito > 0) {
       if (!order.customer) return res.status(400).json({ error: 'Esta cuenta necesita un cliente vinculado para fiar' })
-      if (!order.customer.creditEnabled) {
-        return res.status(400).json({ error: `${order.customer.firstName} no tiene crédito habilitado` })
+
+      const [cargos, abonos] = await Promise.all([
+        prisma.customerCharge.aggregate({ where: { customerId: order.customer.id }, _sum: { amount: true } }),
+        prisma.customerPayment.aggregate({ where: { customerId: order.customer.id }, _sum: { amount: true } }),
+      ])
+      const saldoActual = Number(cargos._sum.amount || 0) - Number(abonos._sum.amount || 0)
+      const limite = order.customer.creditLimit !== null ? Number(order.customer.creditLimit) : null
+      const sinCreditoHabilitado = !order.customer.creditEnabled
+      const excedeLimite = limite !== null && saldoActual + montoCredito > limite
+
+      if (sinCreditoHabilitado || excedeLimite) {
+        const { pin } = req.body || {}
+        if (!pin) {
+          return res.status(400).json({
+            error: sinCreditoHabilitado
+              ? `${order.customer.firstName} no tiene crédito habilitado. Necesita el PIN de un encargado para fiar de todos modos.`
+              : `${order.customer.firstName} ya superó su límite de crédito (debe ${saldoActual} de ${limite}). Necesita el PIN de un encargado para fiar de todos modos.`,
+          })
+        }
+        if (await pinLimitExcedido(req, res)) return
+        const encargado = await verificarPin(req.auth.tenantId, pin)
+        if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+        creditoEncargadoId = encargado.id
       }
     }
 
@@ -569,11 +596,14 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
             amount: montoCredito,
             description: `Fiado - mesa ${order.table.number}`,
             createdById: req.auth.userId,
+            authorizedById: creditoEncargadoId,
           },
         })
       }
     })
   }
+
+  avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
 
   const cerrada = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   res.json({ ...cerrada, total: total(cerrada) })

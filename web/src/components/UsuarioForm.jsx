@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../lib/api'
 import { Icon } from './Icons'
 import { useAuth } from '../context/AuthContext'
+import PinInput, { PIN_LENGTH } from './PinInput'
 
 const ROLES = [
   { value: 'MESERO', label: 'Mesero/a' },
@@ -34,7 +35,7 @@ export default function UsuarioForm({ user, onClose, onSaved }) {
   async function guardar() {
     if (!name.trim() || !email.trim()) return setError('Nombre y correo son obligatorios')
     if (esNuevo && password.length < 6) return setError('La clave debe tener minimo 6 caracteres')
-    if (pin && !/^\d{4}$/.test(pin)) return setError('El PIN debe tener exactamente 4 digitos')
+    if (pin && pin.length !== PIN_LENGTH) return setError(`El PIN debe tener exactamente ${PIN_LENGTH} dígitos`)
 
     setError('')
     setSaving(true)
@@ -119,24 +120,17 @@ export default function UsuarioForm({ user, onClose, onSaved }) {
         </div>
 
         <div>
-          <label className="label">
+          <label className="label text-center">
             {esNuevo ? 'PIN (opcional)' : 'Nuevo PIN (opcional)'}
           </label>
-          <input
-            type="password"
-            inputMode="numeric"
-            maxLength={4}
-            className="field"
-            value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-            placeholder={
-              role === 'MESERO'
-                ? 'Solo lo usan admin/cajero para autorizar'
-                : user?.tienePin
-                  ? 'Ya tiene uno · déjalo en blanco para no cambiarlo'
-                  : '4 dígitos'
-            }
-          />
+          <PinInput value={pin} onChange={setPin} />
+          <p className="text-xs text-muted text-center mt-2">
+            {role === 'MESERO'
+              ? 'Solo lo usan admin/cajero para autorizar'
+              : user?.tienePin
+                ? 'Ya tiene uno · déjalo en blanco para no cambiarlo'
+                : `${PIN_LENGTH} dígitos`}
+          </p>
         </div>
 
         {!esNuevo && (

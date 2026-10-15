@@ -24,7 +24,7 @@ function toPublic(u) {
 }
 
 function pinInvalido(pin) {
-  return pin !== undefined && pin !== null && pin !== '' && !/^\d{4}$/.test(String(pin))
+  return pin !== undefined && pin !== null && pin !== '' && !/^\d{5}$/.test(String(pin))
 }
 
 // Gestionar usuarios es configuracion: solo ADMIN, igual que catalogo,
@@ -44,7 +44,7 @@ userRoutes.post('/users', adminOnly, async (req, res) => {
   }
   if (!ROLES.includes(role)) return res.status(400).json({ error: 'El rol no es valido' })
   if (password.length < 6) return res.status(400).json({ error: 'La clave debe tener minimo 6 caracteres' })
-  if (pinInvalido(pin)) return res.status(400).json({ error: 'El PIN debe tener exactamente 4 digitos' })
+  if (pinInvalido(pin)) return res.status(400).json({ error: 'El PIN debe tener exactamente 5 digitos' })
   // El permiso delegado deja gestionar MESERO/CAJERO, no crear otro admin:
   // eso seria escalar su propio acceso con un permiso que el dueno le dio
   // para otra cosa.
@@ -81,7 +81,7 @@ userRoutes.patch('/users/:id', adminOnly, async (req, res) => {
   if (password !== undefined && password !== '' && password.length < 6) {
     return res.status(400).json({ error: 'La clave debe tener minimo 6 caracteres' })
   }
-  if (pinInvalido(pin)) return res.status(400).json({ error: 'El PIN debe tener exactamente 4 digitos' })
+  if (pinInvalido(pin)) return res.status(400).json({ error: 'El PIN debe tener exactamente 5 digitos' })
   // Mismo limite que al crear: el permiso delegado no alcanza para tocar una
   // cuenta de administrador ni para convertir a alguien en uno.
   if (req.auth.role !== 'ADMIN' && (user.role === 'ADMIN' || role === 'ADMIN')) {

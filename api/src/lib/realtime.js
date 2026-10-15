@@ -12,6 +12,13 @@ function salaEncargados(tenantId) {
   return `tenant:${tenantId}:encargados`
 }
 
+// El plano de mesas (y su numerito de "ocupadas" por zona) lo mira cualquier
+// rol, no solo admin/cajero: una mesera necesita ver en vivo que otra mesera
+// abrio o cerro una mesa sin tener que refrescar la pagina.
+function salaTenant(tenantId) {
+  return `tenant:${tenantId}`
+}
+
 export function initRealtime(httpServer) {
   io = new Server(httpServer, { cors: { origin: '*' } })
 
@@ -27,6 +34,7 @@ export function initRealtime(httpServer) {
 
   io.on('connection', (socket) => {
     const { tenantId, role } = socket.data.auth
+    socket.join(salaTenant(tenantId))
     if (role === 'ADMIN' || role === 'CAJERO') socket.join(salaEncargados(tenantId))
   })
 
@@ -35,4 +43,8 @@ export function initRealtime(httpServer) {
 
 export function avisarEncargados(tenantId, event, payload) {
   io?.to(salaEncargados(tenantId)).emit(event, payload)
+}
+
+export function avisarTenant(tenantId, event, payload) {
+  io?.to(salaTenant(tenantId)).emit(event, payload)
 }

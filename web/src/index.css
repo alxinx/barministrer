@@ -233,6 +233,31 @@
   .animate-vuelo-agregar {
     animation: vuelo-agregar 480ms cubic-bezier(0.3, 0, 0.2, 1) forwards;
   }
+
+  /* Nombre de producto sugerido que no cabe en la tarjeta: se desliza como
+     cenefa al pasar el cursor en vez de quedar cortado con "...". El texto
+     esta duplicado adentro (ver NombreCenefa en NuevaVenta.jsx) separado por
+     el mismo gap-6 del marcado, asi que el bucle se ve continuo justo cuando
+     llega a -50%: ahi empieza la segunda copia, identica a donde arranco la
+     primera. La animacion solo existe bajo ":hover" (no es pausada/corrida
+     con animation-play-state) a proposito: asi, al sacar el cursor, no se
+     congela a mitad de camino -vuelve de una al inicio, listo para la
+     proxima pasada. La duracion llega como inline style (depende de cuanto
+     mide el nombre) para que un nombre largo cruce a la misma velocidad que
+     uno corto, no mas lento. */
+  @keyframes cenefa-rapida {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+  .grupo-cenefa:hover .cenefa-pista {
+    animation-name: cenefa-rapida;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

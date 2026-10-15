@@ -29,7 +29,7 @@ Arranque: `cp .env.example .env && docker compose up --build`.
 Web `:5173` · API `:4000` · MySQL `:3307`.
 
 Usuarios de prueba: `admin@licorplus.co`/`admin123`, `caja@licorplus.co`/`caja123`,
-`mesera@licorplus.co`/`mesa123`. PIN de todos: `1234`.
+`mesera@licorplus.co`/`mesa123`. PIN de todos: `12345`.
 
 ## Reglas del dominio (no negociables)
 

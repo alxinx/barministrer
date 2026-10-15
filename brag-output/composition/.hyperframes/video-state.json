@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "historyId": "6d40a1d4-8a74-4d67-b593-b91e0a2b1f65",
+  "currentRevision": "aaacdd92-1f17-4d1c-8f84-91de1f584739",
+  "pendingChanges": false,
+  "files": {
+    "assets/fonts/archivo-400.ttf": {
+      "hash": "01170409e32e22123a354fbaa7dcb5ca5300790bb77c05d569ec8fdc394e78c9",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/01/01170409e32e22123a354fbaa7dcb5ca5300790bb77c05d569ec8fdc394e78c9"
+    },
+    "assets/fonts/archivo-600.ttf": {
+      "hash": "f3a513d89abf3bf1d5aa906b15f21eefe7a7c98a6cf6463929a0a4032639d264",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/f3/f3a513d89abf3bf1d5aa906b15f21eefe7a7c98a6cf6463929a0a4032639d264"
+    },
+    "assets/fonts/archivo-800.ttf": {
+      "hash": "745c7f810c448f256b66e1beaf8d6ccc2be98c01e531a1da8b1e8cf805a5b857",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/74/745c7f810c448f256b66e1beaf8d6ccc2be98c01e531a1da8b1e8cf805a5b857"
+    },
+    "assets/music/audio-data.js": {
+      "hash": "588816aa4e66a7219aab16a9ea9c1505c0a62963d354c60c060f6c7903de07c3",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/58/588816aa4e66a7219aab16a9ea9c1505c0a62963d354c60c060f6c7903de07c3"
+    },
+    "assets/music/audio-data.json": {
+      "hash": "74172b7a57523ffa7a8e78102fb9c15ec1917f2df9d3177d03c50b4d5adee2bc",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/74/74172b7a57523ffa7a8e78102fb9c15ec1917f2df9d3177d03c50b4d5adee2bc"
+    },
+    "assets/sfx/bong_001.ogg": {
+      "hash": "d21d0f0b782445db579d11e2506b24cd1ac9d664ee33aeaf807761aa7b6fd710",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/d2/d21d0f0b782445db579d11e2506b24cd1ac9d664ee33aeaf807761aa7b6fd710"
+    },
+    "assets/sfx/click_002.ogg": {
+      "hash": "adcd1f4adc35f1b41bc1b5bbefeff7aa44f2f3f0d96d3199b544140c7c1e761c",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/ad/adcd1f4adc35f1b41bc1b5bbefeff7aa44f2f3f0d96d3199b544140c7c1e761c"
+    },
+    "assets/sfx/click_003.ogg": {
+      "hash": "2fa929138bc3a0f432696588f66eac94b8f6d463905ec8808c6461ce4b054292",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/2f/2fa929138bc3a0f432696588f66eac94b8f6d463905ec8808c6461ce4b054292"
+    },
+    "assets/sfx/click_005.ogg": {
+      "hash": "a3ee7ebb036bc3cdc218ae52bb27548c4f49bcf07505274f8b61b1af8236acc2",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/a3/a3ee7ebb036bc3cdc218ae52bb27548c4f49bcf07505274f8b61b1af8236acc2"
+    },
+    "assets/sfx/error_005.ogg": {
+      "hash": "3f75b11df5b06d68d2c25fbf0e9c9d9e7dd9250562a4007ee34856b8a309a2ae",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/3f/3f75b11df5b06d68d2c25fbf0e9c9d9e7dd9250562a4007ee34856b8a309a2ae"
+    },
+    "assets/sfx/impactBell_heavy_003.ogg": {
+      "hash": "5572ccdeb3b62373b86fa955355b3a222c36e815f0636ba16165189a21cf2514",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/55/5572ccdeb3b62373b86fa955355b3a222c36e815f0636ba16165189a21cf2514"
+    },
+    "assets/sfx/impactSoft_medium_001.ogg": {
+      "hash": "7642a4fd43e547afe4f7adfadb3dabb681c0ff512f52c1674bae30a726841faf",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/76/7642a4fd43e547afe4f7adfadb3dabb681c0ff512f52c1674bae30a726841faf"
+    },
+    "assets/sfx/impactSoft_medium_002.ogg": {
+      "hash": "5069e3571a77d7f7aae9ef71d0364aa245fb7d64a7c8cc9956f221d03088c089",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/50/5069e3571a77d7f7aae9ef71d0364aa245fb7d64a7c8cc9956f221d03088c089"
+    },
+    "assets/sfx/impactWood_medium_001.ogg": {
+      "hash": "15271dbe8e2872dbb0ff1aeb7b12b2d2b92b7c1951c88532b9ab9158c36dfc73",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/15/15271dbe8e2872dbb0ff1aeb7b12b2d2b92b7c1951c88532b9ab9158c36dfc73"
+    },
+    "index.html": {
+      "hash": "7a62adc02fddd7ca027e94f45f82301c63fea6da025ab8ac14019a4532253192",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/7a/7a62adc02fddd7ca027e94f45f82301c63fea6da025ab8ac14019a4532253192"
+    },
+    "assets/music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3": {
+      "hash": "aa56ab1cdcbef6b05566c6a7c114323078580ccf6a740a9e6c6b6c4b40b4389f",
+      "content": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/aa/aa56ab1cdcbef6b05566c6a7c114323078580ccf6a740a9e6c6b6c4b40b4389f"
+    }
+  },
+  "revisions": {
+    "7d92e459-3f4f-4d2b-8e9b-3ed83d3857e7": {
+      "actor": {
+        "kind": "outside",
+        "name": "Outside"
+      },
+      "label": "Changed outside the app",
+      "startedAt": 1792080647126,
+      "endedAt": 1792080647127,
+      "files": {
+        "index.html": {
+          "before": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/4f/4f46b105b5f6d8ec2ad8b7a82ba8165e5526a32350fb4a5cfa9246fa280ad466",
+          "after": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/43/433282e4ecf8b84ab4c48ae288e5c7682bfd9b5ce5cf2d7c0f01531bb48c68ce"
+        }
+      }
+    },
+    "aaacdd92-1f17-4d1c-8f84-91de1f584739": {
+      "actor": {
+        "kind": "outside",
+        "name": "Outside"
+      },
+      "label": "Changed outside the app",
+      "startedAt": 1792081022485,
+      "endedAt": 1792081022485,
+      "files": {
+        "index.html": {
+          "before": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/43/433282e4ecf8b84ab4c48ae288e5c7682bfd9b5ce5cf2d7c0f01531bb48c68ce",
+          "after": "/Users/apple/.cache/hyperframes/history/6d40a1d4-8a74-4d67-b593-b91e0a2b1f65/blobs/7a/7a62adc02fddd7ca027e94f45f82301c63fea6da025ab8ac14019a4532253192"
+        }
+      }
+    }
+  },
+  "checks": {
+    "latest": {
+      "revision": null,
+      "id": "89067b7b-4b9b-4be4-856e-f813de402a0a"
+    },
+    "revisions": {},
+    "unversioned": [
+      {
+        "id": "a7a6514a-3b82-4024-8768-e07ac90af6a7",
+        "scope": "project",
+        "report": "/Users/apple/Documents/CLIENTES/licorplus/brag-output/composition/.hyperframes/artifacts/checks/a7a6514a-3b82-4024-8768-e07ac90af6a7.json",
+        "metadata": {
+          "ok": false,
+          "browserSkipped": true,
+          "options": {
+            "samples": 9,
+            "atTransitions": false,
+            "maxIssues": 80,
+            "collapseStatic": true,
+            "tolerance": 2,
+            "timeout": 3000,
+            "contrast": true,
+            "strict": false,
+            "snapshots": true,
+            "browserGpuMode": "auto"
+          }
+        },
+        "createdAt": 1792080580760,
+        "contentHash": "a7962228e5ce9f77a6ab5d5abe0ce34a936493c11143b3b41362a8263d11b290",
+        "revision": null,
+        "inputFingerprint": "754019b2385d3d23e8a4e8fedcf16354a833b928d5260e154018d928a6aa3caa",
+        "inputScope": "local-project-files",
+        "attribution": "unversioned"
+      },
+      {
+        "id": "89067b7b-4b9b-4be4-856e-f813de402a0a",
+        "scope": "project",
+        "report": "/Users/apple/Documents/CLIENTES/licorplus/brag-output/composition/.hyperframes/artifacts/checks/89067b7b-4b9b-4be4-856e-f813de402a0a.json",
+        "metadata": {
+          "ok": false,
+          "browserSkipped": true,
+          "options": {
+            "samples": 9,
+            "atTransitions": false,
+            "maxIssues": 80,
+            "collapseStatic": true,
+            "tolerance": 2,
+            "timeout": 30000,
+            "contrast": true,
+            "strict": false,
+            "snapshots": false,
+            "browserGpuMode": "auto"
+          }
+        },
+        "createdAt": 1792080622173,
+        "contentHash": "3158131e4a2f9fa3e05491be4941e97e53e58a74ba8d7f4b7a74b16a883ddcba",
+        "revision": null,
+        "inputFingerprint": "754019b2385d3d23e8a4e8fedcf16354a833b928d5260e154018d928a6aa3caa",
+        "inputScope": "local-project-files",
+        "attribution": "unversioned"
+      }
+    ]
+  },
+  "snapshots": {
+    "latest": null,
+    "revisions": {},
+    "unversioned": []
+  },
+  "renders": {
+    "latest": {
+      "id": "b120fe15-7015-42e8-83f9-2d7e6fac3413",
+      "completedAt": 1792081139788,
+      "output": "/Users/apple/Documents/CLIENTES/licorplus/brag-output/brag.mp4",
+      "status": "completed",
+      "revision": "aaacdd92-1f17-4d1c-8f84-91de1f584739"
+    },
+    "retainedRevisions": [
+      "aaacdd92-1f17-4d1c-8f84-91de1f584739",
+      "7d92e459-3f4f-4d2b-8e9b-3ed83d3857e7"
+    ]
+  },
+  "pendingArtifactCleanup": []
+}

@@ -6,6 +6,7 @@ import { Icon } from '../components/Icons'
 import ClienteForm from '../components/ClienteForm'
 import ReciboModal from '../components/ReciboModal'
 import ReciboAbonoModal from '../components/ReciboAbonoModal'
+import ConsumoDetalleModal from '../components/ConsumoDetalleModal'
 import ConsumoChart from '../components/ConsumoChart'
 import MoneyInput from '../components/MoneyInput'
 import { METHODS, METHOD_LABEL } from '../lib/paymentMethods'
@@ -17,6 +18,7 @@ export default function ClienteDetalle() {
   const [customer, setCustomer] = useState(undefined) // undefined = cargando, null = no existe
   const [editing, setEditing] = useState(false)
   const [factura, setFactura] = useState(null)
+  const [detalle, setDetalle] = useState(null)
   const [comprobante, setComprobante] = useState(null)
   const [error, setError] = useState('')
 
@@ -51,6 +53,14 @@ export default function ClienteDetalle() {
   async function verFactura(orderId) {
     try {
       setFactura(await api(`/orders/${orderId}`))
+    } catch (err) {
+      show(err)
+    }
+  }
+
+  async function verDetalle(orderId) {
+    try {
+      setDetalle(await api(`/orders/${orderId}`))
     } catch (err) {
       show(err)
     }
@@ -211,7 +221,13 @@ export default function ClienteDetalle() {
         ) : (
           <div>
             {historial.map((h) => (
-              <div key={`${h.tipo}-${h.id}`} className="flex items-center gap-3 py-2.5 border-b border-edge/60 last:border-0">
+              <div
+                key={`${h.tipo}-${h.id}`}
+                onClick={h.tipo === 'cargo' && h.order ? () => verDetalle(h.order.id) : undefined}
+                className={`flex items-center gap-3 py-2.5 border-b border-edge/60 last:border-0 ${
+                  h.tipo === 'cargo' && h.order ? 'cursor-pointer hover:bg-raised rounded-lg -mx-2 px-2' : ''
+                }`}
+              >
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate flex items-center gap-2">
                     {h.tipo === 'cargo' ? h.description : h.note || 'Abono'}
@@ -239,7 +255,10 @@ export default function ClienteDetalle() {
                 {h.tipo === 'cargo' && h.order ? (
                   <button
                     type="button"
-                    onClick={() => verFactura(h.order.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      verFactura(h.order.id)
+                    }}
                     aria-label={`Ver factura de la mesa ${h.order.table.number}`}
                     className="w-9 h-9 rounded-lg bg-raised border border-edge grid place-items-center text-muted hover:text-amber hover:border-amber/40 transition-colors shrink-0"
                   >
@@ -274,6 +293,8 @@ export default function ClienteDetalle() {
           onClose={() => setFactura(null)}
         />
       )}
+
+      {detalle && <ConsumoDetalleModal order={detalle} onClose={() => setDetalle(null)} />}
 
       {comprobante && (
         <ReciboAbonoModal

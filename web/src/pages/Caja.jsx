@@ -6,6 +6,7 @@ import { useShift } from '../context/ShiftContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
 import ReciboModal from '../components/ReciboModal'
+import ConsumoDetalleModal from '../components/ConsumoDetalleModal'
 import CuadreResumen from '../components/CuadreResumen'
 import RangoFechas from '../components/RangoFechas'
 import { parseISOLocal } from '../lib/fechas'
@@ -35,6 +36,7 @@ export default function Caja() {
   const [closing, setClosing] = useState(false)
   const [closedResult, setClosedResult] = useState(null)
   const [factura, setFactura] = useState(null)
+  const [detalle, setDetalle] = useState(null)
   const [agregandoEgreso, setAgregandoEgreso] = useState(false)
 
   const [periodo, setPeriodo] = useState('hoy')
@@ -105,6 +107,15 @@ export default function Caja() {
     try {
       const order = await api(`/orders/${id}`)
       setFactura(order)
+    } catch (err) {
+      show(err)
+    }
+  }
+
+  async function verDetalle(id) {
+    try {
+      const order = await api(`/orders/${id}`)
+      setDetalle(order)
     } catch (err) {
       show(err)
     }
@@ -272,7 +283,7 @@ export default function Caja() {
                   {movimientosVisibles.map((m) => (
                     <tr
                       key={m.id}
-                      onClick={() => verFactura(m.orderId)}
+                      onClick={() => verDetalle(m.orderId)}
                       className="border-b border-edge/60 last:border-0 hover:bg-raised/60 cursor-pointer"
                     >
                       <td className="px-5 py-3 text-muted whitespace-nowrap">{formatHora(m.hora)}</td>
@@ -298,7 +309,17 @@ export default function Caja() {
                         {money(Math.abs(m.monto))}
                       </td>
                       <td className="pr-4 text-muted">
-                        <Icon.chevronLeft width={14} height={14} className="rotate-180" />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            verFactura(m.orderId)
+                          }}
+                          aria-label="Reimprimir factura"
+                          className="w-8 h-8 rounded-lg grid place-items-center hover:text-amber hover:bg-raised transition-colors"
+                        >
+                          <Icon.receipt width={16} height={16} />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -383,6 +404,8 @@ export default function Caja() {
           onClose={() => setFactura(null)}
         />
       )}
+
+      {detalle && <ConsumoDetalleModal order={detalle} onClose={() => setDetalle(null)} />}
     </div>
   )
 }

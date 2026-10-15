@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../lib/api'
+import PinInput from './PinInput'
 
 /** Devolver un producto ya pedido: necesita motivo y el PIN de un encargado. */
 export default function DevolverModal({ item, onCancel, onDevuelto }) {
@@ -51,15 +52,8 @@ export default function DevolverModal({ item, onCancel, onDevuelto }) {
           />
         </div>
         <div>
-          <label className="label">PIN del encargado</label>
-          <input
-            type="password"
-            inputMode="numeric"
-            maxLength={4}
-            className="field"
-            value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-          />
+          <label className="label text-center">PIN del encargado</label>
+          <PinInput value={pin} onChange={setPin} />
         </div>
 
         <div className="flex gap-3">

@@ -71,7 +71,7 @@ model User {
   name         String
   email        String   @unique
   passwordHash String
-  pinHash      String? // PIN de 4 digitos para autorizar cortesias y anulaciones
+  pinHash      String? // PIN de 5 digitos para autorizar cortesias y anulaciones
   role         Role     @default(MESERO)
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
@@ -80,7 +80,8 @@ model User {
   shiftsOpened  Shift[]        @relation("ShiftOpenedBy")
   shiftsClosed  Shift[]        @relation("ShiftClosedBy")
   shiftExpenses ShiftExpense[]
-  customerCharges  CustomerCharge[]
+  customerCharges           CustomerCharge[] @relation("CustomerChargeCreatedBy")
+  customerChargesAuthorized CustomerCharge[] @relation("CustomerChargeAuthorizedBy")
   customerPayments CustomerPayment[]
   stockMovements   StockMovement[]
   ordersOpened     Order[]     @relation("OrderOpenedBy")
@@ -444,11 +445,17 @@ model CustomerCharge {
   createdAt   DateTime @default(now())
 
   createdById String
+  /// Encargado (ADMIN o CAJERO) que puso su PIN para autorizar este fiado
+  /// cuando el cliente no tenia credito habilitado o ya habia superado su
+  /// limite. Null si el fiado entro dentro del cupo normal, sin necesitar
+  /// autorizacion. Es el rastro de auditoria: quien dijo "sigue adelante".
+  authorizedById String?
 
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  order      Order?   @relation(fields: [orderId], references: [id])
-  createdBy  User     @relation(fields: [createdById], references: [id])
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order        Order?   @relation(fields: [orderId], references: [id])
+  createdBy    User     @relation("CustomerChargeCreatedBy", fields: [createdById], references: [id])
+  authorizedBy User?    @relation("CustomerChargeAuthorizedBy", fields: [authorizedById], references: [id])
 
   @@index([customerId])
   @@index([tenantId])

@@ -28,7 +28,7 @@ export const loginLimiter = rateLimit({
   message: { error: 'Demasiados intentos. Espera unos minutos y vuelve a intentar.' },
 })
 
-// El PIN son 4 digitos (10.000 combinaciones). Se verifica en tres sitios
+// El PIN son 5 digitos (100.000 combinaciones). Se verifica en tres sitios
 // (verify-pin, devolver un item, descuento al cerrar) y los tres necesitan
 // el mismo freno: sin esto, cualquier sesion ya autenticada -hasta una
 // mesera, que es justo a quien el PIN esta pensado para frenar- puede

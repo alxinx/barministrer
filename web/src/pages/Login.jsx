@@ -78,10 +78,6 @@ export default function Login() {
             {busy ? 'Entrando…' : 'Entrar'}
           </button>
         </form>
-
-        <p className="text-xs text-muted mt-8 leading-relaxed">
-          Datos de prueba: admin@licorplus.co / admin123 · mesera@licorplus.co / mesa123
-        </p>
       </div>
     </div>
   )

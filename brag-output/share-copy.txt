@@ -1,0 +1,1 @@
+Construí LicorPlus: el POS que aprueba cada pre-pedido en vivo (la mesera manda, otro aprueba — a propósito), reparte los descuentos por margen al cerrar la cuenta y nunca deja una mesa vendida a pérdida. Hecho para un bar real en Medellín, no para una demo.

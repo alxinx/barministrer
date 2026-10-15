@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission, tienePermiso } from '../middleware/permissions.js'
+import { avisarTenant } from '../lib/realtime.js'
 
 export const layoutRoutes = Router()
 const adminOnly = requirePermission('cajeroGestionaDistribucion')
@@ -208,6 +209,9 @@ layoutRoutes.patch('/tables/:id', async (req, res) => {
       ...(active !== undefined && { active: Boolean(active) }),
     },
   })
+  // Solo si de verdad cambio el estado: renombrar o mover una mesa no afecta
+  // el numerito de "ocupadas" que ve el resto del equipo.
+  if (status !== undefined) avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
   res.json(updated)
 })
 
@@ -338,6 +342,7 @@ layoutRoutes.post('/tables/group', async (req, res) => {
     prisma.barTable.update({ where: { id: principalId }, data: { status: 'OCCUPIED' } }),
   ])
 
+  avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
   res.json({ principalId, satelites })
 })
 
@@ -388,6 +393,7 @@ layoutRoutes.post('/tables/ungroup', async (req, res) => {
   }
 
   await prisma.barTable.updateMany({ where: { id: { in: unicos } }, data: { groupId: null, status: 'AVAILABLE' } })
+  avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
   res.json({ ok: true })
 })
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, money } from '../lib/api'
 import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
+import PinInput from './PinInput'
 
 const METHODS = [
   { key: 'EFECTIVO', label: 'Efectivo' },
@@ -18,10 +19,13 @@ const METHODS = [
  * proposito: hay que tocar 3 veces el titulo "Cerrar cuenta" para cortesia, o
  * 3 veces "Total a cobrar" para descuento (y ninguno de los dos aparece si el
  * rol no tiene el permiso). Credito solo aparece si hay un cliente vinculado
- * con el credito habilitado: fiar sin saber a quien no tiene sentido.
+ * con el credito habilitado: fiar sin saber a quien no tiene sentido. Si el
+ * cliente no tiene credito o este fiado deja el saldo por encima del cupo,
+ * igual se puede continuar (es decision del encargado, no del codigo) pero
+ * pide su PIN para que quede quien autorizo cuando se audite.
  */
-export default function CerrarCuentaModal({ orderId, total, customer, puedeDescuento, onClose, onConfirm }) {
-  const metodosDisponibles = customer?.creditEnabled ? METHODS : METHODS.filter((m) => m.key !== 'CREDITO')
+export default function CerrarCuentaModal({ orderId, total, customer, saldoCliente, puedeDescuento, onClose, onConfirm }) {
+  const metodosDisponibles = customer ? METHODS : METHODS.filter((m) => m.key !== 'CREDITO')
   const [splitOpen, setSplitOpen] = useState(false)
   const [splitCount, setSplitCount] = useState(1)
   const [rows, setRows] = useState([{ method: 'EFECTIVO', amount: String(total), tendered: '' }])
@@ -52,6 +56,19 @@ export default function CerrarCuentaModal({ orderId, total, customer, puedeDescu
   const sumaPagos = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
   const restante = montoACobrar - sumaPagos
   const porPersona = montoACobrar / (Number(splitCount) || 1)
+
+  // Igual que el descuento: no se bloquea, pero si el cliente no tiene
+  // credito o este fiado deja el saldo por encima del cupo, hace falta el
+  // PIN de un encargado para que quede el rastro de quien autorizo.
+  const montoCredito = rows
+    .filter((r) => r.method === 'CREDITO')
+    .reduce((s, r) => s + (Number(r.amount) || 0), 0)
+  const limiteCredito = customer?.creditLimit !== null && customer?.creditLimit !== undefined ? Number(customer.creditLimit) : null
+  const proyectadoCredito = (Number(saldoCliente) || 0) + montoCredito
+  const sinCreditoHabilitado = montoCredito > 0 && !customer?.creditEnabled
+  const excedeLimiteCredito = montoCredito > 0 && limiteCredito !== null && proyectadoCredito > limiteCredito
+  const necesitaAutorizarCredito = sinCreditoHabilitado || excedeLimiteCredito
+  const necesitaPin = hayDescuento || necesitaAutorizarCredito
 
   function setRow(i, patch) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
@@ -110,8 +127,14 @@ export default function CerrarCuentaModal({ orderId, total, customer, puedeDescu
     if (perdida) {
       return setError('Ese descuento deja la cuenta en pérdida')
     }
-    if (hayDescuento && !pin.trim()) {
-      return setError('El descuento necesita el PIN del encargado')
+    if (necesitaPin && !pin.trim()) {
+      return setError(
+        hayDescuento && necesitaAutorizarCredito
+          ? 'El descuento y el fiado necesitan el PIN de un encargado'
+          : hayDescuento
+            ? 'El descuento necesita el PIN del encargado'
+            : 'Ese fiado necesita el PIN de un encargado para autorizarlo'
+      )
     }
     if (restante !== 0) {
       return setError(restante > 0 ? `Faltan ${money(restante)} por asignar` : `Sobran ${money(-restante)} asignados`)
@@ -126,7 +149,8 @@ export default function CerrarCuentaModal({ orderId, total, customer, puedeDescu
           ...(r.method === 'EFECTIVO' && r.tendered ? { tendered: Number(r.tendered) } : {}),
         })),
         splitCount: Number(splitCount) || 1,
-        ...(hayDescuento ? { discountAmount: descuento, pin: pin.trim() } : {}),
+        ...(hayDescuento ? { discountAmount: descuento } : {}),
+        ...(necesitaPin ? { pin: pin.trim() } : {}),
       })
     } catch (err) {
       setError(err.message)
@@ -191,18 +215,26 @@ export default function CerrarCuentaModal({ orderId, total, customer, puedeDescu
           </p>
         )}
 
-        {hayDescuento && !perdida && !descuentoInvalido && (
+        {necesitaAutorizarCredito && (
+          <p className="text-sm font-semibold text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+            {sinCreditoHabilitado
+              ? `${customer.firstName} no tiene crédito habilitado.`
+              : `${customer.firstName} ya superó su límite de crédito: quedaría debiendo ${money(proyectadoCredito)} de un cupo de ${money(limiteCredito)}.`}{' '}
+            Para fiarle de todos modos, un encargado tiene que autorizarlo con su PIN.
+          </p>
+        )}
+
+        {necesitaPin && !perdida && !descuentoInvalido && (
           <div>
-            <label className="label text-xs">PIN del encargado para autorizar el descuento</label>
-            <input
-              type="password"
-              inputMode="numeric"
-              maxLength={4}
-              className="field h-9"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="····"
-            />
+            <label className="label text-xs text-center">
+              PIN del encargado para autorizar{' '}
+              {hayDescuento && necesitaAutorizarCredito
+                ? 'el descuento y el fiado'
+                : hayDescuento
+                  ? 'el descuento'
+                  : 'el fiado'}
+            </label>
+            <PinInput value={pin} onChange={setPin} autoFocus />
           </div>
         )}
 
@@ -347,7 +379,7 @@ export default function CerrarCuentaModal({ orderId, total, customer, puedeDescu
           <button
             type="button"
             onClick={confirmar}
-            disabled={saving || perdida || descuentoInvalido || (hayDescuento && !pin.trim())}
+            disabled={saving || perdida || descuentoInvalido || (necesitaPin && !pin.trim())}
             className="btn-primary flex-1"
           >
             {saving ? 'Procesando…' : courtesy ? 'Marcar como cortesía' : 'Pagar'}

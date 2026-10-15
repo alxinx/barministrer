@@ -99,10 +99,9 @@ export default function Usuarios() {
             <button
               onClick={() => setTarget(u)}
               disabled={bloqueada}
-              className="text-muted hover:text-ink shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-              aria-label="Editar"
+              className="btn-ghost h-8 px-3 text-xs shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Icon.gear width={16} height={16} />
+              Editar
             </button>
           </div>
           )
