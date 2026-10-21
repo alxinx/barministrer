@@ -4,6 +4,7 @@ import { api, money } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import ReciboModal from '../components/ReciboModal'
+import TicketEgresoModal from '../components/TicketEgresoModal'
 import FacturasDelDia from '../components/FacturasDelDia'
 import ResumenVentas from '../components/ResumenVentas'
 import CuadreResumen from '../components/CuadreResumen'
@@ -14,6 +15,7 @@ export default function TurnoDetalle() {
   const { session } = useAuth()
   const [shift, setShift] = useState(undefined) // undefined = cargando, null = no encontrado
   const [factura, setFactura] = useState(null)
+  const [egresoTicket, setEgresoTicket] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -120,7 +122,17 @@ export default function TurnoDetalle() {
                     {e.type === 'RETIRO' ? 'Retiro' : 'Gasto'} · {e.authorizedBy?.name}
                   </p>
                 </div>
-                <span className="text-sm font-semibold text-ocupada shrink-0">-{money(e.amount)}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-semibold text-ocupada">-{money(e.amount)}</span>
+                  <button
+                    type="button"
+                    onClick={() => setEgresoTicket(e)}
+                    aria-label="Reimprimir comprobante"
+                    className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amber hover:bg-raised transition-colors"
+                  >
+                    <Icon.receipt width={16} height={16} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -134,6 +146,15 @@ export default function TurnoDetalle() {
           tenantName={session?.tenant?.name}
           autoPrint={false}
           onClose={() => setFactura(null)}
+        />
+      )}
+
+      {egresoTicket && (
+        <TicketEgresoModal
+          egreso={egresoTicket}
+          tenantName={session?.tenant?.name}
+          autoPrint={false}
+          onClose={() => setEgresoTicket(null)}
         />
       )}
     </div>

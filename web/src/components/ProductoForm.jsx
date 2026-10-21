@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
+import { useAuth } from '../context/AuthContext'
 import { categoryTree, flattenCategories } from '../lib/categories'
 import { resizeProductImage } from '../lib/image'
 import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
+import PinInput from './PinInput'
+import TicketMermaModal from './TicketMermaModal'
 
 /**
  * Crea o edita un producto. Dos tipos, un solo formulario:
@@ -13,6 +16,8 @@ import MoneyInput from './MoneyInput'
  *   el permiso de vender por ml, no en el producto.
  */
 export default function ProductoForm({ categories, products, product, initialName, onClose, onSaved }) {
+  const { session } = useAuth()
+  const esAdminReal = session?.user.role === 'ADMIN' // nunca delegable: ni cajeroEditaCatalogo lo habilita
   const isEdit = Boolean(product)
   const [kind, setKind] = useState(product?.kind || 'STOCK')
   const [categoryId, setCategoryId] = useState(product?.categoryId || '')
@@ -39,6 +44,56 @@ export default function ProductoForm({ categories, products, product, initialNam
   const [subiendoImagen, setSubiendoImagen] = useState(false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [confirmandoSuspender, setConfirmandoSuspender] = useState(false)
+  const [pin, setPin] = useState('')
+  const [confirmandoMerma, setConfirmandoMerma] = useState(false)
+  const [mermaVariantId, setMermaVariantId] = useState(product?.variants?.[0]?.id || '')
+  const [mermaQty, setMermaQty] = useState('')
+  const [mermaReason, setMermaReason] = useState('')
+  const [mermaResultado, setMermaResultado] = useState(null)
+  const variantesConStock = product?.variants || []
+  const mermaVariant = variantesConStock.find((v) => v.id === mermaVariantId)
+  const mermaExcedeStock = Boolean(mermaVariant && mermaQty && Number(mermaQty) > mermaVariant.stock)
+
+  // Suspender es el PATCH active=false que ya filtra disponibilidad en
+  // ventas (producto.active && categoria.active); no hay ni va a haber un
+  // DELETE de producto, porque borrarlo de verdad rompe el rastro de pedidos
+  // que ya lo referencian. Sale de todos los pedidos de inmediato, por eso es
+  // solo del ADMIN real (no delegable) y pide PIN como anular un item.
+  async function suspender() {
+    if (!pin) return
+    setError('')
+    setSaving(true)
+    try {
+      const saved = await api(`/products/${product.id}/suspend`, {
+        method: 'PATCH',
+        body: { active: !product.active, pin },
+      })
+      onSaved(saved)
+    } catch (err) {
+      setError(err.message)
+      setSaving(false)
+    }
+  }
+
+  // Merma: nunca mas de lo que hay en stock (el backend lo valida otra vez,
+  // esto no es mas que no dejar mandar un numero absurdo). Genera su propio
+  // egreso de caja menor por el costo, no por el precio de venta.
+  async function registrarMerma() {
+    if (!mermaVariantId || !mermaQty || !mermaReason.trim() || !pin) return
+    setError('')
+    setSaving(true)
+    try {
+      const resultado = await api(`/variants/${mermaVariantId}/waste`, {
+        method: 'POST',
+        body: { qty: Number(mermaQty), reason: mermaReason.trim(), pin },
+      })
+      setMermaResultado(resultado)
+    } catch (err) {
+      setError(err.message)
+      setSaving(false)
+    }
+  }
 
   async function subirImagen(e) {
     const file = e.target.files?.[0]
@@ -148,7 +203,7 @@ export default function ProductoForm({ categories, products, product, initialNam
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={mermaResultado ? undefined : onClose}>
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
@@ -167,6 +222,122 @@ export default function ProductoForm({ categories, products, product, initialNam
           </p>
         )}
 
+        {confirmandoSuspender ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              {product.active
+                ? `¿Suspender "${product.name}"? Desaparece de todos los pedidos de inmediato. Necesita el PIN del encargado.`
+                : `¿Reactivar "${product.name}"? Vuelve a aparecer en los pedidos. Necesita el PIN del encargado.`}
+            </p>
+            <div>
+              <label className="label text-center">PIN del encargado</label>
+              <PinInput value={pin} onChange={setPin} autoFocus />
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmandoSuspender(false)
+                  setPin('')
+                  setError('')
+                }}
+                className="btn-ghost flex-1"
+              >
+                Cancelar
+              </button>
+              <button type="button" onClick={suspender} disabled={saving || !pin} className="btn-danger flex-1">
+                {saving ? 'Verificando…' : product.active ? 'Suspender' : 'Reactivar'}
+              </button>
+            </div>
+          </div>
+        ) : confirmandoMerma ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              Registra una merma o pérdida. Nunca más de lo que hay en stock. Queda como egreso de
+              caja menor por el costo (no el precio de venta) e imprime un comprobante.
+            </p>
+
+            {variantesConStock.length > 1 && (
+              <div>
+                <label className="label">Presentación</label>
+                <select
+                  className="field"
+                  value={mermaVariantId}
+                  onChange={(e) => setMermaVariantId(e.target.value)}
+                >
+                  {variantesConStock.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} · quedan {v.stock}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex gap-3 items-stretch">
+              <div className="w-28 shrink-0">
+                <label className="label text-center block min-h-[2.5rem] leading-tight">
+                  Cantidad a eliminar {mermaVariant ? `(hay ${mermaVariant.stock})` : ''}
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={mermaVariant?.stock || undefined}
+                  value={mermaQty}
+                  onChange={(e) => setMermaQty(e.target.value)}
+                  autoFocus
+                  className={`w-full h-28 text-center text-4xl font-bold rounded-2xl bg-raised border-2
+                             text-ink focus:outline-none [appearance:textfield]
+                             [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                               mermaExcedeStock ? 'border-ocupada' : 'border-amber'
+                             }`}
+                />
+                {mermaExcedeStock && (
+                  <p className="text-xs text-ocupada mt-1.5 text-center">Solo hay {mermaVariant.stock}</p>
+                )}
+              </div>
+              <div className="flex-1">
+                <label className="label min-h-[2.5rem] leading-tight flex items-end">Razón o motivo</label>
+                <textarea
+                  className="field h-28 resize-none"
+                  value={mermaReason}
+                  onChange={(e) => setMermaReason(e.target.value)}
+                  placeholder="Se rompió al bajarla de la nevera"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="label text-center">PIN del encargado</label>
+              <PinInput value={pin} onChange={setPin} />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmandoMerma(false)
+                  setPin('')
+                  setMermaQty('')
+                  setMermaReason('')
+                  setError('')
+                }}
+                className="btn-ghost flex-1"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={registrarMerma}
+                disabled={saving || !pin || !mermaQty || !mermaReason.trim() || mermaExcedeStock}
+                className="btn-danger flex-1"
+              >
+                {saving ? 'Verificando…' : 'Registrar merma'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
         <div>
           <label className="label">Categoría</label>
           <select className="field" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
@@ -221,16 +392,10 @@ export default function ProductoForm({ categories, products, product, initialNam
 
         {kind === 'STOCK' ? (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="label mb-0">Presentaciones</span>
-              <button
-                type="button"
-                onClick={() => setVariants((prev) => [...prev, { name: '', price: '', cost: '', volumeMl: '', stock: '' }])}
-                className="text-xs font-semibold text-amber flex items-center gap-1"
-              >
-                <Icon.plus width={14} height={14} /> Agregar
-              </button>
-            </div>
+            {/* Un producto es una sola presentacion: media, botella y garrafa
+                del mismo licor son productos separados, no variantes de uno
+                solo. Por eso no hay boton para agregar otra. */}
+            <span className="label mb-0">Presentación</span>
 
             {variants.map((v, i) => (
               <div key={i} className="flex flex-wrap gap-2 items-end bg-raised border border-edge rounded-xl p-3">
@@ -350,6 +515,50 @@ export default function ProductoForm({ categories, products, product, initialNam
           </div>
         )}
 
+        {isEdit && esAdminReal && (
+          <div className="flex items-center justify-between bg-raised border border-edge rounded-xl p-3">
+            <div>
+              <p className="text-sm font-medium">{product.active ? 'Activo' : 'Suspendido'}</p>
+              <p className="text-xs text-muted">
+                {product.active
+                  ? 'Suspenderlo lo quita de los pedidos sin borrar nada. Se reactiva cuando quieras.'
+                  : 'No aparece en ningún pedido ni se puede vender.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfirmandoSuspender(true)}
+              disabled={saving}
+              className={`btn-ghost shrink-0 ${product.active ? 'text-ocupada' : 'text-libre'}`}
+            >
+              {product.active ? 'Suspender producto' : 'Reactivar producto'}
+            </button>
+          </div>
+        )}
+
+        {isEdit && esAdminReal && product.kind === 'STOCK' && (
+          <div className="flex items-center justify-between bg-raised border border-edge rounded-xl p-3">
+            <div>
+              <p className="text-sm font-medium">Merma o pérdida</p>
+              <p className="text-xs text-muted">Unidades rotas, vencidas o que no se van a vender.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMermaVariantId(variantesConStock[0]?.id || '')
+                setPin('')
+                setMermaQty('')
+                setMermaReason('')
+                setConfirmandoMerma(true)
+              }}
+              disabled={saving || !variantesConStock.length}
+              className="btn-ghost shrink-0 text-ocupada"
+            >
+              Registrar merma
+            </button>
+          </div>
+        )}
+
         <div>
           <label className="label">Imagen</label>
           <div className="flex items-center gap-4">
@@ -389,7 +598,20 @@ export default function ProductoForm({ categories, products, product, initialNam
             {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear producto'}
           </button>
         </div>
+          </>
+        )}
       </form>
+
+      {mermaResultado && (
+        <TicketMermaModal
+          merma={mermaResultado}
+          tenantName={session?.tenant?.name}
+          onClose={() => {
+            setMermaResultado(null)
+            onSaved()
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -51,6 +51,24 @@ async function verificarPin(tenantId, pin) {
   return null
 }
 
+// Movimientos de stock por venta (SALE, resta) o devolucion (VOID_RESTORE,
+// suma), agrupados por variante para no crear un movimiento por cada linea
+// repetida. Nunca valida que el stock no quede negativo: el stock es un
+// aviso para el operador, no un bloqueo de venta.
+function stockOpsPorVariante(tenantId, userId, porVariante, type, note) {
+  const signo = type === 'SALE' ? -1 : 1
+  const ops = []
+  for (const [variantId, qty] of porVariante) {
+    ops.push(
+      prisma.variant.update({ where: { id: variantId }, data: { stock: { [signo < 0 ? 'decrement' : 'increment']: qty } } }),
+      prisma.stockMovement.create({
+        data: { tenantId, variantId, type, qty: signo * qty, note, createdById: userId },
+      })
+    )
+  }
+  return ops
+}
+
 // --- Mas pedidos por zona ----------------------------------------------------
 // Lo que mas se pide varia de un sector a otro (la barra no pide lo mismo que
 // el salon). Suma las cantidades activas de cada producto, filtrando por la
@@ -267,6 +285,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
 
   const status = req.auth.role === 'ADMIN' ? 'ACTIVE' : 'PENDING'
   const data = []
+  const porVariante = new Map() // solo se llena si queda ACTIVE: un pre-pedido todavia no llego a la barra
   for (const it of items) {
     const qty = Number(it.qty) || 1
     if (it.variantId) {
@@ -287,6 +306,9 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         status,
         createdById: req.auth.userId,
       })
+      if (status === 'ACTIVE') {
+        porVariante.set(variant.id, (porVariante.get(variant.id) || 0) + qty)
+      }
     } else if (it.productId) {
       const product = await prisma.product.findFirst({
         where: { id: it.productId, tenantId: req.auth.tenantId },
@@ -309,7 +331,13 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
     }
   }
 
-  await prisma.orderItem.createMany({ data })
+  // Llega a la barra ACTIVE solo si lo crea el admin directo; el pre-pedido
+  // (PENDING) no descuenta nada todavia, eso pasa recien en /send. Nunca se
+  // bloquea por falta de stock -- si queda en negativo, queda en negativo.
+  await prisma.$transaction([
+    prisma.orderItem.createMany({ data }),
+    ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Venta directa (admin)'),
+  ])
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
 
   if (status === 'PENDING') {
@@ -336,11 +364,25 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
 
-  const { count } = await prisma.orderItem.updateMany({
+  const pendientes = await prisma.orderItem.findMany({
     where: { orderId: order.id, tenantId: req.auth.tenantId, status: 'PENDING' },
-    data: { status: 'ACTIVE' },
   })
-  if (!count) return res.status(400).json({ error: 'Esta mesa no tiene un pre-pedido esperando envio' })
+  if (!pendientes.length) return res.status(400).json({ error: 'Esta mesa no tiene un pre-pedido esperando envio' })
+
+  const porVariante = new Map()
+  for (const it of pendientes) {
+    if (it.variantId) porVariante.set(it.variantId, (porVariante.get(it.variantId) || 0) + it.qty)
+  }
+
+  // Recien aqui el pre-pedido llega de verdad a la barra: aqui se descuenta,
+  // no al crearlo (eso solo es borrador de la mesera).
+  await prisma.$transaction([
+    prisma.orderItem.updateMany({
+      where: { orderId: order.id, tenantId: req.auth.tenantId, status: 'PENDING' },
+      data: { status: 'ACTIVE' },
+    }),
+    ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Pre-pedido enviado a la barra'),
+  ])
 
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   avisarEncargados(req.auth.tenantId, 'pre-pedido:enviado', { orderId: order.id })
@@ -394,11 +436,19 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res)
   const encargado = await verificarPin(req.auth.tenantId, pin)
   if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
 
-  const updated = await prisma.orderItem.update({
-    where: { id: item.id },
-    data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason.trim(), voidedById: encargado.id },
-    include: ITEM_INCLUDE,
-  })
+  // Solo repone stock si ya estaba ACTIVE: si seguia PENDING nunca se le
+  // habia restado nada (eso pasa al enviar, no al crear el pre-pedido).
+  const porVariante = new Map()
+  if (item.status === 'ACTIVE' && item.variantId) porVariante.set(item.variantId, item.qty)
+
+  const [updated] = await prisma.$transaction([
+    prisma.orderItem.update({
+      where: { id: item.id },
+      data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason.trim(), voidedById: encargado.id },
+      include: ITEM_INCLUDE,
+    }),
+    ...stockOpsPorVariante(req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`),
+  ])
   res.json(updated)
 })
 

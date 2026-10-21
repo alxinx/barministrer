@@ -6,6 +6,7 @@ import { useShift } from '../context/ShiftContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
 import ReciboModal from '../components/ReciboModal'
+import TicketEgresoModal from '../components/TicketEgresoModal'
 import ConsumoDetalleModal from '../components/ConsumoDetalleModal'
 import CuadreResumen from '../components/CuadreResumen'
 import RangoFechas from '../components/RangoFechas'
@@ -38,6 +39,7 @@ export default function Caja() {
   const [factura, setFactura] = useState(null)
   const [detalle, setDetalle] = useState(null)
   const [agregandoEgreso, setAgregandoEgreso] = useState(false)
+  const [egresoTicket, setEgresoTicket] = useState(null)
 
   const [periodo, setPeriodo] = useState('hoy')
   const [rangoCustom, setRangoCustom] = useState(null) // { desde, hasta } (YYYY-MM-DD) | null
@@ -356,7 +358,17 @@ export default function Caja() {
                           {e.type === 'RETIRO' ? 'Retiro' : 'Gasto'} · {e.authorizedBy?.name}
                         </p>
                       </div>
-                      <span className="text-sm font-semibold text-ocupada shrink-0">-{money(e.amount)}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-sm font-semibold text-ocupada">-{money(e.amount)}</span>
+                        <button
+                          type="button"
+                          onClick={() => setEgresoTicket(e)}
+                          aria-label="Reimprimir comprobante"
+                          className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amber hover:bg-raised transition-colors"
+                        >
+                          <Icon.receipt width={16} height={16} />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -376,6 +388,7 @@ export default function Caja() {
             <ResumenTurnoCard
               shift={shift}
               sales={sales}
+              totalEgresos={totalEgresos}
               efectivoEsperado={efectivoEsperado}
               onPedirCierre={() => setClosing(true)}
             />
@@ -406,6 +419,15 @@ export default function Caja() {
       )}
 
       {detalle && <ConsumoDetalleModal order={detalle} onClose={() => setDetalle(null)} />}
+
+      {egresoTicket && (
+        <TicketEgresoModal
+          egreso={egresoTicket}
+          tenantName={session?.tenant?.name}
+          autoPrint={false}
+          onClose={() => setEgresoTicket(null)}
+        />
+      )}
     </div>
   )
 }
@@ -463,7 +485,7 @@ function TurnoActualCard({ shift, onPedirCierre }) {
   )
 }
 
-function ResumenTurnoCard({ shift, sales, efectivoEsperado, onPedirCierre }) {
+function ResumenTurnoCard({ shift, sales, totalEgresos, efectivoEsperado, onPedirCierre }) {
   return (
     <section className="card p-5 space-y-4">
       <h2 className="font-semibold flex items-center gap-2">
@@ -483,6 +505,12 @@ function ResumenTurnoCard({ shift, sales, efectivoEsperado, onPedirCierre }) {
           <span className="text-muted">Devoluciones</span>
           <span className={`font-semibold ${sales.devoluciones > 0 ? 'text-ocupada' : ''}`}>
             {money(sales.devoluciones)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted">Egresos y retiros</span>
+          <span className={`font-semibold ${totalEgresos > 0 ? 'text-ocupada' : ''}`}>
+            {money(totalEgresos)}
           </span>
         </div>
       </div>

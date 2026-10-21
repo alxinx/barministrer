@@ -54,11 +54,6 @@ export default function Productos() {
     return sections(categoryTree(categories)).filter((s) => s.cards.length)
   }, [categories, visible])
 
-  async function alternar(product) {
-    await api(`/products/${product.id}`, { method: 'PATCH', body: { active: !product.active } })
-    load()
-  }
-
   function cerrar() {
     setTarget(undefined)
   }
@@ -210,17 +205,13 @@ export default function Productos() {
 
                     <div className="flex items-center justify-between gap-2 mt-auto">
                       <span className="font-semibold text-sm">{money(price)}</span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          alternar(p)
-                        }}
+                      <span
                         className={`text-[10px] font-semibold px-2 py-1 rounded-pill border shrink-0 ${
                           available ? 'text-libre border-libre/40 bg-libre/10' : 'text-muted border-edge bg-raised'
                         }`}
                       >
                         {available ? 'Disponible' : p.active ? 'Categoría apagada' : 'Desactivado'}
-                      </button>
+                      </span>
                     </div>
                   </button>
                 )

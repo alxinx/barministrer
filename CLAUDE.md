@@ -84,6 +84,37 @@ la categoría devuelve cada producto a su estado individual.
   (`type: 'adjustment'`), nunca sobrescribiendo el restante: perder el rastro de
   los 7 shots que faltan es perder el dato que importa.
 
+> **Nota de implementación (oct-2026):** `OpenContainer` todavía no existe en el
+> código. Esta sección describe la regla de dominio acordada, no algo ya
+> construido — los shots/cócteles hoy no tienen ningún stock propio que
+> descontar. Antes de construirlo, revisar esta sección.
+
+### Inventario de presentaciones (`Variant.stock`)
+Aplica solo a presentaciones selladas (STOCK), no a shots/cócteles (ver nota
+arriba). Reglas acordadas con Alejo en oct-2026:
+
+- El stock se descuenta **al llegar a la barra**, no al crear el pre-pedido: si
+  lo crea el admin nace `ACTIVE` y descuenta de una; si lo crea mesera/cajero
+  queda `PENDING` y descuenta recién cuando `POST /orders/:id/send` lo aprueba.
+  Un pre-pedido nunca tocado (borrado o rechazado) no descontó nada.
+- Devolver (`/void`) repone el stock, pero solo si el item ya estaba `ACTIVE`
+  (si seguía `PENDING`, nunca se le había restado nada).
+- **Igual que las botellas abiertas: nunca bloquea una venta.** Si el stock
+  llega a 0 o negativo, se sigue vendiendo — el catálogo de la mesera solo lo
+  marca en rojo ("Agotado") para que cajero/admin lo note, no para impedir la
+  venta a nadie, tampoco al mesero. Es un aviso, no un permiso diferenciado por
+  rol.
+- Cada movimiento (compra, venta, devolución, merma) queda en `StockMovement`
+  con su tipo (`PURCHASE`/`SALE`/`VOID_RESTORE`/`WASTE`) — nunca se sobrescribe
+  el stock a mano, siempre es un movimiento más.
+- **Merma/pérdida manual** (unidad rota, vencida): modal dentro de "Ver
+  productos", solo ADMIN real (no delegable con `cajeroGestionaInventario`) y
+  pide PIN. A diferencia de la venta, **sí tiene techo**: nunca se puede mermar
+  más de lo que hay en stock. Genera un `ShiftExpense` tipo `GASTO` automático
+  por `cantidad × costo unitario` (nunca el precio de venta) y requiere turno
+  abierto — igual que un abono a fiado, si no hay turno abierto no se deja
+  registrar. Imprime comprobante igual que una venta o un abono.
+
 ### Lo que el sistema mide
 El valor del producto es la **diferencia entre lo que debería haber y lo que
 hay**, por botella, por turno y por persona. Los reportes:
@@ -253,17 +284,24 @@ El bar opera de noche con poca luz. Interfaz **oscura**, tokens en
 
 Hecho: auth con roles, aislamiento por tenant, catálogo (categorías, productos,
 variantes), editor de distribución (zonas, mesas y elementos arrastrables sobre
-cuadrícula), pantalla de venta con plano y pedido, movimientos de inventario,
-turnos y cierre de caja, pre-pedido de la mesera con aprobación del admin por
-WebSocket (ver Operación arriba), módulo de usuarios (`/usuarios`), datos del
-bar y permisos delegables (`/configuracion`).
+cuadrícula), pantalla de venta con plano y pedido, movimientos de inventario
+(compra, venta/devolución automáticas al enviar/devolver un pedido, merma
+manual con PIN), turnos y cierre de caja, pre-pedido de la mesera con
+aprobación del admin por WebSocket (ver Operación arriba), módulo de usuarios
+(`/usuarios`), datos del bar y permisos delegables (`/configuracion`).
 
 Falta, en orden: estados *listo*/*entregado* dentro del pedido ya aprobado →
 reglas de precio → recetas y combos en UI → reportes → QR en mesa (fase 2).
 
 Pendientes conocidos:
 
-- `Variant.stock` es un número suelto. Se vuelve derivado de los movimientos.
+- `Variant.stock` sigue siendo un campo (`Int`), no una agregación en vivo de
+  `StockMovement` — se mantiene sincronizado a mano en cada ruta que lo toca
+  (compra, venta, devolución, merma). Funciona, pero si alguna vez se
+  desincroniza no hay un recálculo automático desde los movimientos.
+- `OpenContainer` (botellas abiertas/ml para shots y cócteles) no existe
+  todavía — ver nota en "Botellas abiertas y ml". El inventario por movimientos
+  solo cubre presentaciones selladas.
 - El Dockerfile de la API corre `prisma db push`. Antes de producción: migraciones
   reales con `prisma migrate deploy`.
 

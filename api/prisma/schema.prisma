@@ -167,7 +167,10 @@ model Variant {
 }
 
 enum StockMovementType {
-  PURCHASE // entrada de inventario: compra, suma al stock
+  PURCHASE     // entrada de inventario: compra, suma al stock
+  SALE         // se envio a la barra (pedido ACTIVE): resta al stock, puede dejarlo en negativo
+  VOID_RESTORE // se devolvio un producto ya activo: repone lo que se habia restado
+  WASTE        // merma/perdida registrada a mano: resta al stock, nunca mas de lo que hay
 }
 
 /// Entrada de inventario: la compra por empaque (caja, canasta) se resuelve

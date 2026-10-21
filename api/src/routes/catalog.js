@@ -1,10 +1,26 @@
 import { Router } from 'express'
+import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
+import { requireRole } from '../middleware/auth.js'
 import { requirePermission } from '../middleware/permissions.js'
+import { pinLimiter } from '../middleware/rateLimit.js'
 import { subirImagenProducto } from '../lib/r2.js'
 
 export const catalogRoutes = Router()
 const adminOnly = requirePermission('cajeroEditaCatalogo')
+const soloAdminReal = requireRole('ADMIN')
+
+// Igual que verificar PIN para anular un item o un descuento: cualquier
+// encargado activo autoriza, nunca la clave del tenant en texto plano.
+async function verificarPin(tenantId, pin) {
+  const encargados = await prisma.user.findMany({
+    where: { tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
+  })
+  for (const u of encargados) {
+    if (await bcrypt.compare(String(pin), u.pinHash)) return u
+  }
+  return null
+}
 
 // --- Categorias ------------------------------------------------------------
 
@@ -226,7 +242,7 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
 })
 
 catalogRoutes.patch('/products/:id', adminOnly, async (req, res) => {
-  const { name, categoryId, imageUrl, active, recipe } = req.body || {}
+  const { name, categoryId, imageUrl, recipe } = req.body || {}
   const existing = await prisma.product.findFirst({
     where: { id: req.params.id, tenantId: req.auth.tenantId },
     include: { recipe: true },
@@ -256,8 +272,35 @@ catalogRoutes.patch('/products/:id', adminOnly, async (req, res) => {
       ...(name !== undefined && { name: name.trim() }),
       ...(categoryId !== undefined && { categoryId }),
       ...(imageUrl !== undefined && { imageUrl }),
-      ...(active !== undefined && { active: Boolean(active) }),
     },
+    include: { variants: true, category: true, recipe: { include: { items: { include: { sourceProduct: true } } } } },
+  })
+  res.json(product)
+})
+
+// Suspender/reactivar es mas sensible que editar nombre o precio: saca el
+// producto de todos los pedidos de inmediato. Por eso no entra por el
+// adminOnly delegable (cajeroEditaCatalogo) sino que exige el rol ADMIN real
+// del token, mas el PIN de un encargado, igual que anular un item o un
+// descuento al cerrar.
+catalogRoutes.patch('/products/:id/suspend', soloAdminReal, pinLimiter, async (req, res) => {
+  const { active, pin } = req.body || {}
+  if (typeof active !== 'boolean') {
+    return res.status(400).json({ error: 'Falta indicar si se suspende o se reactiva' })
+  }
+  if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN' })
+
+  const existing = await prisma.product.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId },
+  })
+  if (!existing) return res.status(404).json({ error: 'Producto no encontrado' })
+
+  const encargado = await verificarPin(req.auth.tenantId, pin)
+  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+
+  const product = await prisma.product.update({
+    where: { id: existing.id },
+    data: { active },
     include: { variants: true, category: true, recipe: { include: { items: { include: { sourceProduct: true } } } } },
   })
   res.json(product)

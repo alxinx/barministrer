@@ -1131,22 +1131,31 @@ export default function NuevaVenta() {
               {sugeridos.map((p) => {
                 const v = p.kind === 'STOCK' ? p.variants.find((x) => x.active) : null
                 const price = p.kind === 'PREPARED' ? p.recipe.price : v.price
+                // Agotado es un aviso, nunca un bloqueo: cualquier rol lo sigue
+                // pudiendo agregar (si llega a faltar en la barra se marca
+                // sobreconsumo, no se pierde la venta). Solo aplica a
+                // presentaciones selladas; un shot no tiene stock propio.
+                const agotado = v && v.stock <= 0
                 return (
                   <button
                     key={p.id}
                     onClick={(e) => agregar(p, e.currentTarget)}
-                    style={{ borderColor: p.category.color }}
-                    className="grupo-cenefa flex items-center gap-2.5 text-left p-2.5 rounded-xl bg-raised border
-                               hover:bg-surface transition-colors"
+                    style={{ borderColor: agotado ? undefined : p.category.color }}
+                    className={`grupo-cenefa flex items-center gap-2.5 text-left p-2.5 rounded-xl border
+                               hover:bg-surface transition-colors ${
+                                 agotado ? 'bg-ocupada/10 border-ocupada' : 'bg-raised'
+                               }`}
                   >
                     <span
                       className="w-10 h-10 rounded-lg grid place-items-center shrink-0 overflow-hidden"
-                      style={!p.imageUrl ? { background: p.category.color } : undefined}
+                      style={!p.imageUrl ? { background: agotado ? undefined : p.category.color } : undefined}
                     >
                       {p.imageUrl ? (
                         <img src={p.imageUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
                       ) : (
-                        <span className="text-night font-bold text-xs">{p.name.slice(0, 2).toUpperCase()}</span>
+                        <span className={`font-bold text-xs ${agotado ? 'text-ocupada' : 'text-night'}`}>
+                          {p.name.slice(0, 2).toUpperCase()}
+                        </span>
                       )}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -1154,6 +1163,7 @@ export default function NuevaVenta() {
                       <p className="text-xs text-muted mt-0.5 truncate">
                         {p.kind === 'PREPARED' ? 'Shot' : v.name}
                         {v?.volumeMl ? ` · ${v.volumeMl} ml` : ''}
+                        {agotado ? <span className="text-ocupada font-semibold"> · Agotado</span> : null}
                       </p>
                       <p className="text-sm font-bold mt-1">{money(price)}</p>
                     </div>
