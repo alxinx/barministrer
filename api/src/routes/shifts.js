@@ -1,10 +1,27 @@
 import { Router } from 'express'
+import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
+import { pinLimiter } from '../middleware/rateLimit.js'
 import { diaLocal, rangoEntreFechas, rangoValido } from '../lib/fechas.js'
 
 export const shiftRoutes = Router()
 const cajero = requireRole('ADMIN', 'CAJERO')
+
+// Quien abre o cierra la caja queda registrado por su PIN, no por la sesion
+// que este prendida en el dispositivo: el celular de la caja se queda
+// logueado con una cuenta todo el dia, pero cualquier ADMIN/CAJERO puede
+// turnarse en el; sin esto, abrir/cerrar quedaria siempre a nombre de quien
+// inicio sesion primero, no de quien de verdad estaba parado ahi.
+async function verificarPin(tenantId, pin) {
+  const encargados = await prisma.user.findMany({
+    where: { tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
+  })
+  for (const u of encargados) {
+    if (await bcrypt.compare(String(pin), u.pinHash)) return u
+  }
+  return null
+}
 
 // Medios que se cuentan a ciegas al cerrar caja. Credito no entra: el fiado
 // es una cuenta por cobrar, nunca efectivo ni plastico en el cajon.
@@ -225,19 +242,26 @@ async function facturasDelTurno(tenantId, shiftId) {
       table: { select: { number: true } },
       items: { select: { price: true, qty: true, status: true } },
       openedBy: { select: { name: true } },
+      payments: { select: { method: true } },
     },
     orderBy: { closedAt: 'desc' },
   })
-  return orders.map((o) => ({
-    id: o.id,
-    tableNumber: o.table.number,
-    closedAt: o.closedAt,
-    isCourtesy: o.isCourtesy,
-    invoiceNumber: o.invoiceNumber,
-    discountAmount: Number(o.discountAmount),
-    openedByName: o.openedBy.name,
-    total: o.items.filter((i) => i.status === 'ACTIVE').reduce((s, i) => s + Number(i.price) * i.qty, 0),
-  }))
+  return orders.map((o) => {
+    const metodos = [...new Set(o.payments.map((p) => p.method))]
+    return {
+      id: o.id,
+      tableNumber: o.table.number,
+      closedAt: o.closedAt,
+      isCourtesy: o.isCourtesy,
+      invoiceNumber: o.invoiceNumber,
+      discountAmount: Number(o.discountAmount),
+      openedByName: o.openedBy.name,
+      // Null si pago con mas de un medio a la vez (cuenta dividida): ahi no
+      // hay un solo medio que mostrar, el detalle completo esta en la factura.
+      metodoPago: metodos.length === 1 ? metodos[0] : null,
+      total: o.items.filter((i) => i.status === 'ACTIVE').reduce((s, i) => s + Number(i.price) * i.qty, 0),
+    }
+  })
 }
 
 // --- Turno actual ------------------------------------------------------------
@@ -338,16 +362,22 @@ shiftRoutes.get('/shifts/:id', async (req, res) => {
   })
   if (!shift) return res.status(404).json({ error: 'Turno no encontrado' })
 
-  const facturas = await facturasDelTurno(req.auth.tenantId, shift.id)
+  const [facturas, numero] = await Promise.all([
+    facturasDelTurno(req.auth.tenantId, shift.id),
+    // No hay un consecutivo propio para turnos (solo facturas lo tienen):
+    // se deriva contando cuantos se abrieron hasta este, para una referencia
+    // corta y estable en vez de mostrar el UUID completo.
+    prisma.shift.count({ where: { tenantId: req.auth.tenantId, openedAt: { lte: shift.openedAt } } }),
+  ])
   // Un turno cerrado trae su snapshot congelado; uno abierto todavia no.
   const sales = shift.sales ?? (await resumenVentas(req.auth.tenantId, shift.id))
-  res.json({ ...shift, sales, facturas })
+  res.json({ ...shift, sales, facturas, numero })
 })
 
 // --- Abrir --------------------------------------------------------------
 // Inicio con la base y apertura de caja son el mismo momento: no hay turno
 // sin una base inicial declarada, asi que se piden juntos.
-shiftRoutes.post('/shifts', cajero, async (req, res) => {
+shiftRoutes.post('/shifts', cajero, pinLimiter, async (req, res) => {
   const existing = await prisma.shift.findFirst({
     where: { tenantId: req.auth.tenantId, status: 'OPEN' },
   })
@@ -355,16 +385,20 @@ shiftRoutes.post('/shifts', cajero, async (req, res) => {
     return res.status(400).json({ error: 'Ya hay un turno abierto. Cierralo antes de abrir uno nuevo.' })
   }
 
-  const { baseCash } = req.body || {}
+  const { baseCash, pin } = req.body || {}
   if (baseCash === undefined || baseCash === null || Number(baseCash) < 0) {
     return res.status(400).json({ error: 'Declara la base inicial en efectivo para abrir el turno' })
   }
+  if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN de quien abre la caja' })
+
+  const encargado = await verificarPin(req.auth.tenantId, pin)
+  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
 
   const shift = await prisma.shift.create({
     data: {
       tenantId: req.auth.tenantId,
       baseCash,
-      openedById: req.auth.userId,
+      openedById: encargado.id,
     },
     include: {
       openedBy: { select: { id: true, name: true } },
@@ -414,7 +448,7 @@ shiftRoutes.post('/shifts/:id/expenses', cajero, async (req, res) => {
 // --- Cuadre y cierre --------------------------------------------------------
 // Conteo ciego: el cajero cuenta cada medio de pago sin ver lo esperado (eso
 // lo calcula el servidor, no el cliente). Turno cerrado queda bloqueado.
-shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
+shiftRoutes.post('/shifts/:id/close', cajero, pinLimiter, async (req, res) => {
   const shift = await prisma.shift.findFirst({
     where: { id: req.params.id, tenantId: req.auth.tenantId },
     include: { expenses: true },
@@ -422,7 +456,7 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
   if (!shift) return res.status(404).json({ error: 'Turno no encontrado' })
   if (shift.status !== 'OPEN') return res.status(400).json({ error: 'Este turno ya esta cerrado' })
 
-  const { counts } = req.body || {}
+  const { counts, pin } = req.body || {}
   if (!counts || typeof counts !== 'object') {
     return res.status(400).json({ error: 'Contá cada medio de pago para cerrar el turno' })
   }
@@ -431,6 +465,10 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
       return res.status(400).json({ error: `Falta el conteo de ${m.toLowerCase()}` })
     }
   }
+  if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN de quien cierra la caja' })
+
+  const encargado = await verificarPin(req.auth.tenantId, pin)
+  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
 
   const sales = await resumenVentas(req.auth.tenantId, shift.id)
   const egresosEfectivo = shift.expenses.reduce((sum, e) => sum + Number(e.amount), 0)
@@ -446,7 +484,7 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
     where: { id: shift.id },
     data: {
       status: 'CLOSED',
-      closedById: req.auth.userId,
+      closedById: encargado.id,
       closedAt: new Date(),
       counts: resultado,
       sales,

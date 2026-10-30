@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { useShift } from '../context/ShiftContext'
 import FloorPlan from '../components/FloorPlan'
 import MoneyInput from '../components/MoneyInput'
+import PinInput, { PIN_LENGTH } from '../components/PinInput'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import DevolverModal from '../components/DevolverModal'
 import ConfirmModal from '../components/ConfirmModal'
@@ -421,8 +422,8 @@ export default function NuevaVenta() {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, qty: l.qty + delta } : l)).filter((l) => l.qty > 0))
   }
 
-  async function abrirTurnoInline(baseCash) {
-    const nuevo = await api('/shifts', { method: 'POST', body: { baseCash } })
+  async function abrirTurnoInline(baseCash, pin) {
+    const nuevo = await api('/shifts', { method: 'POST', body: { baseCash, pin } })
     setShift(nuevo)
   }
 
@@ -1550,14 +1551,16 @@ function SinTurnoOverlay({ puedeAbrirTurno, onDismiss, onAbrir }) {
 
 function AbrirTurnoModal({ onCancel, onAbrir }) {
   const [base, setBase] = useState('')
+  const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const completo = base !== '' && pin.length === PIN_LENGTH
 
   async function confirmar() {
     setSaving(true)
     setError('')
     try {
-      await onAbrir(Number(base) || 0)
+      await onAbrir(Number(base) || 0, pin)
       onCancel()
     } catch (err) {
       setError(err.message)
@@ -1570,7 +1573,9 @@ function AbrirTurnoModal({ onCancel, onAbrir }) {
     <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-6 space-y-4">
         <h2 className="text-lg font-bold">Abrir caja</h2>
-        <p className="text-sm text-muted">Declara la base inicial en efectivo para abrir el turno.</p>
+        <p className="text-sm text-muted">
+          Declara la base inicial en efectivo y el PIN de quien abre, para que quede registrado.
+        </p>
 
         {error && (
           <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
@@ -1582,11 +1587,15 @@ function AbrirTurnoModal({ onCancel, onAbrir }) {
           <label className="label">Base inicial (efectivo)</label>
           <MoneyInput className="field" value={base} onChange={setBase} autoFocus />
         </div>
+        <div>
+          <label className="label text-center">PIN de quien abre</label>
+          <PinInput value={pin} onChange={setPin} />
+        </div>
         <div className="flex gap-3">
           <button onClick={onCancel} className="btn-ghost flex-1">
             Cancelar
           </button>
-          <button onClick={confirmar} disabled={base === '' || saving} className="btn-primary flex-1">
+          <button onClick={confirmar} disabled={!completo || saving} className="btn-primary flex-1">
             {saving ? 'Abriendo…' : 'Abrir turno'}
           </button>
         </div>

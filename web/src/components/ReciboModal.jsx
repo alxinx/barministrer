@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { money } from '../lib/api'
 import { Icon } from './Icons'
 
@@ -31,11 +31,17 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
     .filter((p) => p.method === 'EFECTIVO' && Number(p.change) > 0)
     .reduce((s, p) => s + Number(p.change), 0)
 
+  // Se pregunta el numero en vez de mandar directo: el cliente vinculado
+  // puede no tener WhatsApp guardado (o no ser el que recibe la factura), asi
+  // que se precarga el que haya pero siempre se deja editar. Vacio abre el
+  // selector de contactos de WhatsApp en vez de un chat puntual.
+  const [pidiendoWhatsapp, setPidiendoWhatsapp] = useState(false)
+  const [numeroWhatsapp, setNumeroWhatsapp] = useState(order.customer?.whatsapp || '')
+
   // wa.me solo acepta texto plano, no la tirilla visual: arma un resumen
-  // equivalente. Si el cliente tiene WhatsApp guardado abre directo su chat;
-  // si no, abre el selector de WhatsApp para elegir a quien mandarselo. Los
-  // numeros locales (10 digitos) se guardan sin el indicativo de Colombia.
-  function enviarPorWhatsapp() {
+  // equivalente. Los numeros locales (10 digitos) se guardan sin el
+  // indicativo de Colombia, asi que se le agrega aqui.
+  function mensajeWhatsapp() {
     const lineas = [
       `*${tenantName || 'LicorPlus'}*`,
       ...(order.invoiceNumber ? [`Factura #${String(order.invoiceNumber).padStart(4, '0')}`] : []),
@@ -53,11 +59,15 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
     }
     if (porPersona) lineas.push('', `Dividido entre ${splitCount}: ${money(porPersona)} c/u`)
     lineas.push('', 'Gracias por su visita')
+    return lineas.join('\n')
+  }
 
-    const digitos = order.customer?.whatsapp?.replace(/\D/g, '') || ''
+  function confirmarEnvioWhatsapp() {
+    const digitos = numeroWhatsapp.replace(/\D/g, '')
     const numero = digitos ? (digitos.length === 10 ? `57${digitos}` : digitos) : ''
-    const texto = encodeURIComponent(lineas.join('\n'))
+    const texto = encodeURIComponent(mensajeWhatsapp())
     window.open(`https://wa.me/${numero}?text=${texto}`, '_blank')
+    setPidiendoWhatsapp(false)
   }
 
   return (
@@ -163,7 +173,7 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
           <button type="button" onClick={onClose} className="btn-ghost">
             Cerrar
           </button>
-          <button type="button" onClick={enviarPorWhatsapp} className="btn-ghost flex items-center gap-2">
+          <button type="button" onClick={() => setPidiendoWhatsapp(true)} className="btn-ghost flex items-center gap-2">
             <Icon.phone width={16} height={16} />
             Enviar por WhatsApp
           </button>
@@ -173,6 +183,40 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
           </button>
         </div>
       </div>
+
+      {pidiendoWhatsapp && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setPidiendoWhatsapp(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
+            <h2 className="text-lg font-bold">Enviar por WhatsApp</h2>
+            <div>
+              <label className="label">Número de WhatsApp</label>
+              <input
+                type="tel"
+                className="field"
+                value={numeroWhatsapp}
+                onChange={(e) => setNumeroWhatsapp(e.target.value)}
+                placeholder="Ej: 300 123 4567"
+                autoFocus
+              />
+              <p className="text-xs text-muted mt-1.5">
+                Si no aparece en los contactos de WhatsApp, escríbelo aquí. Déjalo vacío para elegir el chat desde
+                WhatsApp.
+              </p>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setPidiendoWhatsapp(false)} className="btn-ghost flex-1">
+                Cancelar
+              </button>
+              <button onClick={confirmarEnvioWhatsapp} className="btn-primary flex-1">
+                Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

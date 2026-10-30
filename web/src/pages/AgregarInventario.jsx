@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, money } from '../lib/api'
+import { api } from '../lib/api'
 import { getCategories } from '../lib/categoriesStore'
 import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'

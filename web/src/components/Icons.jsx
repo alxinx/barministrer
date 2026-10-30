@@ -77,19 +77,9 @@ export const Icon = {
       <path d="M6 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17M4 21h16M13 12h.01" />
     </svg>
   ),
-  plant: (p) => (
-    <svg {...base} {...p}>
-      <path d="M12 21v-8M12 13c0-4 3-6 6-6 0 4-3 6-6 6zM12 13c0-3-2.5-5-5-5 0 3 2.5 5 5 5z" />
-    </svg>
-  ),
   stage: (p) => (
     <svg {...base} {...p}>
       <path d="M3 10h18v4H3zM6 14v6M18 14v6M12 10V4M9 4h6" />
-    </svg>
-  ),
-  back: (p) => (
-    <svg {...base} {...p}>
-      <path d="M19 12H5M11 6l-6 6 6 6" />
     </svg>
   ),
   undo: (p) => (
@@ -264,6 +254,23 @@ export const Icon = {
     <svg {...base} {...p}>
       <path d="M10 14a3.5 3.5 0 0 0 5 0l2-2a3.5 3.5 0 0 0-5-5l-1 1" />
       <path d="M14 10a3.5 3.5 0 0 0-5 0l-2 2a3.5 3.5 0 0 0 5 5l1-1" />
+    </svg>
+  ),
+  lock: (p) => (
+    <svg {...base} {...p}>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  ),
+  check: (p) => (
+    <svg {...base} {...p}>
+      <path d="M5 13l4.5 4.5L19 8" />
+    </svg>
+  ),
+  clock: (p) => (
+    <svg {...base} {...p}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3.2 2" />
     </svg>
   ),
 }

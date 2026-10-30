@@ -5,9 +5,9 @@ const CELL = 64 // px por celda de la cuadricula
 const GAP = 6
 
 const statusRing = {
-  AVAILABLE: 'border-libre/60',
-  RESERVED: 'border-reservada/60',
-  OCCUPIED: 'border-ocupada/60',
+  AVAILABLE: 'border-libre',
+  RESERVED: 'border-reservada',
+  OCCUPIED: 'border-ocupada',
   CLOSED: 'border-edge',
 }
 const statusDot = {
@@ -16,6 +16,22 @@ const statusDot = {
   OCCUPIED: 'bg-ocupada',
   CLOSED: 'bg-muted',
 }
+// Halo de neon a juego con el borde: ancho y suave por fuera, tenue por
+// dentro (como si la luz de color pasara a traves del vidrio). Cerrada no
+// brilla, es la unica mesa que de verdad esta apagada.
+const statusGlow = {
+  AVAILABLE: 'shadow-[0_0_16px_2px_rgba(95,209,140,0.4),inset_0_0_16px_rgba(95,209,140,0.12)]',
+  RESERVED: 'shadow-[0_0_16px_2px_rgba(232,163,61,0.4),inset_0_0_16px_rgba(232,163,61,0.12)]',
+  OCCUPIED: 'shadow-[0_0_16px_2px_rgba(224,82,82,0.4),inset_0_0_16px_rgba(224,82,82,0.12)]',
+  CLOSED: '',
+}
+// Relleno de vidrio esmerilado: un brillo radial arriba a la izquierda
+// (el reflejo) sobre un degradado oscuro translucido (el cuerpo del vidrio).
+// Una sola capa de fondo, sin nodos extra, para no complicar el DOM de cada
+// mesa.
+const GLASS_FILL =
+  'bg-[radial-gradient(circle_at_30%_22%,rgba(255,255,255,0.16),transparent_55%),' +
+  'linear-gradient(180deg,rgba(33,29,44,0.55),rgba(14,12,19,0.65))] backdrop-blur-sm'
 
 // Mismo formato que usa el panel de la cuenta: nombre y apellido, con el
 // alias entre parentesis si tiene.
@@ -491,10 +507,14 @@ export default function FloorPlan({
               onContextMenu(t, e)
             }}
             style={style(t)}
-            className={`absolute grid place-content-center gap-0.5 border-2 bg-raised
-              transition-colors transition-transform
+            className={`absolute grid place-content-center gap-0.5 border-2 ${GLASS_FILL}
+              transition-colors transition-transform transition-shadow
               ${t.shape === 'ROUND' ? 'rounded-full' : 'rounded-xl'}
-              ${selectedId === t.id ? 'border-amber bg-amber/10 animate-mesa-seleccionada' : statusRing[t.status]}
+              ${
+                selectedId === t.id
+                  ? 'border-amber animate-mesa-seleccionada'
+                  : `${statusRing[t.status]} ${statusGlow[t.status]}`
+              }
               ${multiSel ? 'ring-2 ring-amber ring-offset-2 ring-offset-night' : ''}
               ${pressingTableId === t.id ? 'scale-95 border-amber' : ''}
               ${editable ? 'cursor-grab active:cursor-grabbing' : 'hover:border-amber'}`}

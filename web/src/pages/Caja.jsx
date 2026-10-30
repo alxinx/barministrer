@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, money } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { useShift } from '../context/ShiftContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
+import PinInput, { PIN_LENGTH } from '../components/PinInput'
 import ReciboModal from '../components/ReciboModal'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
@@ -47,6 +48,14 @@ export default function Caja() {
   const [detalle, setDetalle] = useState(null)
   const [agregandoEgreso, setAgregandoEgreso] = useState(false)
   const [egresoTicket, setEgresoTicket] = useState(null)
+  const [abriendoTurno, setAbriendoTurno] = useState(false)
+  // Si la ultima venta de este turno fue hace mas de 8 horas, probablemente
+  // nadie lo cerro al terminar la jornada anterior y seguir sumando ahi
+  // mezclaria dos dias de venta. Se avisa una sola vez por turno (no cada
+  // vez que se visita esta pagina), por eso el id ya avisado se guarda en un
+  // ref en vez de en el servidor.
+  const [avisoTurnoViejo, setAvisoTurnoViejo] = useState(false)
+  const avisadoShiftRef = useRef(null)
 
   const [periodo, setPeriodo] = useState('hoy')
   const [rangoCustom, setRangoCustom] = useState(null) // { desde, hasta } (YYYY-MM-DD) | null
@@ -58,6 +67,26 @@ export default function Caja() {
   useEffect(() => {
     load()
   }, [])
+
+  // Sin turno abierto no hay nada que vender, asi que el modal de apertura
+  // se muestra solo: aparece al cargar la pagina si nunca se abrio ninguno,
+  // y de nuevo justo despues de cerrar uno (ver cerrarTurno). Si el operador
+  // lo cancela para ir a mirar el historial, se queda cerrado hasta que lo
+  // vuelva a pedir con el boton de la tarjeta.
+  useEffect(() => {
+    if (shift === null) setAbriendoTurno(true)
+  }, [shift])
+
+  useEffect(() => {
+    if (!shift) return
+    if (avisadoShiftRef.current === shift.id) return
+    const ultimaVenta = shift.facturas?.[0]?.closedAt || shift.openedAt
+    const horasSinVenta = (Date.now() - new Date(ultimaVenta).getTime()) / 3_600_000
+    if (horasSinVenta > 8) {
+      avisadoShiftRef.current = shift.id
+      setAvisoTurnoViejo(true)
+    }
+  }, [shift])
 
   useEffect(() => {
     setCargandoMovs(true)
@@ -81,10 +110,11 @@ export default function Caja() {
     setRangoCustom(null)
   }
 
-  async function abrirTurno(baseCash) {
+  async function abrirTurno(baseCash, pin) {
     try {
-      const nuevo = await api('/shifts', { method: 'POST', body: { baseCash } })
+      const nuevo = await api('/shifts', { method: 'POST', body: { baseCash, pin } })
       setShift(nuevo)
+      setAbriendoTurno(false)
     } catch (err) {
       show(err)
     }
@@ -100,9 +130,9 @@ export default function Caja() {
     }
   }
 
-  async function cerrarTurno(counts) {
+  async function cerrarTurno(counts, pin) {
     try {
-      const cerrado = await api(`/shifts/${shift.id}/close`, { method: 'POST', body: { counts } })
+      const cerrado = await api(`/shifts/${shift.id}/close`, { method: 'POST', body: { counts, pin } })
       setClosing(false)
       setShift(null)
       setClosedResult(cerrado)
@@ -422,7 +452,15 @@ export default function Caja() {
           {shift ? (
             <TurnoActualCard shift={shift} onPedirCierre={iniciarCierreTurno} />
           ) : (
-            <AbrirTurno onAbrir={abrirTurno} />
+            <section className="card p-5 space-y-3">
+              <h2 className="font-semibold">No hay turno abierto</h2>
+              <p className="text-sm text-muted">
+                Hace falta abrir turno con base inicial y PIN para empezar a vender.
+              </p>
+              <button onClick={() => setAbriendoTurno(true)} className="btn-primary w-full">
+                Abrir turno
+              </button>
+            </section>
           )}
 
           {shift && (
@@ -476,6 +514,20 @@ export default function Caja() {
       )}
 
       {closing && <CuadreModal onCancel={() => setClosing(false)} onConfirm={cerrarTurno} />}
+
+      {abriendoTurno && (
+        <AbrirTurnoModal onCancel={() => setAbriendoTurno(false)} onAbrir={abrirTurno} />
+      )}
+
+      {avisoTurnoViejo && (
+        <AvisoTurnoViejoModal
+          onSi={() => {
+            setAvisoTurnoViejo(false)
+            iniciarCierreTurno()
+          }}
+          onNo={() => setAvisoTurnoViejo(false)}
+        />
+      )}
 
       {agregandoEgreso && (
         <EgresoModal onCancel={() => setAgregandoEgreso(false)} onAgregar={agregarEgreso} />
@@ -643,25 +695,77 @@ function TurnosAnterioresCard({ turnos, onVer }) {
   )
 }
 
-function AbrirTurno({ onAbrir }) {
+// Abrir caja pide PIN igual que cerrarla: la base la declara quien esta
+// parado en la barra en ese momento, no necesariamente quien tiene la
+// sesion abierta en el dispositivo (un celular de caja se queda logueado
+// con una cuenta todo el dia, pero se turnan varios ADMIN/CAJERO en el).
+function AbrirTurnoModal({ onCancel, onAbrir }) {
   const [base, setBase] = useState('')
+  const [pin, setPin] = useState('')
+  const [saving, setSaving] = useState(false)
+  const completo = base !== '' && pin.length === PIN_LENGTH
+
+  async function confirmar() {
+    setSaving(true)
+    try {
+      await onAbrir(Number(base) || 0, pin)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
-    <section className="card p-5 space-y-4">
-      <div>
-        <h2 className="font-semibold mb-1">Abrir turno</h2>
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
+        <div>
+          <h2 className="text-lg font-bold mb-1">Abrir turno</h2>
+          <p className="text-sm text-muted">
+            Declara la base inicial en efectivo con la que arranca la caja y el PIN de quien la abre, para que quede
+            registrado.
+          </p>
+        </div>
+        <div>
+          <label className="label">Base inicial (efectivo)</label>
+          <MoneyInput className="field" value={base} onChange={setBase} />
+        </div>
+        <div>
+          <label className="label text-center">PIN de quien abre</label>
+          <PinInput value={pin} onChange={setPin} autoFocus />
+        </div>
+        <div className="flex gap-3 pt-1">
+          <button onClick={onCancel} className="btn-ghost flex-1">
+            Cancelar
+          </button>
+          <button onClick={confirmar} disabled={!completo || saving} className="btn-primary flex-1">
+            {saving ? 'Abriendo…' : 'Abrir turno'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Si la ultima venta de este turno fue hace mas de 8 horas, lo mas probable
+// es que nadie lo cerro al terminar la jornada anterior: seguir sumando ahi
+// mezclaria la venta de dos dias distintos en un solo cuadre.
+function AvisoTurnoViejoModal({ onSi, onNo }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onNo}>
+      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
+        <h2 className="text-lg font-bold">¿Turno de otro día?</h2>
         <p className="text-sm text-muted">
-          Declara la base inicial en efectivo con la que arranca la caja. Eso es lo que se compara al cerrar.
+          La última venta de este turno fue hace más de 8 horas. ¿Quieres cerrar esa caja y abrir una nueva?
         </p>
+        <div className="flex gap-3 pt-1">
+          <button onClick={onNo} className="btn-ghost flex-1">
+            No, seguir igual
+          </button>
+          <button onClick={onSi} className="btn-primary flex-1">
+            Sí, cerrar y abrir
+          </button>
+        </div>
       </div>
-      <div>
-        <label className="label">Base inicial (efectivo)</label>
-        <MoneyInput className="field" value={base} onChange={setBase} />
-      </div>
-      <button onClick={() => onAbrir(Number(base) || 0)} disabled={base === ''} className="btn-primary w-full">
-        Abrir turno con esta base
-      </button>
-    </section>
+    </div>
   )
 }
 
@@ -763,13 +867,14 @@ function ElegirCierreModal({ cantidad, onCobrarlas, onPasarlas, onCancel }) {
 
 function CuadreModal({ onCancel, onConfirm }) {
   const [counts, setCounts] = useState({ EFECTIVO: '', NEQUI: '', TRANSFERENCIA: '', DATAFONO: '' })
+  const [pin, setPin] = useState('')
   const [saving, setSaving] = useState(false)
-  const completo = METHODS.every((m) => counts[m.key] !== '')
+  const completo = METHODS.every((m) => counts[m.key] !== '') && pin.length === PIN_LENGTH
 
   async function confirmar() {
     setSaving(true)
     try {
-      await onConfirm(Object.fromEntries(METHODS.map((m) => [m.key, Number(counts[m.key]) || 0])))
+      await onConfirm(Object.fromEntries(METHODS.map((m) => [m.key, Number(counts[m.key]) || 0])), pin)
     } finally {
       setSaving(false)
     }
@@ -794,6 +899,10 @@ function CuadreModal({ onCancel, onConfirm }) {
               />
             </div>
           ))}
+        </div>
+        <div>
+          <label className="label text-center">PIN de quien cierra</label>
+          <PinInput value={pin} onChange={setPin} />
         </div>
         <div className="flex gap-3 pt-1">
           <button onClick={onCancel} className="btn-ghost flex-1">

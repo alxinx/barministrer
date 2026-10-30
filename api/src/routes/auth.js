@@ -2,7 +2,7 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { signToken, requireAuth } from '../middleware/auth.js'
-import { loginLimiter, pinLimiter } from '../middleware/rateLimit.js'
+import { loginLimiter } from '../middleware/rateLimit.js'
 
 export const authRoutes = Router()
 
@@ -47,25 +47,6 @@ authRoutes.post('/login', loginLimiter, async (req, res) => {
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
     tenant: tenantPublic(user.tenant),
   })
-})
-
-// Devolver un producto ya pedido necesita el PIN del encargado (ADMIN o
-// CAJERO), no el de quien esta operando: una mesera puede iniciar la
-// devolucion pero necesita que alguien con autoridad la apruebe.
-authRoutes.post('/verify-pin', requireAuth, pinLimiter, async (req, res) => {
-  const { pin } = req.body || {}
-  if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN' })
-
-  const encargados = await prisma.user.findMany({
-    where: { tenantId: req.auth.tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
-  })
-
-  for (const u of encargados) {
-    if (await bcrypt.compare(String(pin), u.pinHash)) {
-      return res.json({ ok: true, authorizedBy: { id: u.id, name: u.name } })
-    }
-  }
-  res.status(401).json({ error: 'PIN incorrecto' })
 })
 
 authRoutes.get('/me', requireAuth, async (req, res) => {
