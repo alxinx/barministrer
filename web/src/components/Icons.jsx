@@ -202,6 +202,12 @@ export const Icon = {
       <circle cx="15.5" cy="7.5" r="1.4" />
     </svg>
   ),
+  send: (p) => (
+    <svg {...base} {...p}>
+      <path d="M21 3 11 13" />
+      <path d="M21 3 14 21l-3-8-8-3 18-7z" />
+    </svg>
+  ),
   receipt: (p) => (
     <svg {...base} {...p}>
       <path d="M6 2h12v19l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5z" />

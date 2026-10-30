@@ -77,6 +77,38 @@ export default function FloorPlan({
   const [painting, setPainting] = useState(null)
   const [seleccion, setSeleccion] = useState(null) // {x0,y0,x1,y1} en px relativos al tablero
 
+  // En celular el clic derecho no existe: mantener el dedo 2s sobre la mesa
+  // hace de context menu. Se cancela si se suelta antes o si el dedo se
+  // corrio (eso es un intento de arrastrar/hacer scroll, no de mantener).
+  const [pressingTableId, setPressingTableId] = useState(null)
+  const longPressTimerRef = useRef(null)
+  const longPressOriginRef = useRef(null)
+  const suppressNextClickRef = useRef(false)
+
+  function cancelarPulsacion() {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    setPressingTableId(null)
+  }
+
+  // Misma logica que el onContextMenu de abajo, pero sin preventDefault (no
+  // hay evento nativo que cancelar: esto lo dispara un timer, no el navegador).
+  function dispararPorPulsacion(t, e) {
+    if (editable) {
+      if (blockMode || !onTableContextMenu) return
+      onTableContextMenu(t)
+      return
+    }
+    if (multiSelectable && selectedIds?.size >= 2 && selectedIds.has(t.id)) {
+      onMultiContextMenu?.([...selectedIds], e)
+      return
+    }
+    if (!onContextMenu) return
+    onContextMenu(t, e)
+  }
+
   if (!zone) return null
 
   const cols = zone.gridCols
@@ -406,8 +438,35 @@ export default function FloorPlan({
           <button
             key={t.id}
             type="button"
-            onPointerDown={(e) => startDrag(e, 'table', t)}
+            onPointerDown={(e) => {
+              startDrag(e, 'table', t)
+              if (e.pointerType !== 'touch') return
+              longPressOriginRef.current = { x: e.clientX, y: e.clientY }
+              setPressingTableId(t.id)
+              const clientX = e.clientX
+              const clientY = e.clientY
+              longPressTimerRef.current = setTimeout(() => {
+                longPressTimerRef.current = null
+                setPressingTableId(null)
+                suppressNextClickRef.current = true
+                dispararPorPulsacion(t, { clientX, clientY, preventDefault() {} })
+              }, 2000)
+            }}
+            onPointerMove={(e) => {
+              if (!longPressTimerRef.current || !longPressOriginRef.current) return
+              const dx = e.clientX - longPressOriginRef.current.x
+              const dy = e.clientY - longPressOriginRef.current.y
+              if (Math.hypot(dx, dy) > 10) cancelarPulsacion()
+            }}
+            onPointerUp={cancelarPulsacion}
+            onPointerCancel={cancelarPulsacion}
+            onPointerLeave={cancelarPulsacion}
             onClick={(e) => {
+              if (suppressNextClickRef.current) {
+                suppressNextClickRef.current = false
+                e.preventDefault()
+                return
+              }
               if (editable) return
               if (multiSelectable && (e.ctrlKey || e.metaKey)) {
                 onToggleSelect?.(t.id)
@@ -433,10 +492,11 @@ export default function FloorPlan({
             }}
             style={style(t)}
             className={`absolute grid place-content-center gap-0.5 border-2 bg-raised
-              transition-colors
+              transition-colors transition-transform
               ${t.shape === 'ROUND' ? 'rounded-full' : 'rounded-xl'}
               ${selectedId === t.id ? 'border-amber bg-amber/10 animate-mesa-seleccionada' : statusRing[t.status]}
               ${multiSel ? 'ring-2 ring-amber ring-offset-2 ring-offset-night' : ''}
+              ${pressingTableId === t.id ? 'scale-95 border-amber' : ''}
               ${editable ? 'cursor-grab active:cursor-grabbing' : 'hover:border-amber'}`}
           >
             {pendiente && (

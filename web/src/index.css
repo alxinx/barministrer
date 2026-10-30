@@ -306,6 +306,10 @@
     top: 0;
     left: 0;
     width: 100%;
+    /* En pantalla se limita la altura para que quepan los botones; en papel
+       eso recortaria la tirilla si tenia muchos productos. */
+    max-height: none;
+    overflow: visible;
   }
 }
 

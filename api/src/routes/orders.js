@@ -29,6 +29,7 @@ const ORDER_INCLUDE = {
       lastName: true,
       alias: true,
       idNumber: true,
+      whatsapp: true,
       creditEnabled: true,
       creditLimit: true,
     },
@@ -207,6 +208,18 @@ orderRoutes.get('/orders/pending', puedeGestionarPrePedidos, async (req, res) =>
   }
 
   res.json([...porOrden.values()].map((o) => ({ ...o, meseras: [...o.meseras] })))
+})
+
+// Todas las cuentas abiertas del bar (cualquier mesa), para la pantalla de
+// cierre de turno: ahi se decide si se cobran todas antes de cerrar o se
+// dejan pasar al siguiente turno.
+orderRoutes.get('/orders/open', puedeCerrar, async (req, res) => {
+  const orders = await prisma.order.findMany({
+    where: { tenantId: req.auth.tenantId, status: 'OPEN' },
+    include: ORDER_INCLUDE,
+    orderBy: { openedAt: 'asc' },
+  })
+  res.json(orders.map((o) => ({ ...o, total: total(o) })))
 })
 
 orderRoutes.get('/orders/:id', async (req, res) => {
@@ -430,8 +443,17 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res)
   if (!item) return res.status(404).json({ error: 'Producto no encontrado en esta cuenta' })
   if (item.status === 'VOIDED') return res.status(400).json({ error: 'Ese producto ya estaba devuelto' })
 
-  const { pin, reason } = req.body || {}
+  const { pin, reason, qty: qtyBody } = req.body || {}
   if (!reason?.trim()) return res.status(400).json({ error: 'Explica por que se devuelve' })
+
+  // Si no mandan cantidad, se devuelve la linea completa (comportamiento de
+  // siempre). Si mandan menos que el total, es una correccion de envio: "se
+  // pidieron 3, llegaron 4" sin tener que devolver las 4 para volver a
+  // mandar 3.
+  const qtyDevuelta = qtyBody === undefined ? item.qty : Number(qtyBody)
+  if (!Number.isInteger(qtyDevuelta) || qtyDevuelta < 1 || qtyDevuelta > item.qty) {
+    return res.status(400).json({ error: `La cantidad a devolver debe ser un numero entre 1 y ${item.qty}` })
+  }
 
   const encargado = await verificarPin(req.auth.tenantId, pin)
   if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
@@ -439,16 +461,48 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res)
   // Solo repone stock si ya estaba ACTIVE: si seguia PENDING nunca se le
   // habia restado nada (eso pasa al enviar, no al crear el pre-pedido).
   const porVariante = new Map()
-  if (item.status === 'ACTIVE' && item.variantId) porVariante.set(item.variantId, item.qty)
+  if (item.status === 'ACTIVE' && item.variantId) porVariante.set(item.variantId, qtyDevuelta)
+  const stockOps = stockOpsPorVariante(req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`)
 
-  const [updated] = await prisma.$transaction([
-    prisma.orderItem.update({
-      where: { id: item.id },
-      data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason.trim(), voidedById: encargado.id },
-      include: ITEM_INCLUDE,
-    }),
-    ...stockOpsPorVariante(req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`),
-  ])
+  let updated
+  if (qtyDevuelta === item.qty) {
+    ;[updated] = await prisma.$transaction([
+      prisma.orderItem.update({
+        where: { id: item.id },
+        data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason.trim(), voidedById: encargado.id },
+        include: ITEM_INCLUDE,
+      }),
+      ...stockOps,
+    ])
+  } else {
+    // Se devuelve solo una parte: la linea original se queda con lo que no
+    // se devolvio y la porcion devuelta queda aparte, como una linea VOIDED
+    // propia -- asi no se pierde el rastro de cuanto y por que se devolvio.
+    const [, creada] = await prisma.$transaction([
+      prisma.orderItem.update({ where: { id: item.id }, data: { qty: item.qty - qtyDevuelta } }),
+      prisma.orderItem.create({
+        data: {
+          tenantId: req.auth.tenantId,
+          orderId: item.orderId,
+          variantId: item.variantId,
+          productId: item.productId,
+          name: item.name,
+          variantName: item.variantName,
+          price: item.price,
+          qty: qtyDevuelta,
+          status: 'VOIDED',
+          orderedAt: item.orderedAt,
+          createdById: item.createdById,
+          voidedAt: new Date(),
+          voidReason: reason.trim(),
+          voidedById: encargado.id,
+        },
+        include: ITEM_INCLUDE,
+      }),
+      ...stockOps,
+    ])
+    updated = creada
+  }
   res.json(updated)
 })
 
@@ -460,12 +514,26 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
 
+  // El turno en que se abrio esta cuenta puede ya estar cerrado (se dejo
+  // pasar al siguiente turno al cerrar caja, en vez de cobrarla antes). Si es
+  // asi, se liquida contra el turno que esta abierto ahora: es el que de
+  // verdad va a tener esta plata en el cajon para su propio cuadre.
+  let shiftId = order.shiftId
+  if (shiftId) {
+    const turnoDeApertura = await prisma.shift.findUnique({ where: { id: shiftId } })
+    if (turnoDeApertura?.status === 'CLOSED') {
+      const abierto = await prisma.shift.findFirst({ where: { tenantId: req.auth.tenantId, status: 'OPEN' } })
+      if (!abierto) return res.status(400).json({ error: 'No hay un turno abierto. Abre caja antes de cobrar esta cuenta.' })
+      shiftId = abierto.id
+    }
+  }
+
   const cuenta = total(order)
   const { courtesy, payments } = req.body || {}
   const discountAmount = Number(req.body?.discountAmount) || 0
 
   if (courtesy) {
-    if (!order.shiftId) return res.status(400).json({ error: 'Esta cuenta no tiene un turno asociado' })
+    if (!shiftId) return res.status(400).json({ error: 'Esta cuenta no tiene un turno asociado' })
     await prisma.$transaction(async (tx) => {
       // El consecutivo se asigna aqui, no antes: mientras la cuenta sigue
       // abierta no es una factura todavia. El increment es atomico (una fila
@@ -482,12 +550,13 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
           closedById: req.auth.userId,
           isCourtesy: true,
           invoiceNumber: tenant.lastInvoiceNumber,
+          shiftId,
         },
       })
       await tx.shiftExpense.create({
         data: {
           tenantId: req.auth.tenantId,
-          shiftId: order.shiftId,
+          shiftId,
           type: 'GASTO',
           amount: cuenta,
           reason: 'Pago a proveedor oficial',
@@ -599,6 +668,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
           closedById: req.auth.userId,
           invoiceNumber: tenant.lastInvoiceNumber,
           discountAmount,
+          shiftId,
           ...(discountAmount > 0 && { discountAppliedById: discountEncargadoId }),
         },
       })

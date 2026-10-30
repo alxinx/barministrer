@@ -42,6 +42,11 @@ model Tenant {
   cajeroGestionaUsuarios     Boolean @default(false)
   cajeroAplicaDescuentos     Boolean @default(false)
 
+  /// Si al agregar el ultimo producto de un pedido directo (admin) pasan 5s
+  /// sin que de clic en "Enviar pedido a la barra", se envia solo. No aplica
+  /// al pre-pedido de mesera/cajero, que siempre necesita aprobacion de otro.
+  autoEnviarPedido Boolean @default(true)
+
   users      User[]
   categories Category[]
   products   Product[]

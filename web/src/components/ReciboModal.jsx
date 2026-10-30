@@ -31,10 +31,42 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
     .filter((p) => p.method === 'EFECTIVO' && Number(p.change) > 0)
     .reduce((s, p) => s + Number(p.change), 0)
 
+  // wa.me solo acepta texto plano, no la tirilla visual: arma un resumen
+  // equivalente. Si el cliente tiene WhatsApp guardado abre directo su chat;
+  // si no, abre el selector de WhatsApp para elegir a quien mandarselo. Los
+  // numeros locales (10 digitos) se guardan sin el indicativo de Colombia.
+  function enviarPorWhatsapp() {
+    const lineas = [
+      `*${tenantName || 'LicorPlus'}*`,
+      ...(order.invoiceNumber ? [`Factura #${String(order.invoiceNumber).padStart(4, '0')}`] : []),
+      `Mesa ${order.table?.number}`,
+      '',
+      ...items.map(
+        (it) => `${it.qty} x ${it.name}${it.variantName ? ` · ${it.variantName}` : ''} - ${money(Number(it.price) * it.qty)}`
+      ),
+      '',
+    ]
+    if (descuento > 0) {
+      lineas.push(`Subtotal: ${money(order.total)}`, `Descuento: -${money(descuento)}`, `*TOTAL PAGADO: ${money(totalPagado)}*`)
+    } else {
+      lineas.push(`*TOTAL: ${money(order.total)}*`)
+    }
+    if (porPersona) lineas.push('', `Dividido entre ${splitCount}: ${money(porPersona)} c/u`)
+    lineas.push('', 'Gracias por su visita')
+
+    const digitos = order.customer?.whatsapp?.replace(/\D/g, '') || ''
+    const numero = digitos ? (digitos.length === 10 ? `57${digitos}` : digitos) : ''
+    const texto = encodeURIComponent(lineas.join('\n'))
+    window.open(`https://wa.me/${numero}?text=${texto}`, '_blank')
+  }
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <div className="flex flex-col items-center gap-3">
-        <div id="receipt-print-root" className="bg-white text-[#111] w-[310px] p-4 font-mono text-xs rounded shadow-xl">
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="flex flex-col items-center gap-3 my-auto">
+        <div
+          id="receipt-print-root"
+          className="bg-white text-[#111] w-[310px] p-4 font-mono text-xs rounded shadow-xl max-h-[65vh] overflow-y-auto"
+        >
           <div className="text-center space-y-0.5">
             <p className="font-bold text-sm uppercase">{tenantName || 'LicorPlus'}</p>
             {order.invoiceNumber && <p>Factura #{String(order.invoiceNumber).padStart(4, '0')}</p>}
@@ -127,9 +159,13 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
           <p className="text-center">Gracias por su visita</p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0 flex-wrap justify-center">
           <button type="button" onClick={onClose} className="btn-ghost">
             Cerrar
+          </button>
+          <button type="button" onClick={enviarPorWhatsapp} className="btn-ghost flex items-center gap-2">
+            <Icon.phone width={16} height={16} />
+            Enviar por WhatsApp
           </button>
           <button type="button" onClick={() => window.print()} className="btn-primary flex items-center gap-2">
             <Icon.printer width={16} height={16} />

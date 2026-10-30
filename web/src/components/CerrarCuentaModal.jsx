@@ -24,8 +24,23 @@ const METHODS = [
  * igual se puede continuar (es decision del encargado, no del codigo) pero
  * pide su PIN para que quede quien autorizo cuando se audite.
  */
-export default function CerrarCuentaModal({ orderId, total, customer, saldoCliente, puedeDescuento, onClose, onConfirm }) {
+export default function CerrarCuentaModal({
+  orderId,
+  total,
+  customer,
+  saldoCliente,
+  puedeDescuento,
+  tableLabel,
+  items = [],
+  onClose,
+  onConfirm,
+}) {
   const metodosDisponibles = customer ? METHODS : METHODS.filter((m) => m.key !== 'CREDITO')
+  const nombreCliente = customer
+    ? [customer.firstName, customer.lastName].filter(Boolean).join(' ') + (customer.alias ? ` (${customer.alias})` : '')
+    : null
+  const itemsActivos = items.filter((i) => i.status === 'ACTIVE')
+  const [desgloseAbierto, setDesgloseAbierto] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
   const [splitCount, setSplitCount] = useState(1)
   const [rows, setRows] = useState([{ method: 'EFECTIVO', amount: String(total), tendered: '' }])
@@ -188,6 +203,43 @@ export default function CerrarCuentaModal({ orderId, total, customer, saldoClien
             )}
           </div>
         </header>
+
+        {(tableLabel || nombreCliente) && (
+          <div className="-mt-3 text-sm text-muted">
+            {tableLabel && <p>{tableLabel}</p>}
+            {nombreCliente && (
+              <p>
+                A nombre de <span className="text-ink font-semibold">{nombreCliente}</span>
+              </p>
+            )}
+          </div>
+        )}
+
+        {itemsActivos.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setDesgloseAbierto((v) => !v)}
+              className="text-xs font-semibold text-muted hover:text-ink flex items-center gap-1.5"
+            >
+              <Icon.chevronDown width={14} height={14} className={desgloseAbierto ? 'rotate-180' : ''} />
+              Desglose de lo consumido
+            </button>
+            {desgloseAbierto && (
+              <div className="mt-2 bg-raised border border-edge rounded-xl p-3 space-y-1.5 max-h-40 overflow-y-auto">
+                {itemsActivos.map((it) => (
+                  <div key={it.id} className="flex justify-between gap-2 text-sm">
+                    <span className="text-ink">
+                      {it.qty} × {it.name}
+                      {it.variantName ? ` · ${it.variantName}` : ''}
+                    </span>
+                    <span className="text-muted shrink-0">{money(Number(it.price) * it.qty)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {discountOpen && (
           <div className="bg-raised border border-edge rounded-xl p-3 space-y-1 text-sm">

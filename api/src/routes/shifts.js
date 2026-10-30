@@ -90,29 +90,58 @@ function calcularVariacion(actual, anterior) {
 // Movimientos de caja (ventas facturadas + devoluciones) entre dos fechas,
 // sin importar a que turno pertenezcan: esto es para que el dueño navegue
 // "que paso hoy/esta semana", no para el cuadre de un turno puntual (eso
-// sigue siendo por turno, con conteo ciego, en /shifts/:id/close). Ventas en
-// base de caja (cuando entro el pago, igual que "recaudado" en el reporte de
-// ventas), devoluciones por cuando se anularon.
+// sigue siendo por turno, con conteo ciego, en /shifts/:id/close).
+//
+// El turno no es el dia calendario (un viernes puede cerrar a las 3am del
+// sabado): un turno que abrio a las 5pm y cerro a las 2am es TODO de ayer,
+// no mitad y mitad por el corte de medianoche. Por eso el filtro de fechas va
+// sobre shift.openedAt (que dia de negocio es este turno), nunca sobre el
+// momento exacto de cada pago o devolucion suelta -- filtrar asi partiria un
+// mismo turno entre dos dias y daria un total mentiroso para cualquiera de
+// los dos. Las cifras salen de sales.byMethod, el mismo snapshot que ya usa
+// el cuadre del turno (resumenVentas/Shift.sales), para que nunca se desvien
+// entre esta vista y el historial de turnos.
 async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
   const { etiquetas, desde, hasta } = rangoEntreFechas(desdeStr, hastaStr)
-  // rangoEntreFechas da un colchon de hasta 2 dias extra en UTC a cada lado
-  // (para no tener que calcular la medianoche local exacta): hay que filtrar
-  // fino aqui comparando el dia local real de cada registro contra el pedido,
-  // o un rango de "hoy"/"ayer" de un solo dia terminaria trayendo movimientos
-  // de otros dias.
   const enRango = (fecha) => etiquetas.includes(diaLocal(fecha, timezone))
 
-  const [pagosCrudo, abonosCrudo, ordenesCrudo, devueltosCrudo] = await Promise.all([
-    prisma.orderPayment.findMany({
-      where: { tenantId, method: { not: 'CREDITO' }, createdAt: { gte: desde, lte: hasta } },
-      select: { amount: true, method: true, createdAt: true },
-    }),
-    prisma.customerPayment.findMany({
-      where: { tenantId, createdAt: { gte: desde, lte: hasta } },
-      select: { amount: true, method: true, createdAt: true },
-    }),
+  const turnosCandidatos = await prisma.shift.findMany({
+    where: { tenantId, openedAt: { gte: desde, lte: hasta } },
+    select: { id: true, status: true, sales: true, openedAt: true },
+  })
+  const turnos = turnosCandidatos.filter((s) => enRango(s.openedAt))
+
+  // El turno todavia abierto no tiene snapshot congelado (eso pasa al
+  // cerrar): se calcula en vivo, igual que en GET /shifts/current.
+  const salesPorTurno = await Promise.all(
+    turnos.map((s) => (s.status === 'OPEN' ? resumenVentas(tenantId, s.id) : Promise.resolve(s.sales)))
+  )
+
+  // Las ventas/abonos salen del snapshot del turno (misma fuente que su
+  // cuadre); las devoluciones se recalculan mas abajo desde el detalle real
+  // que de todos modos hay que traer para la lista de movimientos.
+  let efectivo = 0
+  let tarjetaTransferencia = 0
+  turnos.forEach((s, i) => {
+    const sales = salesPorTurno[i]
+    if (!sales) return
+    efectivo += (sales.byMethod?.EFECTIVO || 0) + (sales.abonos?.byMethod?.EFECTIVO || 0)
+    for (const m of ['NEQUI', 'TRANSFERENCIA', 'DATAFONO']) {
+      tarjetaTransferencia += (sales.byMethod?.[m] || 0) + (sales.abonos?.byMethod?.[m] || 0)
+    }
+  })
+
+  const shiftIds = turnos.map((s) => s.id)
+  if (shiftIds.length === 0) {
+    return { totales: { totalVentas: 0, efectivo: 0, tarjetaTransferencia: 0, devoluciones: 0 }, movimientos: [] }
+  }
+
+  // El detalle linea por linea si necesita las ordenes y devoluciones reales
+  // (para mostrar mesa, productos y hora): se traen por pertenecer a uno de
+  // estos turnos, no por su propio timestamp.
+  const [ordenes, devueltos] = await Promise.all([
     prisma.order.findMany({
-      where: { tenantId, status: 'CLOSED', isCourtesy: false, closedAt: { gte: desde, lte: hasta } },
+      where: { tenantId, status: 'CLOSED', isCourtesy: false, shiftId: { in: shiftIds } },
       select: {
         id: true,
         closedAt: true,
@@ -123,7 +152,7 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
       orderBy: { closedAt: 'desc' },
     }),
     prisma.orderItem.findMany({
-      where: { status: 'VOIDED', voidedAt: { gte: desde, lte: hasta }, order: { tenantId } },
+      where: { status: 'VOIDED', order: { tenantId, shiftId: { in: shiftIds } } },
       select: {
         id: true,
         name: true,
@@ -137,18 +166,6 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
       orderBy: { voidedAt: 'desc' },
     }),
   ])
-
-  const pagos = pagosCrudo.filter((p) => enRango(p.createdAt))
-  const abonos = abonosCrudo.filter((a) => enRango(a.createdAt))
-  const ordenes = ordenesCrudo.filter((o) => enRango(o.closedAt))
-  const devueltos = devueltosCrudo.filter((i) => enRango(i.voidedAt))
-
-  let efectivo = 0
-  let tarjetaTransferencia = 0
-  for (const p of [...pagos, ...abonos]) {
-    if (p.method === 'EFECTIVO') efectivo += Number(p.amount)
-    else tarjetaTransferencia += Number(p.amount)
-  }
 
   let devoluciones = 0
   const movimientosDevolucion = devueltos.map((i) => {

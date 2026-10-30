@@ -21,6 +21,7 @@ const CAMPOS_PERMISOS = [
   'cajeroGestionaUsuarios',
   'cajeroAplicaDescuentos',
 ]
+const CAMPOS_BOOLEANOS = [...CAMPOS_PERMISOS, 'autoEnviarPedido']
 
 tenantRoutes.get('/tenant', soloAdmin, async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth.tenantId } })
@@ -29,9 +30,9 @@ tenantRoutes.get('/tenant', soloAdmin, async (req, res) => {
 
 tenantRoutes.patch('/tenant', soloAdmin, async (req, res) => {
   const data = {}
-  for (const campo of [...CAMPOS_DATOS, ...CAMPOS_PERMISOS]) {
+  for (const campo of [...CAMPOS_DATOS, ...CAMPOS_BOOLEANOS]) {
     if (req.body[campo] === undefined) continue
-    data[campo] = CAMPOS_PERMISOS.includes(campo) ? Boolean(req.body[campo]) : req.body[campo]
+    data[campo] = CAMPOS_BOOLEANOS.includes(campo) ? Boolean(req.body[campo]) : req.body[campo]
   }
   if (data.name !== undefined) {
     if (!data.name.trim()) return res.status(400).json({ error: 'El bar necesita un nombre' })

@@ -6,6 +6,7 @@ import { useShift } from '../context/ShiftContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
 import ReciboModal from '../components/ReciboModal'
+import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
 import ConsumoDetalleModal from '../components/ConsumoDetalleModal'
 import CuadreResumen from '../components/CuadreResumen'
@@ -29,13 +30,19 @@ const ETIQUETA_VARIACION = {
 }
 
 export default function Caja() {
-  const { session } = useAuth()
+  const { session, isAdmin } = useAuth()
   const navigate = useNavigate()
   const { shift, setShift } = useShift() // compartido con Nueva venta: un solo fetch por sesion
   const [history, setHistory] = useState([])
   const [error, setError] = useState('')
   const [closing, setClosing] = useState(false)
   const [closedResult, setClosedResult] = useState(null)
+  // Flujo de "cerrar turno" con cuentas todavia abiertas: primero se pregunta
+  // que hacer con ellas (cobrarlas ya o dejarlas pasar), y si elige cobrarlas
+  // se van mostrando una por una hasta que no quede ninguna.
+  const [eligiendoCierre, setEligiendoCierre] = useState(null) // cuentas abiertas, mientras se decide
+  const [colaCuentas, setColaCuentas] = useState(null) // [...pendientes] mientras se cobran una a una
+  const [totalCola, setTotalCola] = useState(0) // tamano original de la cola, para "2 de 5"
   const [factura, setFactura] = useState(null)
   const [detalle, setDetalle] = useState(null)
   const [agregandoEgreso, setAgregandoEgreso] = useState(false)
@@ -103,6 +110,40 @@ export default function Caja() {
     } catch (err) {
       show(err)
     }
+  }
+
+  // Antes de dejar cuadrar el turno, hay que saber si quedan cuentas sin
+  // cobrar: si no hay ninguna, directo al cuadre de siempre; si hay, primero
+  // se pregunta que hacer con ellas.
+  async function iniciarCierreTurno() {
+    try {
+      const abiertas = await api('/orders/open')
+      if (abiertas.length === 0) return setClosing(true)
+      setEligiendoCierre(abiertas)
+    } catch (err) {
+      show(err)
+    }
+  }
+
+  function cobrarCuentasAbiertas() {
+    const cuentas = eligiendoCierre
+    setEligiendoCierre(null)
+    setTotalCola(cuentas.length)
+    setColaCuentas(cuentas)
+  }
+
+  function pasarAlSiguienteTurno() {
+    setEligiendoCierre(null)
+    setClosing(true)
+  }
+
+  async function confirmarCuentaDeLaCola(payload) {
+    const actual = colaCuentas[0]
+    const cerrada = await api(`/orders/${actual.id}/close`, { method: 'POST', body: payload })
+    const resto = colaCuentas.slice(1)
+    setColaCuentas(resto.length ? resto : null)
+    if (!resto.length) setClosing(true)
+    return cerrada
   }
 
   async function verFactura(id) {
@@ -379,7 +420,7 @@ export default function Caja() {
 
         <aside className="space-y-5">
           {shift ? (
-            <TurnoActualCard shift={shift} onPedirCierre={() => setClosing(true)} />
+            <TurnoActualCard shift={shift} onPedirCierre={iniciarCierreTurno} />
           ) : (
             <AbrirTurno onAbrir={abrirTurno} />
           )}
@@ -390,7 +431,7 @@ export default function Caja() {
               sales={sales}
               totalEgresos={totalEgresos}
               efectivoEsperado={efectivoEsperado}
-              onPedirCierre={() => setClosing(true)}
+              onPedirCierre={iniciarCierreTurno}
             />
           )}
 
@@ -400,6 +441,38 @@ export default function Caja() {
 
       {closedResult && (
         <ResumenCierreModal resultado={closedResult} onCerrar={() => setClosedResult(null)} />
+      )}
+
+      {eligiendoCierre && (
+        <ElegirCierreModal
+          cantidad={eligiendoCierre.length}
+          onCobrarlas={cobrarCuentasAbiertas}
+          onPasarlas={pasarAlSiguienteTurno}
+          onCancel={() => setEligiendoCierre(null)}
+        />
+      )}
+
+      {colaCuentas && (
+        <>
+          <div className="fixed top-4 inset-x-0 z-[55] flex justify-center pointer-events-none">
+            <span className="bg-night border border-amber/40 text-amber text-xs font-semibold px-3 py-1.5 rounded-pill shadow-lg">
+              Cerrando cuentas abiertas · {totalCola - colaCuentas.length + 1} de {totalCola} · mesa{' '}
+              {colaCuentas[0].table?.number}
+            </span>
+          </div>
+          <CerrarCuentaModal
+            key={colaCuentas[0].id}
+            orderId={colaCuentas[0].id}
+            total={colaCuentas[0].total}
+            customer={colaCuentas[0].customer}
+            saldoCliente={0}
+            puedeDescuento={isAdmin || (session?.user.role === 'CAJERO' && session?.tenant.cajeroAplicaDescuentos)}
+            tableLabel={`Mesa ${colaCuentas[0].table?.number}`}
+            items={colaCuentas[0].items}
+            onClose={() => setColaCuentas(null)}
+            onConfirm={confirmarCuentaDeLaCola}
+          />
+        </>
       )}
 
       {closing && <CuadreModal onCancel={() => setClosing(false)} onConfirm={cerrarTurno} />}
@@ -650,6 +723,42 @@ function tipoClass(active) {
   return `h-10 px-3 rounded-xl text-xs font-semibold border transition-colors flex-1 ${
     active ? 'bg-amber text-night border-amber' : 'bg-surface text-muted border-edge hover:text-ink'
   }`
+}
+
+// Primera pregunta al cerrar turno con cuentas todavia abiertas: cobrarlas
+// ya mismo (una por una, hasta que no quede ninguna) o dejarlas para quien
+// reciba el siguiente turno. Ninguna de las dos bloquea el cierre; solo
+// cambia si el cuadre de este turno incluye esa plata o no.
+function ElegirCierreModal({ cantidad, onCobrarlas, onPasarlas, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
+        <h2 className="text-lg font-bold">
+          {cantidad === 1 ? 'Hay una cuenta abierta' : `Hay ${cantidad} cuentas abiertas`}
+        </h2>
+        <p className="text-sm text-muted">
+          {cantidad === 1
+            ? 'Esa mesa todavía no se ha cobrado. ¿Qué quieres hacer con ella antes de cerrar el turno?'
+            : 'Esas mesas todavía no se han cobrado. ¿Qué quieres hacer con ellas antes de cerrar el turno?'}
+        </p>
+        <div className="space-y-2.5 pt-1">
+          <button onClick={onCobrarlas} className="btn-primary w-full">
+            {cantidad === 1 ? 'Cobrarla ahora' : 'Cobrarlas ahora, una por una'}
+          </button>
+          <button onClick={onPasarlas} className="btn-ghost w-full">
+            Pasarlas al siguiente turno
+          </button>
+          <p className="text-xs text-muted text-center pt-1">
+            El cuadre de este turno solo va a sumar lo que ya se cobró; lo que quede abierto se liquida cuando se
+            cierre, en el turno que esté abierto en ese momento.
+          </p>
+        </div>
+        <button onClick={onCancel} className="text-xs text-muted hover:text-ink w-full text-center">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function CuadreModal({ onCancel, onConfirm }) {
