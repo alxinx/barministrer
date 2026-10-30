@@ -19,8 +19,11 @@ function salaTenant(tenantId) {
   return `tenant:${tenantId}`
 }
 
-export function initRealtime(httpServer) {
-  io = new Server(httpServer, { cors: { origin: '*' } })
+export function initRealtime(httpServer, corsOrigins) {
+  // Mismo origen permitido que el API REST (ver server.js): un socket
+  // abierto a cualquier origen es una puerta de mas, aunque siga exigiendo
+  // el token de sesion para conectar.
+  io = new Server(httpServer, { cors: { origin: corsOrigins } })
 
   io.use((socket, next) => {
     try {

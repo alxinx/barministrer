@@ -50,7 +50,7 @@ app.use((err, _req, res, _next) => {
 })
 
 const httpServer = createServer(app)
-initRealtime(httpServer)
+initRealtime(httpServer, corsOrigins)
 
 const port = process.env.PORT || 4000
 httpServer.listen(port, () => console.log(`API en http://localhost:${port}`))

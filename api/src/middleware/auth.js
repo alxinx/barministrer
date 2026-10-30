@@ -1,6 +1,14 @@
 import jwt from 'jsonwebtoken'
+import { prisma } from '../lib/prisma.js'
 
-const SECRET = process.env.JWT_SECRET || 'dev-secret'
+// Sin JWT_SECRET el servidor no arranca, nunca firma con un valor por
+// defecto: ese fallback era un secreto publico (cualquiera pudo leer este
+// archivo) con el que se podia forjar un token de ADMIN de cualquier tenant.
+// Mejor que la app truene a que funcione mal en silencio.
+const SECRET = process.env.JWT_SECRET
+if (!SECRET) {
+  throw new Error('Falta JWT_SECRET en el entorno. Definelo antes de arrancar la API.')
+}
 
 export function signToken(user) {
   return jwt.sign(
@@ -21,14 +29,26 @@ export function verifyToken(token) {
  * Inyecta req.auth = { userId, tenantId, role }.
  * El tenantId SIEMPRE sale del token, nunca del body ni del query. Esa es la
  * unica barrera que impide que un bar lea los datos de otro.
+ *
+ * Tambien revisa que el usuario (y su tenant) sigan activos: el token dura
+ * hasta 12h, y desactivar a alguien (empleado que sale, sospecha de PIN)
+ * tiene que cortarle el acceso de una, no dejarlo entrar con la sesion vieja
+ * hasta que el token expire solo.
  */
-export function requireAuth(req, res, next) {
+export async function requireAuth(req, res, next) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return res.status(401).json({ error: 'Falta el token de sesion' })
 
   try {
     const payload = jwt.verify(token, SECRET)
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { active: true, tenant: { select: { active: true } } },
+    })
+    if (!user?.active || !user.tenant.active) {
+      return res.status(401).json({ error: 'La sesion expiro. Vuelve a entrar.' })
+    }
     req.auth = {
       userId: payload.sub,
       tenantId: payload.tenantId,
