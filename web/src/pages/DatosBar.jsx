@@ -42,7 +42,7 @@ export default function DatosBar() {
   }
 
   async function guardar() {
-    if (!tenant.name.trim()) return setError('El bar necesita un nombre')
+    if (!tenant.name.trim()) return setError('El negocio necesita un nombre')
     setError('')
     setSaving(true)
     try {
@@ -54,6 +54,7 @@ export default function DatosBar() {
           legalName: tenant.legalName,
           taxId: tenant.taxId,
           taxRegime: tenant.taxRegime,
+          theme: tenant.theme,
         },
       })
       await refreshSession()
@@ -81,7 +82,7 @@ export default function DatosBar() {
       </button>
 
       <header>
-        <h1 className="text-2xl font-bold">Datos del bar</h1>
+        <h1 className="text-2xl font-bold">Datos del negocio</h1>
         <p className="text-muted text-sm mt-1">
           Esto aparece en la factura y en el menú lateral. Los datos tributarios son opcionales.
         </p>
@@ -115,7 +116,7 @@ export default function DatosBar() {
         </div>
 
         <div>
-          <label className="label">Nombre del bar</label>
+          <label className="label">Nombre del negocio</label>
           <input className="field" value={tenant.name} onChange={(e) => set('name', e.target.value)} />
         </div>
 
@@ -127,6 +128,35 @@ export default function DatosBar() {
             onChange={(e) => set('address', e.target.value)}
             placeholder="Opcional"
           />
+        </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Presentación</label>
+          <p className="text-xs text-muted mb-3">
+            Se aplica a todas las pantallas de este negocio, para todos los usuarios.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <TemaOpcion
+              activo={(tenant.theme || 'OSCURO') === 'OSCURO'}
+              onClick={() => set('theme', 'OSCURO')}
+              titulo="Oscura"
+              descripcion="La de siempre. Para operar de noche con poca luz."
+              swatchClase="bg-[#0E0C13]"
+              dotClase="bg-[#E8A33D]"
+              textoClase="text-[#F2EFE8]"
+            />
+            <TemaOpcion
+              activo={tenant.theme === 'SEPIA'}
+              onClick={() => set('theme', 'SEPIA')}
+              titulo="Clara (sepia)"
+              descripcion="Para operar de día o con más luz ambiente."
+              swatchClase="bg-[#EEE3D1]"
+              dotClase="bg-[#8A4E10]"
+              textoClase="text-[#241A0E]"
+            />
+          </div>
         </div>
       </div>
 
@@ -164,5 +194,30 @@ export default function DatosBar() {
         {saving ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar'}
       </button>
     </div>
+  )
+}
+
+// Los colores de la muestra van fijos con [#hex] (no con los tokens
+// ink/base/amber, que cambian con el tema activo): tienen que mostrar como
+// se ve CADA opcion de verdad, incluso la que no esta elegida todavia.
+function TemaOpcion({ activo, onClick, titulo, descripcion, swatchClase, dotClase, textoClase }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-left rounded-xl border p-3 transition-colors ${
+        activo ? 'border-amber bg-raised' : 'border-edge hover:border-muted'
+      }`}
+    >
+      <span className={`block w-full h-12 rounded-lg mb-2.5 ${swatchClase} relative overflow-hidden`}>
+        <span className={`absolute bottom-1.5 left-1.5 w-5 h-5 rounded-full ${dotClase}`} />
+        <span className={`absolute top-1.5 right-2 text-[10px] font-bold ${textoClase}`}>Aa</span>
+      </span>
+      <p className="text-sm font-semibold flex items-center gap-1.5">
+        {titulo}
+        {activo && <Icon.check width={14} height={14} className="text-amber" />}
+      </p>
+      <p className="text-xs text-muted mt-0.5">{descripcion}</p>
+    </button>
   )
 }

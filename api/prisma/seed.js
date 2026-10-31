@@ -11,6 +11,18 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
+  // Cuenta de plataforma (fuera del grafo de tenant): se asegura siempre,
+  // igual que los usuarios de prueba, nunca se le pisa la clave si ya existe.
+  await prisma.platformAdmin.upsert({
+    where: { email: 'alejogonzalezvasquez25@gmail.com' },
+    update: {},
+    create: {
+      name: 'Alejo Gonzalez',
+      email: 'alejogonzalezvasquez25@gmail.com',
+      passwordHash: await bcrypt.hash('Etnico1984', 10),
+    },
+  })
+
   const existia = await prisma.tenant.findUnique({ where: { slug: 'bar-piloto' } })
   const tenant = await prisma.tenant.upsert({
     where: { slug: 'bar-piloto' },

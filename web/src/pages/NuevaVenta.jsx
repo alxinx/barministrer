@@ -828,7 +828,7 @@ export default function NuevaVenta() {
         </p>
       )}
       {notice && (
-        <p className="mb-4 text-sm text-amber border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
+        <p className="mb-4 text-sm text-amberText border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
           {notice}
         </p>
       )}
@@ -902,7 +902,7 @@ export default function NuevaVenta() {
               </span>
             ))}
             {seleccionMultiple.size > 0 && (
-              <span className="flex items-center gap-2 ml-auto text-amber font-semibold">
+              <span className="flex items-center gap-2 ml-auto text-amberText font-semibold">
                 {seleccionMultiple.size} mesa{seleccionMultiple.size > 1 ? 's' : ''} seleccionada
                 {seleccionMultiple.size > 1 ? 's' : ''} · clic derecho para fusionar
                 <button
@@ -921,7 +921,7 @@ export default function NuevaVenta() {
           {esEncargado && prePedidos.length > 0 && (
             <section className="card p-4 space-y-2.5 border-amber/40 animate-pre-pedido-buzz">
               <h2 className="font-semibold flex items-center gap-2">
-                <Icon.bell width={18} height={18} className="text-amber" />
+                <Icon.bell width={18} height={18} className="text-amberText" />
                 Pre-pedidos esperando envío
               </h2>
               {prePedidos.map((p) => {
@@ -969,7 +969,7 @@ export default function NuevaVenta() {
           )}
           <div
             ref={panelRef}
-            className={`fixed inset-y-0 right-0 z-40 w-full max-w-sm bg-night p-4 overflow-y-auto shadow-2xl
+            className={`fixed inset-y-0 right-0 z-40 w-full max-w-sm bg-canvas p-4 overflow-y-auto shadow-2xl
                          space-y-4 transition-transform duration-300
                          ${table ? 'translate-x-0' : 'translate-x-full'}
                          lg:static lg:translate-x-0 lg:z-auto lg:w-auto lg:max-w-none lg:bg-transparent
@@ -993,7 +993,7 @@ export default function NuevaVenta() {
             {table ? (
               <div className="flex items-baseline gap-3">
                 <span
-                  className={`font-extrabold text-amber transition-all duration-200 ${
+                  className={`font-extrabold text-amberText transition-all duration-200 ${
                     panelCompacto ? 'text-xl' : 'text-mesa'
                   }`}
                 >
@@ -1108,7 +1108,7 @@ export default function NuevaVenta() {
 
             {itemsPendientes.length > 0 && (
               <div className="space-y-2.5 mb-4 bg-amber/10 border border-amber/40 rounded-xl p-3">
-                <p className="text-xs font-semibold text-amber flex items-center gap-1.5">
+                <p className="text-xs font-semibold text-amberText flex items-center gap-1.5">
                   <Icon.bell width={14} height={14} />
                   Pre-pedido de {[...new Set(itemsPendientes.map((i) => i.createdBy?.name).filter(Boolean))].join(', ') || 'la mesera'}
                 </p>
@@ -1144,7 +1144,7 @@ export default function NuevaVenta() {
                     {enviandoPrePedido ? 'Enviando…' : 'Enviar pre-pedido a la barra'}
                   </button>
                 ) : (
-                  <p className="text-xs text-amber/80">Esperando que el administrador o cajero lo envíe a la barra.</p>
+                  <p className="text-xs text-amberText/80">Esperando que el administrador o cajero lo envíe a la barra.</p>
                 )}
               </div>
             )}

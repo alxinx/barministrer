@@ -16,6 +16,7 @@ function tenantPublic(tenant) {
     name: tenant.name,
     timezone: tenant.timezone,
     logoUrl: tenant.logoUrl,
+    theme: tenant.theme,
     cajeroEditaCatalogo: tenant.cajeroEditaCatalogo,
     cajeroGestionaInventario: tenant.cajeroGestionaInventario,
     cajeroGestionaDistribucion: tenant.cajeroGestionaDistribucion,

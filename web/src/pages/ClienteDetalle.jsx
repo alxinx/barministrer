@@ -153,7 +153,7 @@ export default function ClienteDetalle() {
           <span
             className={`text-[10px] font-bold rounded-pill px-2 py-0.5 border ${
               customer.creditEnabled
-                ? 'text-amber border-amber/40 bg-amber/10'
+                ? 'text-amberText border-amber/40 bg-amber/10'
                 : 'text-muted border-edge bg-raised'
             }`}
           >
@@ -260,7 +260,7 @@ export default function ClienteDetalle() {
                       verFactura(h.order.id)
                     }}
                     aria-label={`Ver factura de la mesa ${h.order.table.number}`}
-                    className="w-9 h-9 rounded-lg bg-raised border border-edge grid place-items-center text-muted hover:text-amber hover:border-amber/40 transition-colors shrink-0"
+                    className="w-9 h-9 rounded-lg bg-raised border border-edge grid place-items-center text-muted hover:text-amberText hover:border-amber/40 transition-colors shrink-0"
                   >
                     <Icon.receipt width={16} height={16} />
                   </button>

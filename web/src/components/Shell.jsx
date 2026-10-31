@@ -44,7 +44,7 @@ export default function Shell({ children }) {
   }
 
   return (
-    <div className="h-full flex bg-night">
+    <div className="h-full flex bg-canvas">
       {/* Debajo de 900px (breakpoint `nav`, no uno estandar de Tailwind) se
           retrae a solo iconos: una barra angosta todavia dice donde esta
           cada cosa sin robarle espacio a la pantalla de venta. */}
@@ -146,7 +146,7 @@ function NavGroup({ item, active }) {
         onClick={() => setOpen((v) => !v)}
         title={item.label}
         className={`w-full flex items-center justify-center nav:justify-start gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
-          active && !open ? 'text-amber' : 'text-muted hover:text-ink hover:bg-raised'
+          active && !open ? 'text-amberText' : 'text-muted hover:text-ink hover:bg-raised'
         }`}
       >
         <item.icon />

@@ -193,13 +193,13 @@ export default function CerrarCuentaModal({
             <p className="text-xs text-muted">{discountOpen ? 'Valor a cobrar' : 'Total a cobrar'}</p>
             {discountOpen ? (
               <MoneyInput
-                className="field h-9 w-36 text-right font-bold text-amber"
+                className="field h-9 w-36 text-right font-bold text-amberText"
                 value={finalValue}
                 onChange={setFinalValue}
                 autoFocus
               />
             ) : (
-              <p className="text-xl font-bold text-amber leading-tight">{money(total)}</p>
+              <p className="text-xl font-bold text-amberText leading-tight">{money(total)}</p>
             )}
           </div>
         </header>
@@ -300,7 +300,7 @@ export default function CerrarCuentaModal({
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="label mb-0">Medios de pago</span>
-              <button type="button" onClick={addRow} className="text-xs font-semibold text-amber flex items-center gap-1">
+              <button type="button" onClick={addRow} className="text-xs font-semibold text-amberText flex items-center gap-1">
                 <Icon.plus width={14} height={14} /> Agregar medio
               </button>
             </div>
@@ -361,7 +361,7 @@ export default function CerrarCuentaModal({
                     <p className="text-sm font-semibold text-libre">Devolver {money(cambio)} de cambio</p>
                   )}
                   {r.method === 'CREDITO' && (
-                    <p className="text-xs text-amber">Se carga como deuda a {customer.firstName}, no entra a caja.</p>
+                    <p className="text-xs text-amberText">Se carga como deuda a {customer.firstName}, no entra a caja.</p>
                   )}
                 </div>
               )
@@ -378,7 +378,7 @@ export default function CerrarCuentaModal({
         )}
 
         {courtesy && (
-          <p className="text-sm text-amber border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
+          <p className="text-sm text-amberText border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
             Esta cuenta se cierra como cortesía: no se cobra nada y queda como gasto del turno ("Pago a
             proveedor oficial").
           </p>

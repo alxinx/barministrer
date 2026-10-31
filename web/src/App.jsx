@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { PlatformAuthProvider, usePlatformAuth } from './context/PlatformAuthContext'
 import { ShiftProvider } from './context/ShiftContext'
 import Shell from './components/Shell'
 
@@ -24,6 +25,10 @@ const UtilidadProducto = lazy(() => import('./pages/UtilidadProducto'))
 const Configuracion = lazy(() => import('./pages/Configuracion'))
 const DatosBar = lazy(() => import('./pages/DatosBar'))
 const Permisos = lazy(() => import('./pages/Permisos'))
+const PlataformaLogin = lazy(() => import('./pages/plataforma/Login'))
+const PlataformaPanel = lazy(() => import('./pages/plataforma/Panel'))
+const PlataformaTarifas = lazy(() => import('./pages/plataforma/Tarifas'))
+const PlataformaTenantDetalle = lazy(() => import('./pages/plataforma/TenantDetalle'))
 
 function Cargando() {
   return <div className="h-full grid place-items-center text-muted">Cargando…</div>
@@ -44,6 +49,16 @@ function Protegida({ children, soloAdmin = false, roles, permiso }) {
   if (soloAdmin && session.user.role !== 'ADMIN') return <Navigate to="/venta" replace />
   if (roles && !roles.includes(session.user.role)) return <Navigate to="/venta" replace />
   return <Shell>{children}</Shell>
+}
+
+// La plataforma es otra sesion (PlatformAdmin, sin tenantId), asi que no
+// reusa Protegida: no hay rol de tenant que revisar ni Shell del bar que
+// envolver, solo que haya una sesion de plataforma activa.
+function PlataformaProtegida({ children }) {
+  const { session, loading } = usePlatformAuth()
+  if (loading) return <Cargando />
+  if (!session) return <Navigate to="/plataforma/entrar" replace />
+  return children
 }
 
 function Pendiente({ titulo }) {
@@ -109,6 +124,40 @@ export default function App() {
               <Route path="/configuracion" element={<Protegida soloAdmin><Configuracion /></Protegida>} />
               <Route path="/configuracion/datos" element={<Protegida soloAdmin><DatosBar /></Protegida>} />
               <Route path="/configuracion/permisos" element={<Protegida soloAdmin><Permisos /></Protegida>} />
+              <Route
+                path="/plataforma/*"
+                element={
+                  <PlatformAuthProvider>
+                    <Routes>
+                      <Route path="entrar" element={<PlataformaLogin />} />
+                      <Route
+                        index
+                        element={
+                          <PlataformaProtegida>
+                            <PlataformaPanel />
+                          </PlataformaProtegida>
+                        }
+                      />
+                      <Route
+                        path="tarifas"
+                        element={
+                          <PlataformaProtegida>
+                            <PlataformaTarifas />
+                          </PlataformaProtegida>
+                        }
+                      />
+                      <Route
+                        path="tenants/:id"
+                        element={
+                          <PlataformaProtegida>
+                            <PlataformaTenantDetalle />
+                          </PlataformaProtegida>
+                        }
+                      />
+                    </Routes>
+                  </PlatformAuthProvider>
+                }
+              />
               <Route path="*" element={<Navigate to="/venta" replace />} />
             </Routes>
           </Suspense>

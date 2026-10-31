@@ -53,6 +53,9 @@ services:
       - ./web/src:/app/src
       - ./web/index.html:/app/index.html
       - ./web/public:/app/public
+      - ./web/tailwind.config.js:/app/tailwind.config.js
+      - ./web/postcss.config.js:/app/postcss.config.js
+      - ./web/vite.config.js:/app/vite.config.js
 
 volumes:
   db_data:

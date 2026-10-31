@@ -34,6 +34,20 @@ export function AuthProvider({ children }) {
     setSession(data)
   }
 
+  // La pestaña dice el nombre del bar mientras alguien tiene sesion abierta
+  // (util con varios bares/turnos abiertos en pestanas distintas), y vuelve
+  // al nombre de la app cuando no hay sesion.
+  useEffect(() => {
+    document.title = session?.tenant?.name || 'Barministrer'
+  }, [session])
+
+  // Tema del tenant (oscuro por defecto): se aplica al <html> para que todos
+  // los tokens de color de web/src/index.css cambien de una. Sin sesion
+  // (login, plataforma) siempre queda oscuro.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', session?.tenant?.theme === 'SEPIA' ? 'sepia' : 'dark')
+  }, [session])
+
   const isAdmin = session?.user.role === 'ADMIN'
 
   return (

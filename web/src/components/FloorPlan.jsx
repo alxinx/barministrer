@@ -29,6 +29,12 @@ const statusGlow = {
 // (el reflejo) sobre un degradado oscuro translucido (el cuerpo del vidrio).
 // Una sola capa de fondo, sin nodos extra, para no complicar el DOM de cada
 // mesa.
+// NOTA: Tailwind no esta generando esta clase (el gradiente de dos capas
+// separadas por coma dentro de bg-[...] choca con su parser de valores
+// arbitrarios) — getComputedStyle confirma backgroundImage:none en el
+// navegador. El efecto nunca se vio; en oscuro pasaba inadvertido porque el
+// tablero de atras ya era oscuro. No se repara aqui (fuera del alcance de
+// este cambio de tema) pero vale la pena revisarlo aparte.
 const GLASS_FILL =
   'bg-[radial-gradient(circle_at_30%_22%,rgba(255,255,255,0.16),transparent_55%),' +
   'linear-gradient(180deg,rgba(33,29,44,0.55),rgba(14,12,19,0.65))] backdrop-blur-sm'

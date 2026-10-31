@@ -389,7 +389,7 @@ export default function Caja() {
                             verFactura(m.orderId)
                           }}
                           aria-label="Reimprimir factura"
-                          className="w-8 h-8 rounded-lg grid place-items-center hover:text-amber hover:bg-raised transition-colors"
+                          className="w-8 h-8 rounded-lg grid place-items-center hover:text-amberText hover:bg-raised transition-colors"
                         >
                           <Icon.receipt width={16} height={16} />
                         </button>
@@ -435,7 +435,7 @@ export default function Caja() {
                           type="button"
                           onClick={() => setEgresoTicket(e)}
                           aria-label="Reimprimir comprobante"
-                          className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amber hover:bg-raised transition-colors"
+                          className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amberText hover:bg-raised transition-colors"
                         >
                           <Icon.receipt width={16} height={16} />
                         </button>
@@ -563,7 +563,7 @@ function porcentaje(valor, total) {
 }
 
 const TONOS_CAJA = {
-  amber: 'bg-amber/10 border-amber/40 text-amber',
+  amber: 'bg-amber/10 border-amber/40 text-amberText',
   ocupada: 'bg-ocupada/10 border-ocupada/40 text-ocupada',
   default: 'bg-raised border-edge text-muted',
 }
@@ -590,7 +590,7 @@ function TurnoActualCard({ shift, onPedirCierre }) {
     <section className="card p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="w-10 h-10 rounded-xl bg-raised border border-edge grid place-items-center text-amber shrink-0">
+          <span className="w-10 h-10 rounded-xl bg-raised border border-edge grid place-items-center text-amberText shrink-0">
             <Icon.calendar width={18} height={18} />
           </span>
           <div className="min-w-0">
@@ -641,7 +641,7 @@ function ResumenTurnoCard({ shift, sales, totalEgresos, efectivoEsperado, onPedi
       </div>
       <div className="pt-4 border-t border-edge flex items-center justify-between">
         <span className="text-sm font-semibold">Total en caja</span>
-        <span className="text-2xl font-bold text-amber">{money(efectivoEsperado)}</span>
+        <span className="text-2xl font-bold text-amberText">{money(efectivoEsperado)}</span>
       </div>
       <button onClick={onPedirCierre} className="btn-primary w-full">
         <Icon.cash width={16} height={16} />
@@ -930,7 +930,7 @@ function ResumenCierreModal({ resultado, onCerrar }) {
         </div>
         <div className="flex items-center justify-between pb-1 border-b border-edge">
           <span className="text-sm text-muted">Total vendido</span>
-          <span className="text-lg font-bold text-amber">{money(resultado.sales?.totalVentas || 0)}</span>
+          <span className="text-lg font-bold text-amberText">{money(resultado.sales?.totalVentas || 0)}</span>
         </div>
         <CuadreResumen counts={counts} />
         <button onClick={onCerrar} className="btn-primary w-full">

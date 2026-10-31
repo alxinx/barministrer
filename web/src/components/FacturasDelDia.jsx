@@ -73,7 +73,7 @@ export default function FacturasDelDia({ facturas, onVer, titulo = 'Facturas de 
                 )}
                 Servicio salón
                 {f.isCourtesy ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber border border-amber/40 bg-amber/10 rounded-pill px-2 py-0.5 shrink-0">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amberText border border-amber/40 bg-amber/10 rounded-pill px-2 py-0.5 shrink-0">
                     <Icon.gift width={11} height={11} />
                     Cortesía
                   </span>
@@ -84,7 +84,7 @@ export default function FacturasDelDia({ facturas, onVer, titulo = 'Facturas de 
                   </span>
                 )}
                 {f.discountAmount > 0 && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber border border-amber/40 bg-amber/10 rounded-pill px-2 py-0.5 shrink-0">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amberText border border-amber/40 bg-amber/10 rounded-pill px-2 py-0.5 shrink-0">
                     <Icon.tag width={11} height={11} />
                     Descuento
                   </span>
@@ -111,7 +111,7 @@ export default function FacturasDelDia({ facturas, onVer, titulo = 'Facturas de 
               type="button"
               onClick={() => onVer(f.id)}
               aria-label={`Ver factura de la mesa ${f.tableNumber}`}
-              className="w-9 h-9 rounded-lg bg-raised border border-edge grid place-items-center text-muted hover:text-amber hover:border-amber/40 transition-colors shrink-0"
+              className="w-9 h-9 rounded-lg bg-raised border border-edge grid place-items-center text-muted hover:text-amberText hover:border-amber/40 transition-colors shrink-0"
             >
               <Icon.receipt width={17} height={17} />
             </button>

@@ -94,7 +94,7 @@ export default function Clientes() {
                   </td>
                   <td className="px-4 py-3">
                     {c.creditEnabled && (
-                      <span className="text-[10px] font-bold text-amber border border-amber/40 rounded-pill px-2 py-0.5">
+                      <span className="text-[10px] font-bold text-amberText border border-amber/40 rounded-pill px-2 py-0.5">
                         Crédito
                       </span>
                     )}

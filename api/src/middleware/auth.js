@@ -69,3 +69,33 @@ export function requireRole(...roles) {
     next()
   }
 }
+
+// Token de PlatformAdmin, separado del de tenant: lleva type: 'platform' y
+// ningun tenantId, para que no haya forma de confundirlo con una sesion de
+// bar. Un token de tenant nunca trae ese campo, asi que requirePlatformAuth
+// lo rechaza solo con esta condicion sin tener que tocar requireAuth.
+export function signPlatformToken(admin) {
+  return jwt.sign({ sub: admin.id, type: 'platform', name: admin.name }, SECRET, { expiresIn: '12h' })
+}
+
+export async function requirePlatformAuth(req, res, next) {
+  const header = req.headers.authorization || ''
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null
+  if (!token) return res.status(401).json({ error: 'Falta el token de sesion' })
+
+  try {
+    const payload = jwt.verify(token, SECRET)
+    if (payload.type !== 'platform') return res.status(401).json({ error: 'Sesion invalida' })
+
+    const admin = await prisma.platformAdmin.findUnique({
+      where: { id: payload.sub },
+      select: { active: true },
+    })
+    if (!admin?.active) return res.status(401).json({ error: 'La sesion expiro. Vuelve a entrar.' })
+
+    req.platformAuth = { adminId: payload.sub, name: payload.name }
+    next()
+  } catch {
+    res.status(401).json({ error: 'La sesion expiro. Vuelve a entrar.' })
+  }
+}

@@ -101,14 +101,25 @@ export default function AgregarInventario() {
                 key={o.variant.id}
                 type="button"
                 onClick={() => setSelected(o)}
-                className="text-left p-3 rounded-xl bg-raised border border-edge hover:border-amber transition-colors"
+                className="text-left p-3 rounded-xl bg-raised border border-edge hover:border-amber transition-colors flex gap-2.5"
               >
-                <span className="block w-full h-1 rounded-pill mb-2.5" style={{ background: o.product.category.color }} />
-                <p className="text-sm font-semibold leading-tight truncate">{o.product.name}</p>
-                <p className="text-xs text-muted mt-0.5">{o.variant.name}</p>
-                <p className="text-xs text-muted mt-1.5">
-                  Stock: <span className="text-ink font-semibold">{o.variant.stock}</span>
-                </p>
+                <span
+                  className="w-10 h-10 rounded-lg overflow-hidden grid place-items-center text-[11px] font-bold text-night shrink-0"
+                  style={{ background: o.product.category.color }}
+                >
+                  {o.product.imageUrl ? (
+                    <img src={o.product.imageUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    o.product.name.slice(0, 2).toUpperCase()
+                  )}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold leading-tight truncate">{o.product.name}</p>
+                  <p className="text-xs text-muted mt-0.5">{o.variant.name}</p>
+                  <p className="text-xs text-muted mt-1.5">
+                    Stock: <span className="text-ink font-semibold">{o.variant.stock}</span>
+                  </p>
+                </div>
               </button>
             ))}
 

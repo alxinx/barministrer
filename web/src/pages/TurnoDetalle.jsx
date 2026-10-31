@@ -220,7 +220,7 @@ export default function TurnoDetalle() {
 function EstadoPill({ tono, label }) {
   const tonos = {
     libre: 'text-libre border-libre/30 bg-libre/10',
-    amber: 'text-amber border-amber/30 bg-amber/10',
+    amber: 'text-amberText border-amber/30 bg-amber/10',
   }
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-pill px-2.5 py-1 border ${tonos[tono]}`}>
@@ -232,7 +232,7 @@ function EstadoPill({ tono, label }) {
 
 const STAT_TONOS = {
   default: { badge: 'bg-raised border-edge text-muted', texto: '', card: '' },
-  amber: { badge: 'bg-amber/10 border-amber/40 text-amber', texto: 'text-amber', card: '' },
+  amber: { badge: 'bg-amber/10 border-amber/40 text-amberText', texto: 'text-amberText', card: '' },
   libre: { badge: 'bg-libre/10 border-libre/40 text-libre', texto: 'text-libre', card: '' },
   ocupada: { badge: 'bg-ocupada/10 border-ocupada/40 text-ocupada', texto: 'text-ocupada', card: 'border-ocupada/40 bg-ocupada/5' },
 }
@@ -282,11 +282,11 @@ function VentasPorMedioCard({ sales }) {
           return (
             <div key={m.key} className="bg-raised border border-edge rounded-xl p-3 space-y-2.5">
               <div className="flex items-center justify-between">
-                <span className="w-8 h-8 rounded-full bg-night border border-edge grid place-items-center text-muted shrink-0">
+                <span className="w-8 h-8 rounded-full bg-surface border border-edge grid place-items-center text-muted shrink-0">
                   <MethodIcon width={15} height={15} />
                 </span>
                 {pct > 0 && (
-                  <span className="text-[10px] font-bold text-amber bg-amber/10 border border-amber/30 rounded-pill px-1.5 py-0.5">
+                  <span className="text-[10px] font-bold text-amberText bg-amber/10 border border-amber/30 rounded-pill px-1.5 py-0.5">
                     {pct}%
                   </span>
                 )}
@@ -303,7 +303,7 @@ function VentasPorMedioCard({ sales }) {
         <div className="flex flex-wrap gap-2.5 pt-1">
           {sales.abonos?.total > 0 && (
             <div className="flex items-center gap-2.5 bg-raised border border-edge rounded-xl pl-2.5 pr-3.5 py-2">
-              <span className="w-9 h-9 rounded-full bg-night border border-edge grid place-items-center text-muted shrink-0">
+              <span className="w-9 h-9 rounded-full bg-surface border border-edge grid place-items-center text-muted shrink-0">
                 <Icon.receipt width={16} height={16} />
               </span>
               <div>
@@ -314,11 +314,11 @@ function VentasPorMedioCard({ sales }) {
           )}
           {sales.cortesias > 0 && (
             <div className="flex items-center gap-2.5 bg-amber/10 border border-amber/30 rounded-xl pl-2.5 pr-3.5 py-2">
-              <span className="w-9 h-9 rounded-full bg-amber/15 border border-amber/40 grid place-items-center text-amber shrink-0">
+              <span className="w-9 h-9 rounded-full bg-amber/15 border border-amber/40 grid place-items-center text-amberText shrink-0">
                 <Icon.gift width={16} height={16} />
               </span>
               <div>
-                <p className="text-[11px] text-amber/80 leading-none">{sales.cortesias === 1 ? 'Cortesía' : 'Cortesías'}</p>
+                <p className="text-[11px] text-amberText/80 leading-none">{sales.cortesias === 1 ? 'Cortesía' : 'Cortesías'}</p>
                 <p className="text-sm font-semibold leading-tight">{sales.cortesias}</p>
               </div>
             </div>
@@ -439,7 +439,7 @@ function EgresosCard({ egresos, totalEgresos, shiftId, onVerTicket }) {
                   type="button"
                   onClick={() => onVerTicket(e)}
                   aria-label="Reimprimir comprobante"
-                  className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amber hover:bg-raised transition-colors"
+                  className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amberText hover:bg-raised transition-colors"
                 >
                   <Icon.receipt width={16} height={16} />
                 </button>

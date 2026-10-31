@@ -54,7 +54,7 @@ export default function ConsumoDetalleModal({ order, onClose }) {
 
         <div className="flex items-center justify-between pt-1 border-t border-edge">
           <span className="font-semibold">Total</span>
-          <span className="text-lg font-bold text-amber">{money(order.total)}</span>
+          <span className="text-lg font-bold text-amberText">{money(order.total)}</span>
         </div>
 
         <button type="button" onClick={onClose} className="btn-ghost w-full">

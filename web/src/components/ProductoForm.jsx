@@ -462,7 +462,7 @@ export default function ProductoForm({ categories, products, product, initialNam
               <button
                 type="button"
                 onClick={() => setRecipeItems((prev) => [...prev, { sourceProductId: '', ml: 30 }])}
-                className="text-xs font-semibold text-amber flex items-center gap-1"
+                className="text-xs font-semibold text-amberText flex items-center gap-1"
               >
                 <Icon.plus width={14} height={14} /> Agregar
               </button>

@@ -687,7 +687,7 @@ export default function Distribucion() {
               Deshacer
             </button>
           )}
-          <span className={`text-xs ${saving ? 'text-amber' : 'text-muted'}`}>
+          <span className={`text-xs ${saving ? 'text-amberText' : 'text-muted'}`}>
             {saving ? 'Guardando…' : 'Guardado'}
           </span>
         </div>
@@ -699,7 +699,7 @@ export default function Distribucion() {
         </p>
       )}
       {notice && (
-        <p className="mb-4 text-sm text-amber border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
+        <p className="mb-4 text-sm text-amberText border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
           {notice}
         </p>
       )}
@@ -800,7 +800,7 @@ export default function Distribucion() {
                   : 'Pieza seleccionada'}
               </h2>
               {selected && (
-                <button onClick={copiar} className="text-xs font-semibold text-amber flex items-center gap-1">
+                <button onClick={copiar} className="text-xs font-semibold text-amberText flex items-center gap-1">
                   <Icon.copy width={14} height={14} />
                   Copiar
                 </button>

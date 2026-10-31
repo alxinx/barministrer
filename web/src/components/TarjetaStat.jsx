@@ -1,7 +1,7 @@
 import { money } from '../lib/api'
 
 const TONOS = {
-  amber: 'bg-amber/10 border-amber/40 text-amber',
+  amber: 'bg-amber/10 border-amber/40 text-amberText',
   ocupada: 'bg-ocupada/10 border-ocupada/40 text-ocupada',
   libre: 'bg-libre/10 border-libre/40 text-libre',
   default: 'bg-raised border-edge text-muted',

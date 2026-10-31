@@ -40,7 +40,7 @@ export default function Reportes() {
             onClick={() => navigate(r.to)}
             className="card p-5 text-left hover:border-amber/50 transition-colors flex flex-col gap-3"
           >
-            <span className="w-11 h-11 rounded-xl bg-raised border border-edge grid place-items-center text-amber shrink-0">
+            <span className="w-11 h-11 rounded-xl bg-raised border border-edge grid place-items-center text-amberText shrink-0">
               <r.icon width={20} height={20} />
             </span>
             <div>

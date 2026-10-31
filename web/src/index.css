@@ -15,6 +15,44 @@
 }
 
 @layer base {
+  /* Oscuro (default) y sepia: mismos nombres de token, valores distintos.
+     "night" y "amber" se declaran una sola vez aqui y nunca se repiten en el
+     bloque [data-theme='sepia']: al no pisarse, quedan fijos en ambos temas
+     (ver tailwind.config.js). El resto cambia cuando el tenant elige sepia
+     desde Configuracion > Datos del negocio (AuthContext pone data-theme en
+     <html> segun tenant.theme). */
+  :root {
+    --color-night: 14 12 19; /* #0E0C13, fijo en ambos temas */
+    --color-amber: 232 163 61; /* #E8A33D, fijo en ambos temas */
+    --color-canvas: 14 12 19; /* #0E0C13 */
+    --color-surface: 23 20 32; /* #171420 */
+    --color-raised: 33 29 44; /* #211D2C */
+    --color-edge: 46 41 57; /* #2E2939 */
+    --color-ink: 242 239 232; /* #F2EFE8 */
+    --color-muted: 154 147 168; /* #9A93A8 */
+    --color-amber-text: 232 163 61; /* #E8A33D, igual al amber fijo */
+    --color-amber-dim: 138 99 33; /* #8A6321 */
+    --color-libre: 95 209 140; /* #5FD18C */
+    --color-ocupada: 224 82 82; /* #E05252 */
+    --color-reservada: 232 163 61; /* #E8A33D */
+  }
+
+  :root[data-theme='sepia'] {
+    --color-canvas: 238 227 209; /* #EEE3D1 */
+    --color-surface: 248 241 228; /* #F8F1E4 */
+    --color-raised: 255 251 242; /* #FFFBF2 */
+    --color-edge: 185 163 120; /* #B9A378 */
+    --color-ink: 36 26 14; /* #241A0E */
+    --color-muted: 107 90 66; /* #6B5A42 */
+    /* Mismo tono de amber que el relleno, pero oscurecido: el E8A33D
+       original no llega a 4.5:1 como texto sobre el crema de este tema. */
+    --color-amber-text: 138 78 16; /* #8A4E10 */
+    --color-amber-dim: 107 67 16; /* #6B4310 */
+    --color-libre: 31 92 49; /* #1F5C31 */
+    --color-ocupada: 166 50 31; /* #A6321F */
+    --color-reservada: 138 78 16; /* #8A4E10, igual al amber-text */
+  }
+
   html,
   body,
   #root {
@@ -22,7 +60,7 @@
   }
 
   body {
-    @apply bg-night text-ink font-sans antialiased;
+    @apply bg-canvas text-ink font-sans antialiased;
     /* Tabular para que los totales no bailen al cambiar de cifra */
     font-variant-numeric: tabular-nums;
   }
@@ -316,48 +354,51 @@
 /* Calendario de rango de fechas (react-day-picker): la libreria trae su
    propio CSS pensado para fondo claro, asi que se pisa con los mismos
    tokens del resto de la app en vez de dejarlo con su tema por defecto. */
+/* La libreria trae su propio CSS pensado para fondo claro; se pisa con los
+   tokens del tema activo (var() anidado en una custom property es CSS
+   valido) para que el calendario tambien cambie con sepia/oscuro. */
 .rdp-licorplus {
   --rdp-cell-size: 36px;
-  --rdp-accent-color: #e8a33d;
-  --rdp-background-color: #211d2c;
-  --rdp-accent-color-dark: #e8a33d;
-  --rdp-background-color-dark: #211d2c;
-  --rdp-outline: 2px solid #e8a33d;
-  --rdp-outline-selected: 2px solid #e8a33d;
-  --rdp-selected-color: #0e0c13;
+  --rdp-accent-color: rgb(var(--color-amber));
+  --rdp-background-color: rgb(var(--color-raised));
+  --rdp-accent-color-dark: rgb(var(--color-amber));
+  --rdp-background-color-dark: rgb(var(--color-raised));
+  --rdp-outline: 2px solid rgb(var(--color-amber));
+  --rdp-outline-selected: 2px solid rgb(var(--color-amber));
+  --rdp-selected-color: rgb(var(--color-night));
   margin: 0;
 }
 .rdp-licorplus .rdp-caption_label,
 .rdp-licorplus .rdp-day {
-  color: #f2efe8;
+  color: rgb(var(--color-ink));
 }
 .rdp-licorplus .rdp-head_cell {
-  color: #9a93a8;
+  color: rgb(var(--color-muted));
   font-weight: 600;
   text-transform: capitalize;
 }
 .rdp-licorplus .rdp-nav_button {
-  color: #9a93a8;
+  color: rgb(var(--color-muted));
 }
 .rdp-licorplus .rdp-nav_button:hover {
-  color: #f2efe8;
-  background-color: #211d2c;
+  color: rgb(var(--color-ink));
+  background-color: rgb(var(--color-raised));
 }
 .rdp-licorplus .rdp-day_range_middle {
-  background-color: rgba(232, 163, 61, 0.18);
-  color: #f2efe8;
+  background-color: rgb(var(--color-amber) / 0.18);
+  color: rgb(var(--color-ink));
 }
 .rdp-licorplus .rdp-day_range_start,
 .rdp-licorplus .rdp-day_range_end {
-  background-color: #e8a33d;
-  color: #0e0c13;
+  background-color: rgb(var(--color-amber));
+  color: rgb(var(--color-night));
   font-weight: 700;
 }
 .rdp-licorplus .rdp-day_outside {
-  color: #9a93a8;
+  color: rgb(var(--color-muted));
   opacity: 0.4;
 }
 .rdp-licorplus .rdp-day:focus-visible {
-  outline: 2px solid #e8a33d;
+  outline: 2px solid rgb(var(--color-amber));
   outline-offset: 1px;
 }

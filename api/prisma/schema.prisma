@@ -8,10 +8,53 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
+// PLATAFORMA
+// Fuera del grafo multitenant a proposito: no tiene tenantId ni relacion con
+// Tenant/User. Un bug de scoping en una consulta de negocio nunca puede
+// hacer que esta cuenta aparezca mezclada con las de un bar. Solo existe
+// para crear tenants nuevos desde /plataforma, nada mas.
+// ---------------------------------------------------------------------------
+
+model PlatformAdmin {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+}
+
+enum RentalPeriod {
+  MENSUAL
+  TRIMESTRAL
+  SEMESTRAL
+  ANUAL
+}
+
+// Catalogo de planes de renta que se le cobran a un bar por usar LicorPlus
+// (no tiene nada que ver con lo que el bar le cobra a SUS clientes). Solo el
+// valor actual: si sube la tarifa se edita el plan, no se versiona todavia.
+model RentalPlan {
+  id        String       @id @default(uuid())
+  name      String
+  price     Int
+  period    RentalPeriod @default(MENSUAL)
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  tenants Tenant[]
+}
+
+// ---------------------------------------------------------------------------
 // MULTITENANT
 // Toda tabla de negocio lleva tenantId. El middleware de la API lo inyecta
 // desde el JWT; ninguna consulta debe recibir tenantId del cliente.
 // ---------------------------------------------------------------------------
+
+enum Theme {
+  OSCURO
+  SEPIA
+}
 
 model Tenant {
   id        String   @id @default(uuid())
@@ -21,9 +64,20 @@ model Tenant {
   currency  String   @default("COP")
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  /// Presentacion de la interfaz para todo el que entre a este tenant. OSCURO
+  /// por defecto: el bar opera de noche con poca luz. SEPIA es la alternativa
+  /// clara para quien opere de dia o con mas luz ambiente.
+  theme Theme @default(OSCURO)
   /// Ultimo numero de factura asignado. Una sola secuencia por bar, nunca se
   /// reinicia por turno ni por dia: es lo que pide un control contable serio.
   lastInvoiceNumber Int @default(0)
+
+  // Lo que ESTE bar le paga a LicorPlus (plataforma), no lo que el bar le
+  // cobra a sus clientes. Opcional: un bar puede existir sin plan asignado
+  // todavia (ej. recien creado, antes de negociar).
+  rentalPlanId String?
+  rentalPlan   RentalPlan? @relation(fields: [rentalPlanId], references: [id])
 
   // Datos para la factura y la marca del bar. Todos opcionales: un bar chico
   // puede no tener NIT ni logo todavia.

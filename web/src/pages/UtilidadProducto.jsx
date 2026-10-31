@@ -56,7 +56,7 @@ function Th({ children, sortKey, sort, setSort, align = 'left' }) {
           <Icon.chevronDown
             width={12}
             height={12}
-            className="text-amber transition-transform"
+            className="text-amberText transition-transform"
             style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'none' }}
           />
         ) : (

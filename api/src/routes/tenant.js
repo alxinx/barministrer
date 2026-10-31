@@ -28,6 +28,8 @@ tenantRoutes.get('/tenant', soloAdmin, async (req, res) => {
   res.json(tenant)
 })
 
+const TEMAS = ['OSCURO', 'SEPIA']
+
 tenantRoutes.patch('/tenant', soloAdmin, async (req, res) => {
   const data = {}
   for (const campo of [...CAMPOS_DATOS, ...CAMPOS_BOOLEANOS]) {
@@ -35,8 +37,12 @@ tenantRoutes.patch('/tenant', soloAdmin, async (req, res) => {
     data[campo] = CAMPOS_BOOLEANOS.includes(campo) ? Boolean(req.body[campo]) : req.body[campo]
   }
   if (data.name !== undefined) {
-    if (!data.name.trim()) return res.status(400).json({ error: 'El bar necesita un nombre' })
+    if (!data.name.trim()) return res.status(400).json({ error: 'El negocio necesita un nombre' })
     data.name = data.name.trim()
+  }
+  if (req.body.theme !== undefined) {
+    if (!TEMAS.includes(req.body.theme)) return res.status(400).json({ error: 'Ese tema no existe' })
+    data.theme = req.body.theme
   }
 
   const tenant = await prisma.tenant.update({ where: { id: req.auth.tenantId }, data })
