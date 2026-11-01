@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { money } from '../lib/api'
 import { Icon } from './Icons'
+import { construirTicket } from '../lib/escpos'
+import { imprimirSilencioso, abrirCajon } from '../lib/printer'
 
 const METHOD_LABEL = {
   EFECTIVO: 'Efectivo',
@@ -11,17 +13,12 @@ const METHOD_LABEL = {
 }
 
 /**
- * Tirilla de venta: se abre sola al cerrar una cuenta y dispara la ventana de
- * impresion del navegador de una vez, en la misma pestaña (nunca window.open,
- * eso abriria otra). Se queda en pantalla despues por si hay que reimprimir.
+ * Tirilla de venta: se abre sola al cerrar una cuenta. Si hay una impresora
+ * termica emparejada (ver DatosBar > Impresora) sale directo por USB sin
+ * ningun dialogo; si no, cae al window.print() de siempre. Se queda en
+ * pantalla despues por si hay que reimprimir.
  */
 export default function ReciboModal({ order, splitCount, tenantName, onClose, autoPrint = true }) {
-  useEffect(() => {
-    if (!autoPrint) return
-    const t = setTimeout(() => window.print(), 150)
-    return () => clearTimeout(t)
-  }, [autoPrint])
-
   const items = order.items.filter((i) => i.status === 'ACTIVE')
   const descuento = Number(order.discountAmount) || 0
   const totalPagado = order.total - descuento
@@ -30,6 +27,76 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
   const cambioTotal = order.payments
     .filter((p) => p.method === 'EFECTIVO' && Number(p.change) > 0)
     .reduce((s, p) => s + Number(p.change), 0)
+
+  // Mismo contenido que la tirilla visual de abajo, pero como lista
+  // declarativa para la impresora termica (ver web/src/lib/escpos.js).
+  function lineasTicket() {
+    const l = [
+      { texto: (tenantName || 'LicorPlus').toUpperCase(), centro: true, negrita: true },
+    ]
+    if (order.invoiceNumber) l.push({ texto: `Factura #${String(order.invoiceNumber).padStart(4, '0')}`, centro: true })
+    l.push({ texto: `Mesa ${order.table?.number}`, centro: true })
+    l.push({
+      texto: new Date(order.closedAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }),
+      centro: true,
+    })
+    l.push({ raya: true })
+    l.push({
+      texto: `Cliente: ${
+        order.customer ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim() : 'Consumidor final'
+      }`,
+    })
+    if (order.customer?.alias) l.push({ texto: `Alias: ${order.customer.alias}` })
+    if (order.customer?.idNumber) l.push({ texto: `Cédula: ${order.customer.idNumber}` })
+    l.push({ raya: true })
+    items.forEach((it) => {
+      for (let unidad = 0; unidad < it.qty; unidad++) {
+        l.push({ cols: [`${it.name}${it.variantName ? ` · ${it.variantName}` : ''}`, money(Number(it.price))] })
+      }
+    })
+    l.push({ raya: true })
+    if (descuento > 0) {
+      l.push({ cols: ['Subtotal', money(order.total)] })
+      l.push({ cols: ['Descuento', `-${money(descuento)}`] })
+      l.push({ cols: ['TOTAL PAGADO', money(totalPagado)], negrita: true })
+    } else {
+      l.push({ cols: ['TOTAL', money(order.total)], negrita: true })
+    }
+    if (order.isCourtesy) {
+      l.push({ feed: 1 }, { texto: 'CORTESÍA', centro: true, negrita: true, grande: true }, { feed: 1 })
+    } else {
+      l.push({ raya: true })
+      order.payments.forEach((p) => l.push({ cols: [METHOD_LABEL[p.method] || p.method, money(p.amount)] }))
+      if (cambioTotal > 0) l.push({ cols: ['Cambio', money(cambioTotal)] })
+      if (montoCredito > 0) l.push({ feed: 1 }, { texto: 'CRÉDITO', centro: true, negrita: true, grande: true }, { feed: 1 })
+    }
+    if (porPersona) {
+      l.push({ raya: true })
+      l.push({ texto: `Dividido entre ${splitCount}: ${money(porPersona)} c/u` })
+    }
+    l.push({ raya: true })
+    l.push({ texto: 'Gracias por su visita', centro: true })
+    return l
+  }
+
+  // Si hay impresora emparejada sale directo, sin dialogo del navegador. Si
+  // ademas hubo pago en efectivo, el cajon se abre solo detras del tiquete —
+  // es el unico caso real donde hay que tocar plata en ese momento.
+  async function imprimir() {
+    const ok = await imprimirSilencioso(construirTicket(lineasTicket()))
+    if (!ok) {
+      window.print()
+      return
+    }
+    if (order.payments.some((p) => p.method === 'EFECTIVO')) await abrirCajon()
+  }
+
+  useEffect(() => {
+    if (!autoPrint) return
+    const t = setTimeout(imprimir, 150)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPrint])
 
   // Se pregunta el numero en vez de mandar directo: el cliente vinculado
   // puede no tener WhatsApp guardado (o no ser el que recibe la factura), asi
@@ -177,7 +244,7 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
             <Icon.phone width={16} height={16} />
             Enviar por WhatsApp
           </button>
-          <button type="button" onClick={() => window.print()} className="btn-primary flex items-center gap-2">
+          <button type="button" onClick={imprimir} className="btn-primary flex items-center gap-2">
             <Icon.printer width={16} height={16} />
             Imprimir
           </button>

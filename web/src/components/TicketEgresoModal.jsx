@@ -1,16 +1,40 @@
 import { useEffect } from 'react'
 import { money } from '../lib/api'
 import { Icon } from './Icons'
+import { construirTicket } from '../lib/escpos'
+import { imprimirSilencioso } from '../lib/printer'
 
 /**
  * Comprobante de un egreso (retiro o gasto de caja menor): misma tirilla que
- * el recibo de venta, para poder reimprimirlo despues si se extravia.
+ * el recibo de venta, para poder reimprimirlo despues si se extravia. Con
+ * impresora emparejada sale directo por USB sin dialogo; si no, cae al
+ * window.print() de siempre.
  */
 export default function TicketEgresoModal({ egreso, tenantName, onClose, autoPrint = true }) {
+  function lineasTicket() {
+    return [
+      { texto: (tenantName || 'LicorPlus').toUpperCase(), centro: true, negrita: true },
+      { texto: egreso.type === 'RETIRO' ? 'Comprobante de retiro' : 'Comprobante de gasto', centro: true },
+      { texto: new Date(egreso.createdAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }), centro: true },
+      { raya: true },
+      { texto: `Motivo: ${egreso.reason}` },
+      { raya: true },
+      { cols: [egreso.type === 'RETIRO' ? 'RETIRO' : 'GASTO', money(egreso.amount)], negrita: true },
+      { raya: true },
+      { texto: `Autorizó: ${egreso.authorizedBy?.name}`, centro: true },
+    ]
+  }
+
+  async function imprimir() {
+    const ok = await imprimirSilencioso(construirTicket(lineasTicket()))
+    if (!ok) window.print()
+  }
+
   useEffect(() => {
     if (!autoPrint) return
-    const t = setTimeout(() => window.print(), 150)
+    const t = setTimeout(imprimir, 150)
     return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPrint])
 
   return (
@@ -42,7 +66,7 @@ export default function TicketEgresoModal({ egreso, tenantName, onClose, autoPri
           <button type="button" onClick={onClose} className="btn-ghost">
             Cerrar
           </button>
-          <button type="button" onClick={() => window.print()} className="btn-primary flex items-center gap-2">
+          <button type="button" onClick={imprimir} className="btn-primary flex items-center gap-2">
             <Icon.printer width={16} height={16} />
             Imprimir
           </button>

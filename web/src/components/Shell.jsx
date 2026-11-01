@@ -32,11 +32,35 @@ function visible(item, role, tenant) {
   return role === 'CAJERO' && item.permiso && Boolean(tenant?.[item.permiso])
 }
 
+const CLAVE_COLAPSADO = 'licorplus:sidebarColapsado'
+
 export default function Shell({ children }) {
   const { session, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const role = session?.user.role
+
+  // Encima de 900px el usuario puede retraer el menu manualmente (ver boton
+  // mas abajo); por debajo siempre se retrae solo, sin importar esto.
+  const [colapsado, setColapsado] = useState(() => {
+    try {
+      return localStorage.getItem(CLAVE_COLAPSADO) === '1'
+    } catch {
+      return false
+    }
+  })
+
+  function alternarColapsado() {
+    setColapsado((v) => {
+      const siguiente = !v
+      try {
+        localStorage.setItem(CLAVE_COLAPSADO, siguiente ? '1' : '0')
+      } catch {
+        // Sin localStorage (modo privado, etc.) simplemente no persiste.
+      }
+      return siguiente
+    })
+  }
 
   function salir() {
     logout()
@@ -47,18 +71,34 @@ export default function Shell({ children }) {
     <div className="h-full flex bg-canvas">
       {/* Debajo de 900px (breakpoint `nav`, no uno estandar de Tailwind) se
           retrae a solo iconos: una barra angosta todavia dice donde esta
-          cada cosa sin robarle espacio a la pantalla de venta. */}
-      <aside className="hidden md:flex w-16 nav:w-60 shrink-0 flex-col border-r border-edge bg-surface">
-        <div className="px-3 nav:px-5 py-5">
+          cada cosa sin robarle espacio a la pantalla de venta. Encima de eso,
+          `colapsado` hace lo mismo pero por eleccion del usuario. */}
+      <aside
+        className={`hidden md:flex relative shrink-0 flex-col border-r border-edge bg-surface w-16 ${
+          colapsado ? '' : 'nav:w-60'
+        }`}
+      >
+        {/* Botón para retraer/expandir, solo tiene sentido con espacio de
+            sobra (nav:+); debajo de eso ya esta forzado a solo iconos. */}
+        <button
+          type="button"
+          onClick={alternarColapsado}
+          title={colapsado ? 'Expandir menú' : 'Retraer menú'}
+          className="hidden nav:flex absolute -right-3 top-6 w-6 h-6 rounded-full border border-edge bg-raised text-muted hover:text-ink items-center justify-center z-10"
+        >
+          <Icon.chevronLeft width={13} height={13} className={colapsado ? 'rotate-180' : ''} />
+        </button>
+
+        <div className={`px-3 py-5 ${colapsado ? '' : 'nav:px-5'}`}>
           {/* Colapsado: siempre las iniciales del bar, nunca el logo — un
               banner de hasta 200px no cabe en una barra de iconos. */}
-          <div className="nav:hidden flex justify-center">
+          <div className={colapsado ? 'flex justify-center' : 'nav:hidden flex justify-center'}>
             <span className="w-9 h-9 rounded-lg bg-amber grid place-items-center text-night font-extrabold text-sm">
               {(session?.tenant.name || 'L').slice(0, 2).toUpperCase()}
             </span>
           </div>
 
-          <div className="hidden nav:block">
+          <div className={colapsado ? 'hidden' : 'hidden nav:block'}>
             {session?.tenant.logoUrl ? (
               // El logo del bar (banner 200x70 max) ya trae su propia marca:
               // reemplaza el bloque de texto en vez de ir apretado al lado.
@@ -92,35 +132,48 @@ export default function Shell({ children }) {
             .filter((item) => visible(item, role, session?.tenant))
             .map((item) =>
               item.children ? (
-                <NavGroup key={item.label} item={item} active={item.children.some((c) => location.pathname === c.to)} />
+                <NavGroup
+                  key={item.label}
+                  item={item}
+                  active={item.children.some((c) => location.pathname === c.to)}
+                  colapsado={colapsado}
+                />
               ) : (
                 <NavLink
                   key={item.to}
                   to={item.to}
                   title={item.label}
                   className={({ isActive }) =>
-                    `flex items-center justify-center nav:justify-start gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
+                    `flex items-center justify-center ${colapsado ? '' : 'nav:justify-start'} gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
                       isActive ? 'bg-amber text-night' : 'text-muted hover:text-ink hover:bg-raised'
                     }`
                   }
                 >
                   <item.icon />
-                  <span className="hidden nav:inline">{item.label}</span>
+                  <span className={colapsado ? 'hidden' : 'hidden nav:inline'}>{item.label}</span>
                 </NavLink>
               )
             )}
         </nav>
 
-        <div className="p-2 nav:p-3 border-t border-edge">
-          <div className="flex flex-col nav:flex-row items-center gap-2 nav:gap-3 px-1 nav:px-2 py-2">
-            <span className="w-8 h-8 nav:w-9 nav:h-9 rounded-full bg-raised border border-edge grid place-items-center text-xs nav:text-sm font-bold shrink-0">
+        <div className={`p-2 border-t border-edge ${colapsado ? '' : 'nav:p-3'}`}>
+          <div
+            className={`flex flex-col items-center gap-2 px-1 py-2 ${
+              colapsado ? '' : 'nav:flex-row nav:gap-3 nav:px-2'
+            }`}
+          >
+            <span
+              className={`rounded-full bg-raised border border-edge grid place-items-center font-bold shrink-0 w-8 h-8 text-xs ${
+                colapsado ? '' : 'nav:w-9 nav:h-9 nav:text-sm'
+              }`}
+            >
               {session?.user.name
                 .split(' ')
                 .slice(0, 2)
                 .map((w) => w[0])
                 .join('')}
             </span>
-            <div className="hidden nav:block min-w-0 flex-1">
+            <div className={colapsado ? 'hidden' : 'hidden nav:block min-w-0 flex-1'}>
               <p className="text-sm font-medium truncate">{session?.user.name}</p>
               <p className="text-xs text-muted capitalize">{role?.toLowerCase()}</p>
             </div>
@@ -136,8 +189,9 @@ export default function Shell({ children }) {
   )
 }
 
-function NavGroup({ item, active }) {
+function NavGroup({ item, active, colapsado }) {
   const [open, setOpen] = useState(active)
+  const expandido = open && !colapsado
 
   return (
     <div>
@@ -145,23 +199,24 @@ function NavGroup({ item, active }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         title={item.label}
-        className={`w-full flex items-center justify-center nav:justify-start gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
-          active && !open ? 'text-amberText' : 'text-muted hover:text-ink hover:bg-raised'
-        }`}
+        className={`w-full flex items-center justify-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
+          colapsado ? '' : 'nav:justify-start'
+        } ${active && !expandido ? 'text-amberText' : 'text-muted hover:text-ink hover:bg-raised'}`}
       >
         <item.icon />
-        <span className="hidden nav:block flex-1 text-left">{item.label}</span>
+        <span className={colapsado ? 'hidden' : 'hidden nav:block flex-1 text-left'}>{item.label}</span>
         <Icon.chevronDown
           width={15}
           height={15}
-          className={`hidden nav:block transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`${colapsado ? 'hidden' : 'hidden nav:block'} transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
-      {/* El contenido solo se ve expandido de 900px para arriba: colapsado no
-          hay donde meter una sublista con texto (los hijos no tienen icono
-          propio). El estado `open` sigue vivo por si la ventana crece. */}
-      {open && (
+      {/* El contenido solo se ve expandido de 900px para arriba y sin
+          retraer manualmente: colapsado no hay donde meter una sublista con
+          texto (los hijos no tienen icono propio). El estado `open` sigue
+          vivo por si la ventana crece o se expande de nuevo. */}
+      {expandido && (
         <div className="hidden nav:block pl-[22px] mt-1 space-y-1 border-l border-edge ml-5">
           {item.children.map((c) => (
             <NavLink

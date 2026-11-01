@@ -4,6 +4,8 @@ import { api } from '../lib/api'
 import { resizeLogo } from '../lib/image'
 import { Icon } from '../components/Icons'
 import { useAuth } from '../context/AuthContext'
+import { construirTicket } from '../lib/escpos'
+import * as printer from '../lib/printer'
 
 export default function DatosBar() {
   const navigate = useNavigate()
@@ -14,9 +16,49 @@ export default function DatosBar() {
   const [error, setError] = useState('')
   const [guardado, setGuardado] = useState(false)
 
+  // Estado de la impresora: es del dispositivo/navegador, no del negocio —
+  // no viaja en `tenant` ni en el PATCH de guardar() de abajo.
+  const [impresoraConectada, setImpresoraConectada] = useState(false)
+  const [emparejando, setEmparejando] = useState(false)
+  const [errorImpresora, setErrorImpresora] = useState('')
+  const [anchoPapel, setAnchoPapelState] = useState(printer.anchoColumnas())
+
   useEffect(() => {
     api('/tenant').then(setTenant)
+    printer.reconectar().then(setImpresoraConectada)
   }, [])
+
+  async function emparejarImpresora() {
+    setErrorImpresora('')
+    setEmparejando(true)
+    try {
+      await printer.emparejar()
+      setImpresoraConectada(true)
+    } catch (err) {
+      setErrorImpresora(err.message)
+    } finally {
+      setEmparejando(false)
+    }
+  }
+
+  function cambiarAnchoPapel(n) {
+    printer.setAnchoColumnas(n)
+    setAnchoPapelState(n)
+  }
+
+  async function probarImpresora() {
+    setErrorImpresora('')
+    const ok = await printer.imprimirSilencioso(
+      construirTicket([
+        { texto: 'PRUEBA DE IMPRESIÓN', centro: true, negrita: true },
+        { texto: 'Tildes: áéíóú ñ ¿? ¡!', centro: true },
+        { raya: true },
+        { cols: ['Columna izquierda', 'Derecha'] },
+        { feed: 1 },
+      ])
+    )
+    if (!ok) setErrorImpresora('No se pudo imprimir. Revisa que la impresora siga emparejada.')
+  }
 
   function set(campo, valor) {
     setTenant((t) => ({ ...t, [campo]: valor }))
@@ -157,6 +199,69 @@ export default function DatosBar() {
               textoClase="text-[#241A0E]"
             />
           </div>
+        </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Impresora de tickets</label>
+          <p className="text-xs text-muted mb-3">
+            Solo para este computador: una vez emparejada, las tirillas salen directo por USB sin abrir el panel de
+            impresión del navegador, y el cajón de dinero se abre solo al cobrar en efectivo.
+          </p>
+
+          {!printer.disponible() ? (
+            <p className="text-sm text-muted">
+              Este navegador no soporta impresión directa. Usa Chrome o Edge en el computador de caja.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm">
+                  <span className={`w-2 h-2 rounded-full ${impresoraConectada ? 'bg-libre' : 'bg-muted'}`} />
+                  {impresoraConectada ? 'Impresora emparejada' : 'Sin emparejar'}
+                </span>
+                <button type="button" onClick={emparejarImpresora} disabled={emparejando} className="btn-ghost text-sm">
+                  {emparejando ? 'Abriendo selector…' : impresoraConectada ? 'Volver a emparejar' : 'Emparejar impresora'}
+                </button>
+              </div>
+
+              {impresoraConectada && (
+                <>
+                  <div>
+                    <label className="label">Ancho del papel</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => cambiarAnchoPapel(32)}
+                        className={`btn-ghost text-sm ${anchoPapel === 32 ? 'border-amber text-ink' : ''}`}
+                      >
+                        58 mm (32 col)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => cambiarAnchoPapel(48)}
+                        className={`btn-ghost text-sm ${anchoPapel === 48 ? 'border-amber text-ink' : ''}`}
+                      >
+                        80 mm (48 col)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button type="button" onClick={probarImpresora} className="btn-ghost text-sm">
+                      Imprimir tirilla de prueba
+                    </button>
+                    <button type="button" onClick={() => printer.abrirCajon()} className="btn-ghost text-sm">
+                      Abrir cajón
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {errorImpresora && <p className="text-sm text-ocupada">{errorImpresora}</p>}
+            </div>
+          )}
         </div>
       </div>
 

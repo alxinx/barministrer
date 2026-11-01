@@ -1,0 +1,33 @@
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Headers de seguridad para toda respuesta: sin esto, cualquiera podia
+    # incrustar el login o la pantalla de cobro en un iframe ajeno
+    # (clickjacking) y no habia ninguna capa extra contra XSS ni fuga de
+    # datos por el Referer. style-src necesita 'unsafe-inline' porque React
+    # pone varios estilos en linea (posiciones del plano, fondos); connect-src
+    # va abierto a https/wss porque el API vive en otro origen configurable
+    # por entorno, no uno fijo que se pueda listar aqui.
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+
+    # React router — todas las rutas al index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Cache para assets con hash en el nombre
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+}
