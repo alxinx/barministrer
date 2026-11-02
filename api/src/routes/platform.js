@@ -1,8 +1,8 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
-import { signPlatformToken, requirePlatformAuth } from '../middleware/auth.js'
-import { loginLimiter } from '../middleware/rateLimit.js'
+import { signToken, signPlatformToken, requirePlatformAuth } from '../middleware/auth.js'
+import { loginLimiter, pinLimiter, estadoPin, bloquearPinManual } from '../middleware/rateLimit.js'
 
 export const platformAuthRoutes = Router()
 export const platformRoutes = Router()
@@ -144,6 +144,13 @@ platformRoutes.get('/tenants/:id', requirePlatformAuth, async (req, res) => {
 
   const diasActivosSemana = new Set(pedidosRecientes.map((o) => o.openedAt.toISOString().slice(0, 10))).size
 
+  // Estado del bloqueo de PIN de cada usuario (ver pinLimiter en
+  // middleware/rateLimit.js), para que el panel sepa si mostrar "Desbloquear
+  // PIN" o "Bloquear PIN" sin que el frontend tenga que adivinar.
+  const usersConPin = await Promise.all(
+    users.map(async (u) => ({ ...userPublic(u), ...(await estadoPin(u.id)) }))
+  )
+
   res.json({
     id: tenant.id,
     name: tenant.name,
@@ -153,7 +160,7 @@ platformRoutes.get('/tenants/:id', requirePlatformAuth, async (req, res) => {
     rentalPlan: tenant.rentalPlan,
     userCount,
     diasActivosSemana,
-    users: users.map(userPublic),
+    users: usersConPin,
   })
 })
 
@@ -238,7 +245,55 @@ platformRoutes.patch('/tenants/:tenantId/users/:userId', requirePlatformAuth, as
   res.json(userPublic(updated))
 })
 
-// Catalogo de planes de renta: lo que cada bar le paga a LicorPlus por usar
+// Soporte: levanta el bloqueo de 10 minutos por PINs incorrectos (ver
+// pinLimiter en middleware/rateLimit.js) para que la persona pueda volver a
+// intentar de inmediato, en vez de esperar el resto del tiempo. La cuota es
+// por usuario (keyGenerator: req.auth.userId), asi que solo limpia la de
+// este usuario puntual, no la de todo el bar. No toca clave, PIN ni rol.
+platformRoutes.post('/tenants/:tenantId/users/:userId/reset-pin-lock', requirePlatformAuth, async (req, res) => {
+  const user = await prisma.user.findFirst({
+    where: { id: req.params.userId, tenantId: req.params.tenantId },
+  })
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' })
+
+  await pinLimiter.resetKey(user.id)
+  res.json({ ok: true })
+})
+
+// Soporte: fuerza el bloqueo de 10 minutos sin esperar a que falle 3 veces
+// (ej. sospecha de que alguien esta probando PINs ajenos en ese dispositivo).
+// Mismo mecanismo que el bloqueo automatico, no un flag aparte -- ver
+// bloquearPinManual en middleware/rateLimit.js.
+platformRoutes.post('/tenants/:tenantId/users/:userId/lock-pin', requirePlatformAuth, async (req, res) => {
+  const user = await prisma.user.findFirst({
+    where: { id: req.params.userId, tenantId: req.params.tenantId },
+  })
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' })
+
+  await bloquearPinManual(user.id)
+  res.json({ ok: true })
+})
+
+// Soporte entra al panel del bar exactamente como su ADMIN, sin pedirle la
+// clave al dueño: firma el mismo JWT de tenant que /auth/login, sobre el
+// primer ADMIN activo del bar. No es un rol de "solo lectura" propio -- es
+// control real, igual que si el dueño hubiera iniciado sesion el mismo. Si
+// el bar esta suspendido, requireAuth lo va a rechazar igual en la siguiente
+// request (ver middleware/auth.js), asi que no hay que repetir esa regla aqui.
+platformRoutes.post('/tenants/:id/impersonate', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+
+  const admin = await prisma.user.findFirst({
+    where: { tenantId: tenant.id, role: 'ADMIN', active: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  if (!admin) return res.status(400).json({ error: 'Este bar no tiene ningun administrador activo' })
+
+  res.json({ token: signToken(admin) })
+})
+
+// Catalogo de planes de renta: lo que cada bar le paga a Barminister por usar
 // la app, no lo que el bar le cobra a sus clientes. Nunca se borra un plan
 // (podria estar asignado a un bar en algun reporte futuro), se desactiva
 // igual que categorias y productos.

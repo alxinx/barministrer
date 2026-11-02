@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { money } from '../lib/api'
 import { Icon } from './Icons'
-import { construirTicket } from '../lib/escpos'
+import { construirTicketRaster } from '../lib/ticketRaster'
 import { imprimirSilencioso, abrirCajon } from '../lib/printer'
+import ReciboEncabezado from './ReciboEncabezado'
+import ReciboPie from './ReciboPie'
 
 const METHOD_LABEL = {
   EFECTIVO: 'Efectivo',
@@ -18,7 +20,7 @@ const METHOD_LABEL = {
  * ningun dialogo; si no, cae al window.print() de siempre. Se queda en
  * pantalla despues por si hay que reimprimir.
  */
-export default function ReciboModal({ order, splitCount, tenantName, onClose, autoPrint = true }) {
+export default function ReciboModal({ order, splitCount, tenant, onClose, autoPrint = true }) {
   const items = order.items.filter((i) => i.status === 'ACTIVE')
   const descuento = Number(order.discountAmount) || 0
   const totalPagado = order.total - descuento
@@ -32,7 +34,7 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
   // declarativa para la impresora termica (ver web/src/lib/escpos.js).
   function lineasTicket() {
     const l = [
-      { texto: (tenantName || 'LicorPlus').toUpperCase(), centro: true, negrita: true },
+      { texto: (tenant?.legalName || tenant?.name || 'Barminister').toUpperCase(), centro: true, negrita: true },
     ]
     if (order.invoiceNumber) l.push({ texto: `Factura #${String(order.invoiceNumber).padStart(4, '0')}`, centro: true })
     l.push({ texto: `Mesa ${order.table?.number}`, centro: true })
@@ -83,7 +85,8 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
   // ademas hubo pago en efectivo, el cajon se abre solo detras del tiquete —
   // es el unico caso real donde hay que tocar plata en ese momento.
   async function imprimir() {
-    const ok = await imprimirSilencioso(construirTicket(lineasTicket()))
+    const bytes = await construirTicketRaster(tenant, lineasTicket())
+    const ok = await imprimirSilencioso(bytes)
     if (!ok) {
       window.print()
       return
@@ -110,7 +113,7 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
   // indicativo de Colombia, asi que se le agrega aqui.
   function mensajeWhatsapp() {
     const lineas = [
-      `*${tenantName || 'LicorPlus'}*`,
+      `*${tenant?.legalName || tenant?.name || 'Barminister'}*`,
       ...(order.invoiceNumber ? [`Factura #${String(order.invoiceNumber).padStart(4, '0')}`] : []),
       `Mesa ${order.table?.number}`,
       '',
@@ -142,10 +145,11 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
       <div className="flex flex-col items-center gap-3 my-auto">
         <div
           id="receipt-print-root"
-          className="bg-white text-[#111] w-[310px] p-4 font-mono text-xs rounded shadow-xl max-h-[65vh] overflow-y-auto"
+          className="bg-white text-[#111] w-[310px] p-4 text-xs rounded shadow-xl max-h-[65vh] overflow-y-auto"
+          style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
         >
-          <div className="text-center space-y-0.5">
-            <p className="font-bold text-sm uppercase">{tenantName || 'LicorPlus'}</p>
+          <ReciboEncabezado tenant={tenant} />
+          <div className="text-center space-y-0.5 mt-1">
             {order.invoiceNumber && <p>Factura #{String(order.invoiceNumber).padStart(4, '0')}</p>}
             <p>Mesa {order.table?.number}</p>
             <p>{new Date(order.closedAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}</p>
@@ -234,6 +238,7 @@ export default function ReciboModal({ order, splitCount, tenantName, onClose, au
 
           <div className="my-2 border-t border-dashed border-black/40" />
           <p className="text-center">Gracias por su visita</p>
+          <ReciboPie tenant={tenant} />
         </div>
 
         <div className="flex gap-2 shrink-0 flex-wrap justify-center">

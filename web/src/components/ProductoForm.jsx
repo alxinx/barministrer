@@ -5,7 +5,8 @@ import { categoryTree, flattenCategories } from '../lib/categories'
 import { resizeProductImage } from '../lib/image'
 import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
-import PinInput from './PinInput'
+import PinField from './PinField'
+import { usePinVerificado } from '../hooks/usePinVerificado'
 import TicketMermaModal from './TicketMermaModal'
 
 /**
@@ -45,7 +46,16 @@ export default function ProductoForm({ categories, products, product, initialNam
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmandoSuspender, setConfirmandoSuspender] = useState(false)
-  const [pin, setPin] = useState('')
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+    reset: resetPin,
+  } = usePinVerificado()
   const [confirmandoMerma, setConfirmandoMerma] = useState(false)
   const [mermaVariantId, setMermaVariantId] = useState(product?.variants?.[0]?.id || '')
   const [mermaQty, setMermaQty] = useState('')
@@ -61,7 +71,7 @@ export default function ProductoForm({ categories, products, product, initialNam
   // que ya lo referencian. Sale de todos los pedidos de inmediato, por eso es
   // solo del ADMIN real (no delegable) y pide PIN como anular un item.
   async function suspender() {
-    if (!pin) return
+    if (!pinValido) return
     setError('')
     setSaving(true)
     try {
@@ -80,7 +90,7 @@ export default function ProductoForm({ categories, products, product, initialNam
   // esto no es mas que no dejar mandar un numero absurdo). Genera su propio
   // egreso de caja menor por el costo, no por el precio de venta.
   async function registrarMerma() {
-    if (!mermaVariantId || !mermaQty || !mermaReason.trim() || !pin) return
+    if (!mermaVariantId || !mermaQty || !mermaReason.trim() || !pinValido) return
     setError('')
     setSaving(true)
     try {
@@ -229,24 +239,29 @@ export default function ProductoForm({ categories, products, product, initialNam
                 ? `¿Suspender "${product.name}"? Desaparece de todos los pedidos de inmediato. Necesita el PIN del encargado.`
                 : `¿Reactivar "${product.name}"? Vuelve a aparecer en los pedidos. Necesita el PIN del encargado.`}
             </p>
-            <div>
-              <label className="label text-center">PIN del encargado</label>
-              <PinInput value={pin} onChange={setPin} autoFocus />
-            </div>
+            <PinField
+              pin={pin}
+              onChange={setPin}
+              verificando={verificandoPin}
+              error={pinError}
+              bloqueado={pinBloqueado}
+              segundosRestantes={pinSegundosRestantes}
+              autoFocus
+            />
             <div className="flex gap-3">
               <button
                 type="button"
                 onClick={() => {
                   setConfirmandoSuspender(false)
-                  setPin('')
+                  resetPin()
                   setError('')
                 }}
                 className="btn-ghost flex-1"
               >
                 Cancelar
               </button>
-              <button type="button" onClick={suspender} disabled={saving || !pin} className="btn-danger flex-1">
-                {saving ? 'Verificando…' : product.active ? 'Suspender' : 'Reactivar'}
+              <button type="button" onClick={suspender} disabled={saving || !pinValido} className="btn-danger flex-1">
+                {saving ? 'Guardando…' : product.active ? 'Suspender' : 'Reactivar'}
               </button>
             </div>
           </div>
@@ -307,17 +322,21 @@ export default function ProductoForm({ categories, products, product, initialNam
               </div>
             </div>
 
-            <div>
-              <label className="label text-center">PIN del encargado</label>
-              <PinInput value={pin} onChange={setPin} />
-            </div>
+            <PinField
+              pin={pin}
+              onChange={setPin}
+              verificando={verificandoPin}
+              error={pinError}
+              bloqueado={pinBloqueado}
+              segundosRestantes={pinSegundosRestantes}
+            />
 
             <div className="flex gap-3">
               <button
                 type="button"
                 onClick={() => {
                   setConfirmandoMerma(false)
-                  setPin('')
+                  resetPin()
                   setMermaQty('')
                   setMermaReason('')
                   setError('')
@@ -329,10 +348,10 @@ export default function ProductoForm({ categories, products, product, initialNam
               <button
                 type="button"
                 onClick={registrarMerma}
-                disabled={saving || !pin || !mermaQty || !mermaReason.trim() || mermaExcedeStock}
+                disabled={saving || !pinValido || !mermaQty || !mermaReason.trim() || mermaExcedeStock}
                 className="btn-danger flex-1"
               >
-                {saving ? 'Verificando…' : 'Registrar merma'}
+                {saving ? 'Guardando…' : 'Registrar merma'}
               </button>
             </div>
           </div>
@@ -546,7 +565,7 @@ export default function ProductoForm({ categories, products, product, initialNam
               type="button"
               onClick={() => {
                 setMermaVariantId(variantesConStock[0]?.id || '')
-                setPin('')
+                resetPin()
                 setMermaQty('')
                 setMermaReason('')
                 setConfirmandoMerma(true)
@@ -605,7 +624,7 @@ export default function ProductoForm({ categories, products, product, initialNam
       {mermaResultado && (
         <TicketMermaModal
           merma={mermaResultado}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           onClose={() => {
             setMermaResultado(null)
             onSaved()

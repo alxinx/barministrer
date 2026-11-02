@@ -6,6 +6,8 @@ import { Icon } from '../components/Icons'
 import ReciboModal from '../components/ReciboModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
 import FacturasDelDia from '../components/FacturasDelDia'
+import ReciboEncabezado from '../components/ReciboEncabezado'
+import ReciboPie from '../components/ReciboPie'
 import { METHODS, METHOD_LABEL } from '../lib/paymentMethods'
 
 export default function TurnoDetalle() {
@@ -187,7 +189,7 @@ export default function TurnoDetalle() {
         <ReciboModal
           order={factura}
           splitCount={1}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setFactura(null)}
         />
@@ -196,7 +198,7 @@ export default function TurnoDetalle() {
       {egresoTicket && (
         <TicketEgresoModal
           egreso={egresoTicket}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setEgresoTicket(null)}
         />
@@ -209,7 +211,7 @@ export default function TurnoDetalle() {
           counts={counts}
           egresos={egresos}
           totalEgresos={totalEgresos}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           onClose={() => setMostrarTirilla(false)}
         />
       )}
@@ -464,7 +466,7 @@ function EgresosCard({ egresos, totalEgresos, shiftId, onVerTicket }) {
 // impreso en la entrega de caja -- mismo patron que la tirilla de venta
 // (ReciboModal) y el comprobante de egreso (TicketEgresoModal): id fijo
 // "receipt-print-root" que el CSS de impresion ya sabe mostrar solo.
-function TirillaTurnoModal({ shift, sales, counts, egresos, totalEgresos, tenantName, onClose }) {
+function TirillaTurnoModal({ shift, sales, counts, egresos, totalEgresos, tenant, onClose }) {
   const mismaPersona = shift.closedBy && shift.closedBy.id === shift.openedBy.id
 
   return (
@@ -472,10 +474,11 @@ function TirillaTurnoModal({ shift, sales, counts, egresos, totalEgresos, tenant
       <div className="flex flex-col items-center gap-3 my-auto">
         <div
           id="receipt-print-root"
-          className="bg-white text-[#111] w-[310px] p-4 font-mono text-xs rounded shadow-xl max-h-[70vh] overflow-y-auto"
+          className="bg-white text-[#111] w-[310px] p-4 text-xs rounded shadow-xl max-h-[70vh] overflow-y-auto"
+          style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
         >
-          <div className="text-center space-y-0.5">
-            <p className="font-bold text-sm uppercase">{tenantName || 'LicorPlus'}</p>
+          <ReciboEncabezado tenant={tenant} />
+          <div className="text-center space-y-0.5 mt-1">
             <p>Resumen de turno #{String(shift.numero).padStart(4, '0')}</p>
             <p>{formatFechaCorta(shift.openedAt)}</p>
           </div>
@@ -548,6 +551,7 @@ function TirillaTurnoModal({ shift, sales, counts, egresos, totalEgresos, tenant
           <p className="text-center">
             {sales.tickets} {sales.tickets === 1 ? 'cuenta cerrada' : 'cuentas cerradas'}
           </p>
+          <ReciboPie tenant={tenant} />
         </div>
 
         <div className="flex gap-2 shrink-0 flex-wrap justify-center">

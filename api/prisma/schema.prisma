@@ -31,7 +31,7 @@ enum RentalPeriod {
   ANUAL
 }
 
-// Catalogo de planes de renta que se le cobran a un bar por usar LicorPlus
+// Catalogo de planes de renta que se le cobran a un bar por usar Barminister
 // (no tiene nada que ver con lo que el bar le cobra a SUS clientes). Solo el
 // valor actual: si sube la tarifa se edita el plan, no se versiona todavia.
 model RentalPlan {
@@ -73,7 +73,7 @@ model Tenant {
   /// reinicia por turno ni por dia: es lo que pide un control contable serio.
   lastInvoiceNumber Int @default(0)
 
-  // Lo que ESTE bar le paga a LicorPlus (plataforma), no lo que el bar le
+  // Lo que ESTE bar le paga a Barminister (plataforma), no lo que el bar le
   // cobra a sus clientes. Opcional: un bar puede existir sin plan asignado
   // todavia (ej. recien creado, antes de negociar).
   rentalPlanId String?
@@ -86,6 +86,15 @@ model Tenant {
   legalName  String? // razon social
   taxId      String? // NIT
   taxRegime  String? // regimen tributario
+
+  // Pie de pagina PROPIO del negocio en la tirilla impresa (venta, abono,
+  // egreso, merma, cierre de turno), ademas de -nunca en lugar de- la linea
+  // fija "Sistema POS · Barminister · barminister.com" (ver
+  // web/src/lib/brand.js): esa es codigo, no dato, y ningun tenant la puede
+  // editar ni quitar. Esto de aqui es opcional: horario, redes, "no se
+  // aceptan devoluciones", lo que cada bar quiera agregar desde
+  // /configuracion/datos.
+  receiptFooter String?
 
   // Permisos especiales: por defecto todo sigue como esta (solo ADMIN). El
   // dueno del bar los prende si quiere delegarle algo puntual al cajero.

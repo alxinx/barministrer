@@ -20,7 +20,7 @@ export const FORMATO_PORCENTAJE = '0.0"%"'
 
 export function nuevoLibro() {
   const workbook = new ExcelJS.Workbook()
-  workbook.creator = 'LicorPlus'
+  workbook.creator = 'Barminister'
   workbook.created = new Date()
   return workbook
 }

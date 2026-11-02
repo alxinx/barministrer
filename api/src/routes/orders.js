@@ -1,9 +1,9 @@
 import { Router } from 'express'
-import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { tienePermiso } from '../middleware/permissions.js'
-import { pinLimiter, pinLimitExcedido } from '../middleware/rateLimit.js'
+import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
+import { verificarPin } from '../lib/pin.js'
 import { avisarEncargados, avisarTenant } from '../lib/realtime.js'
 import { calcularCostos } from '../lib/costos.js'
 
@@ -40,16 +40,6 @@ function total(order) {
   return order.items
     .filter((i) => i.status === 'ACTIVE')
     .reduce((sum, i) => sum + Number(i.price) * i.qty, 0)
-}
-
-async function verificarPin(tenantId, pin) {
-  const encargados = await prisma.user.findMany({
-    where: { tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
-  })
-  for (const u of encargados) {
-    if (await bcrypt.compare(String(pin), u.pinHash)) return u
-  }
-  return null
 }
 
 // Movimientos de stock por venta (SALE, resta) o devolucion (VOID_RESTORE,
@@ -434,7 +424,7 @@ orderRoutes.delete('/orders/:id/items/:itemId', async (req, res) => {
 
 // Devolver un producto: necesita el PIN de un encargado (ADMIN o CAJERO) y un
 // motivo. No se borra, queda marcado como devuelto con quien lo autorizo.
-orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res) => {
+orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
   const order = await prisma.order.findFirst({ where: { id: req.params.id, tenantId: req.auth.tenantId } })
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
@@ -455,8 +445,12 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res)
     return res.status(400).json({ error: `La cantidad a devolver debe ser un numero entre 1 y ${item.qty}` })
   }
 
+  // Solo se limita aqui, no toda la ruta: cuenta no encontrada o item ya
+  // devuelto no tiene nada que ver con un PIN mal escrito y no tiene por que
+  // competir por la misma cuota (ver pinLimiter en middleware/rateLimit.js).
+  if (await pinLimitExcedido(req, res)) return
   const encargado = await verificarPin(req.auth.tenantId, pin)
-  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+  if (!encargado) return pinIncorrecto(req, res)
 
   // Solo repone stock si ya estaba ACTIVE: si seguia PENDING nunca se le
   // habia restado nada (eso pasa al enviar, no al crear el pre-pedido).
@@ -595,7 +589,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       // PIN y no tiene por que competir por la misma cuota.
       if (await pinLimitExcedido(req, res)) return
       const encargado = await verificarPin(req.auth.tenantId, pin)
-      if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+      if (!encargado) return pinIncorrecto(req, res)
       discountEncargadoId = encargado.id
 
       costos = await calcularCostos(order.items, req.auth.tenantId)
@@ -650,7 +644,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
         }
         if (await pinLimitExcedido(req, res)) return
         const encargado = await verificarPin(req.auth.tenantId, pin)
-        if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+        if (!encargado) return pinIncorrecto(req, res)
         creditoEncargadoId = encargado.id
       }
     }

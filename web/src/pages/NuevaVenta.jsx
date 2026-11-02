@@ -5,7 +5,8 @@ import { useAuth } from '../context/AuthContext'
 import { useShift } from '../context/ShiftContext'
 import FloorPlan from '../components/FloorPlan'
 import MoneyInput from '../components/MoneyInput'
-import PinInput, { PIN_LENGTH } from '../components/PinInput'
+import PinField from '../components/PinField'
+import { usePinVerificado } from '../hooks/usePinVerificado'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import DevolverModal from '../components/DevolverModal'
 import ConfirmModal from '../components/ConfirmModal'
@@ -863,8 +864,10 @@ export default function NuevaVenta() {
                   <I />
                   {z.name}
                   {abiertas > 0 && (
+                    // text-white fijo, no text-ink: en el tema sepia ink es
+                    // casi negro y se pierde contra el rojo de fondo.
                     <span
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ocupada text-ink
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ocupada text-white
                                  text-[10px] font-bold grid place-items-center border-2 border-night"
                     >
                       {abiertas}
@@ -1424,7 +1427,7 @@ export default function NuevaVenta() {
         <ReciboModal
           order={recibo.order}
           splitCount={recibo.splitCount}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           onClose={() => setRecibo(null)}
         />
       )}
@@ -1551,10 +1554,18 @@ function SinTurnoOverlay({ puedeAbrirTurno, onDismiss, onAbrir }) {
 
 function AbrirTurnoModal({ onCancel, onAbrir }) {
   const [base, setBase] = useState('')
-  const [pin, setPin] = useState('')
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+  } = usePinVerificado()
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  const completo = base !== '' && pin.length === PIN_LENGTH
+  const completo = base !== '' && pinValido
 
   async function confirmar() {
     setSaving(true)
@@ -1587,10 +1598,15 @@ function AbrirTurnoModal({ onCancel, onAbrir }) {
           <label className="label">Base inicial (efectivo)</label>
           <MoneyInput className="field" value={base} onChange={setBase} autoFocus />
         </div>
-        <div>
-          <label className="label text-center">PIN de quien abre</label>
-          <PinInput value={pin} onChange={setPin} />
-        </div>
+        <PinField
+          pin={pin}
+          onChange={setPin}
+          verificando={verificandoPin}
+          error={pinError}
+          bloqueado={pinBloqueado}
+          segundosRestantes={pinSegundosRestantes}
+          label="PIN de quien abre"
+        />
         <div className="flex gap-3">
           <button onClick={onCancel} className="btn-ghost flex-1">
             Cancelar

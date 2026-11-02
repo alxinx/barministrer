@@ -155,7 +155,7 @@ export default function UtilidadProducto() {
     escribirTitulo(
       sheet,
       {
-        titulo: `Utilidad de producto · ${session?.tenant?.name || 'LicorPlus'}`,
+        titulo: `Utilidad de producto · ${session?.tenant?.name || 'Barminister'}`,
         subtitulo: `Periodo: ${etiquetaPeriodo} · Generado el ${new Date().toLocaleDateString('es-CO', {
           day: '2-digit',
           month: 'long',

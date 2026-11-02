@@ -1,27 +1,12 @@
 import { Router } from 'express'
-import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
-import { pinLimiter } from '../middleware/rateLimit.js'
+import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
+import { verificarPin } from '../lib/pin.js'
 import { diaLocal, rangoEntreFechas, rangoValido } from '../lib/fechas.js'
 
 export const shiftRoutes = Router()
 const cajero = requireRole('ADMIN', 'CAJERO')
-
-// Quien abre o cierra la caja queda registrado por su PIN, no por la sesion
-// que este prendida en el dispositivo: el celular de la caja se queda
-// logueado con una cuenta todo el dia, pero cualquier ADMIN/CAJERO puede
-// turnarse en el; sin esto, abrir/cerrar quedaria siempre a nombre de quien
-// inicio sesion primero, no de quien de verdad estaba parado ahi.
-async function verificarPin(tenantId, pin) {
-  const encargados = await prisma.user.findMany({
-    where: { tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
-  })
-  for (const u of encargados) {
-    if (await bcrypt.compare(String(pin), u.pinHash)) return u
-  }
-  return null
-}
 
 // Medios que se cuentan a ciegas al cerrar caja. Credito no entra: el fiado
 // es una cuenta por cobrar, nunca efectivo ni plastico en el cajon.
@@ -377,7 +362,7 @@ shiftRoutes.get('/shifts/:id', async (req, res) => {
 // --- Abrir --------------------------------------------------------------
 // Inicio con la base y apertura de caja son el mismo momento: no hay turno
 // sin una base inicial declarada, asi que se piden juntos.
-shiftRoutes.post('/shifts', cajero, pinLimiter, async (req, res) => {
+shiftRoutes.post('/shifts', cajero, async (req, res) => {
   const existing = await prisma.shift.findFirst({
     where: { tenantId: req.auth.tenantId, status: 'OPEN' },
   })
@@ -391,8 +376,12 @@ shiftRoutes.post('/shifts', cajero, pinLimiter, async (req, res) => {
   }
   if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN de quien abre la caja' })
 
+  // Solo se limita aqui, no toda la ruta: ya haber un turno abierto o base
+  // invalida no tiene nada que ver con un PIN mal escrito (ver pinLimiter en
+  // middleware/rateLimit.js).
+  if (await pinLimitExcedido(req, res)) return
   const encargado = await verificarPin(req.auth.tenantId, pin)
-  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+  if (!encargado) return pinIncorrecto(req, res)
 
   const shift = await prisma.shift.create({
     data: {
@@ -448,7 +437,7 @@ shiftRoutes.post('/shifts/:id/expenses', cajero, async (req, res) => {
 // --- Cuadre y cierre --------------------------------------------------------
 // Conteo ciego: el cajero cuenta cada medio de pago sin ver lo esperado (eso
 // lo calcula el servidor, no el cliente). Turno cerrado queda bloqueado.
-shiftRoutes.post('/shifts/:id/close', cajero, pinLimiter, async (req, res) => {
+shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
   const shift = await prisma.shift.findFirst({
     where: { id: req.params.id, tenantId: req.auth.tenantId },
     include: { expenses: true },
@@ -467,8 +456,12 @@ shiftRoutes.post('/shifts/:id/close', cajero, pinLimiter, async (req, res) => {
   }
   if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN de quien cierra la caja' })
 
+  // Solo se limita aqui, no toda la ruta: falta un conteo o un medio de pago
+  // no tiene nada que ver con un PIN mal escrito (ver pinLimiter en
+  // middleware/rateLimit.js).
+  if (await pinLimitExcedido(req, res)) return
   const encargado = await verificarPin(req.auth.tenantId, pin)
-  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+  if (!encargado) return pinIncorrecto(req, res)
 
   const sales = await resumenVentas(req.auth.tenantId, shift.id)
   const egresosEfectivo = shift.expenses.reduce((sum, e) => sum + Number(e.amount), 0)

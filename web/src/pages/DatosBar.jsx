@@ -22,6 +22,7 @@ export default function DatosBar() {
   const [emparejando, setEmparejando] = useState(false)
   const [errorImpresora, setErrorImpresora] = useState('')
   const [anchoPapel, setAnchoPapelState] = useState(printer.anchoColumnas())
+  const [modoSim, setModoSimState] = useState(printer.modoSimulador())
 
   useEffect(() => {
     api('/tenant').then(setTenant)
@@ -44,6 +45,16 @@ export default function DatosBar() {
   function cambiarAnchoPapel(n) {
     printer.setAnchoColumnas(n)
     setAnchoPapelState(n)
+  }
+
+  // Para probar todo el flujo (incluido el tramado del logo, ver
+  // ticketRaster.js) sin tener una impresora termica fisica: en vez de
+  // abrir el puerto serial, printer.js decodifica los bytes y los muestra
+  // en pantalla (ver SimuladorImpresora.jsx, montado en Shell.jsx).
+  function alternarSimulador() {
+    const nuevo = !modoSim
+    printer.setModoSimulador(nuevo)
+    setModoSimState(nuevo)
   }
 
   async function probarImpresora() {
@@ -96,6 +107,7 @@ export default function DatosBar() {
           legalName: tenant.legalName,
           taxId: tenant.taxId,
           taxRegime: tenant.taxRegime,
+          receiptFooter: tenant.receiptFooter,
           theme: tenant.theme,
         },
       })
@@ -210,23 +222,47 @@ export default function DatosBar() {
             impresión del navegador, y el cajón de dinero se abre solo al cobrar en efectivo.
           </p>
 
-          {!printer.disponible() ? (
+          <div className="flex items-center justify-between py-2.5 border-y border-edge mb-3">
+            <div>
+              <p className="text-sm font-medium">Simular impresora</p>
+              <p className="text-xs text-muted mt-0.5">
+                Sin impresora a mano: muestra en pantalla lo que se habría impreso, en vez de mandarlo por USB.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={alternarSimulador}
+              className={`h-7 w-12 rounded-pill relative transition-colors shrink-0 ml-3 ${
+                modoSim ? 'bg-amber' : 'bg-raised border border-edge'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
+                  modoSim ? 'translate-x-5 bg-night' : 'bg-muted'
+                }`}
+              />
+            </button>
+          </div>
+
+          {!printer.disponible() && !modoSim ? (
             <p className="text-sm text-muted">
               Este navegador no soporta impresión directa. Usa Chrome o Edge en el computador de caja.
             </p>
           ) : (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-sm">
-                  <span className={`w-2 h-2 rounded-full ${impresoraConectada ? 'bg-libre' : 'bg-muted'}`} />
-                  {impresoraConectada ? 'Impresora emparejada' : 'Sin emparejar'}
-                </span>
-                <button type="button" onClick={emparejarImpresora} disabled={emparejando} className="btn-ghost text-sm">
-                  {emparejando ? 'Abriendo selector…' : impresoraConectada ? 'Volver a emparejar' : 'Emparejar impresora'}
-                </button>
-              </div>
+              {!modoSim && (
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm">
+                    <span className={`w-2 h-2 rounded-full ${impresoraConectada ? 'bg-libre' : 'bg-muted'}`} />
+                    {impresoraConectada ? 'Impresora emparejada' : 'Sin emparejar'}
+                  </span>
+                  <button type="button" onClick={emparejarImpresora} disabled={emparejando} className="btn-ghost text-sm">
+                    {emparejando ? 'Abriendo selector…' : impresoraConectada ? 'Volver a emparejar' : 'Emparejar impresora'}
+                  </button>
+                </div>
+              )}
 
-              {impresoraConectada && (
+              {(impresoraConectada || modoSim) && (
                 <>
                   <div>
                     <label className="label">Ancho del papel</label>
@@ -292,6 +328,23 @@ export default function DatosBar() {
               placeholder="Ej: régimen simple"
             />
           </div>
+        </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Pie de página de la tirilla</label>
+          <p className="text-xs text-muted mb-2">
+            Opcional. Sale al final de cada tirilla impresa (venta, abono, egreso, merma, cierre de turno), antes de
+            la línea del sistema. Ej: horario, redes, "no se aceptan devoluciones".
+          </p>
+          <textarea
+            className="field resize-none"
+            rows={2}
+            value={tenant.receiptFooter ?? ''}
+            onChange={(e) => set('receiptFooter', e.target.value)}
+            placeholder="Opcional"
+          />
         </div>
       </div>
 

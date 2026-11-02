@@ -38,7 +38,7 @@ export function AuthProvider({ children }) {
   // (util con varios bares/turnos abiertos en pestanas distintas), y vuelve
   // al nombre de la app cuando no hay sesion.
   useEffect(() => {
-    document.title = session?.tenant?.name || 'Barministrer'
+    document.title = session?.tenant?.name || 'Barminister'
   }, [session])
 
   // Tema del tenant (oscuro por defecto): se aplica al <html> para que todos

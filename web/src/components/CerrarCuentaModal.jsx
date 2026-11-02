@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { api, money } from '../lib/api'
 import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
-import PinInput from './PinInput'
+import PinField from './PinField'
+import { usePinVerificado } from '../hooks/usePinVerificado'
 
 const METHODS = [
   { key: 'EFECTIVO', label: 'Efectivo' },
@@ -50,7 +51,16 @@ export default function CerrarCuentaModal({
   const [discountOpen, setDiscountOpen] = useState(false)
   const [finalValue, setFinalValue] = useState(String(total))
   const [cost, setCost] = useState(null)
-  const [pin, setPin] = useState('')
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+    reset: resetPin,
+  } = usePinVerificado()
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -117,7 +127,7 @@ export default function CerrarCuentaModal({
         setCourtesy(false)
         setFinalValue(String(total))
       }
-      setPin('')
+      resetPin()
       return !v
     })
   }
@@ -142,7 +152,7 @@ export default function CerrarCuentaModal({
     if (perdida) {
       return setError('Ese descuento deja la cuenta en pérdida')
     }
-    if (necesitaPin && !pin.trim()) {
+    if (necesitaPin && !pinValido) {
       return setError(
         hayDescuento && necesitaAutorizarCredito
           ? 'El descuento y el fiado necesitan el PIN de un encargado'
@@ -165,7 +175,7 @@ export default function CerrarCuentaModal({
         })),
         splitCount: Number(splitCount) || 1,
         ...(hayDescuento ? { discountAmount: descuento } : {}),
-        ...(necesitaPin ? { pin: pin.trim() } : {}),
+        ...(necesitaPin ? { pin } : {}),
       })
     } catch (err) {
       setError(err.message)
@@ -277,17 +287,22 @@ export default function CerrarCuentaModal({
         )}
 
         {necesitaPin && !perdida && !descuentoInvalido && (
-          <div>
-            <label className="label text-xs text-center">
-              PIN del encargado para autorizar{' '}
-              {hayDescuento && necesitaAutorizarCredito
+          <PinField
+            pin={pin}
+            onChange={setPin}
+            verificando={verificandoPin}
+            error={pinError}
+            bloqueado={pinBloqueado}
+            segundosRestantes={pinSegundosRestantes}
+            autoFocus
+            label={`PIN del encargado para autorizar ${
+              hayDescuento && necesitaAutorizarCredito
                 ? 'el descuento y el fiado'
                 : hayDescuento
                   ? 'el descuento'
-                  : 'el fiado'}
-            </label>
-            <PinInput value={pin} onChange={setPin} autoFocus />
-          </div>
+                  : 'el fiado'
+            }`}
+          />
         )}
 
         {error && (
@@ -431,7 +446,7 @@ export default function CerrarCuentaModal({
           <button
             type="button"
             onClick={confirmar}
-            disabled={saving || perdida || descuentoInvalido || (necesitaPin && !pin.trim())}
+            disabled={saving || perdida || descuentoInvalido || (necesitaPin && !pinValido)}
             className="btn-primary flex-1"
           >
             {saving ? 'Procesando…' : courtesy ? 'Marcar como cortesía' : 'Pagar'}

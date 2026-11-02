@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '../lib/api'
-import PinInput from './PinInput'
+import PinField from './PinField'
+import { usePinVerificado } from '../hooks/usePinVerificado'
 
 /**
  * Devolver un producto ya pedido: necesita motivo y el PIN de un encargado.
@@ -9,7 +10,15 @@ import PinInput from './PinInput'
  * tener que anular las 4 y volver a mandar 3.
  */
 export default function DevolverModal({ item, onCancel, onDevuelto }) {
-  const [pin, setPin] = useState('')
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+  } = usePinVerificado()
   const [reason, setReason] = useState('')
   // Arranca en 1, no en el total de la linea: si el operador no toca el
   // contador, lo logico es que devuelva una unidad a corregir, no que se
@@ -20,7 +29,7 @@ export default function DevolverModal({ item, onCancel, onDevuelto }) {
   const [saving, setSaving] = useState(false)
 
   async function confirmar() {
-    if (!pin || !reason.trim()) return
+    if (!pinValido || !reason.trim()) return
     setSaving(true)
     setError('')
     try {
@@ -87,17 +96,25 @@ export default function DevolverModal({ item, onCancel, onDevuelto }) {
             autoFocus
           />
         </div>
-        <div>
-          <label className="label text-center">PIN del encargado</label>
-          <PinInput value={pin} onChange={setPin} />
-        </div>
+        <PinField
+          pin={pin}
+          onChange={setPin}
+          verificando={verificandoPin}
+          error={pinError}
+          bloqueado={pinBloqueado}
+          segundosRestantes={pinSegundosRestantes}
+        />
 
         <div className="flex gap-3">
           <button onClick={onCancel} className="btn-ghost flex-1">
             Cancelar
           </button>
-          <button onClick={confirmar} disabled={saving || !pin || !reason.trim()} className="btn-danger flex-1">
-            {saving ? 'Verificando…' : item.qty > 1 ? `Devolver ${qty}` : 'Devolver'}
+          <button
+            onClick={confirmar}
+            disabled={saving || !pinValido || !reason.trim()}
+            className="btn-danger flex-1"
+          >
+            {saving ? 'Devolviendo…' : item.qty > 1 ? `Devolver ${qty}` : 'Devolver'}
           </button>
         </div>
       </div>

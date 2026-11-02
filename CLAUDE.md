@@ -1,4 +1,4 @@
-# CLAUDE.md — LicorPlus
+# CLAUDE.md — Barminister
 
 POS multitenant para bares. El piloto es un bar de barrio en Medellín (15 mesas,
 3 sectores). El objetivo a mediano plazo es venderlo a varios bares, así que
@@ -28,8 +28,8 @@ web/   React + Vite + Tailwind. Páginas en src/pages, UI en src/components
 Arranque: `cp .env.example .env && docker compose up --build`.
 Web `:5173` · API `:4000` · MySQL `:3307`.
 
-Usuarios de prueba: `admin@licorplus.co`/`admin123`, `caja@licorplus.co`/`caja123`,
-`mesera@licorplus.co`/`mesa123`. PIN de todos: `12345`.
+Usuarios de prueba: `admin@barminister.co`/`admin123`, `caja@barminister.co`/`caja123`,
+`mesera@barminister.co`/`mesa123`. PIN de todos: `12345`.
 
 ## Reglas del dominio (no negociables)
 

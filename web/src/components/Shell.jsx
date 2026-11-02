@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from './Icons'
 import { useAuth } from '../context/AuthContext'
+import SimuladorImpresora from './SimuladorImpresora'
 
 const nav = [
   { to: '/venta', label: 'POS y pedidos', icon: Icon.cart, roles: ['ADMIN', 'CAJERO', 'MESERO'] },
@@ -116,10 +117,10 @@ export default function Shell({ children }) {
             ) : (
               <div className="flex items-center gap-2.5">
                 <span className="w-8 h-8 rounded-lg bg-amber grid place-items-center text-night font-extrabold shrink-0">
-                  L
+                  B
                 </span>
                 <div>
-                  <p className="font-bold leading-none">LicorPlus</p>
+                  <p className="font-bold leading-none">Barminister</p>
                   <p className="text-xs text-muted mt-1">{session?.tenant.name}</p>
                 </div>
               </div>
@@ -185,6 +186,7 @@ export default function Shell({ children }) {
       </aside>
 
       <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
+      <SimuladorImpresora />
     </div>
   )
 }

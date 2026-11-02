@@ -31,9 +31,9 @@ async function main() {
   })
 
   const users = [
-    { name: 'Alejandro Gonzalez', email: 'admin@licorplus.co', role: 'ADMIN', pass: 'admin123' },
-    { name: 'Carolina Ruiz', email: 'caja@licorplus.co', role: 'CAJERO', pass: 'caja123' },
-    { name: 'Geraldine Mesa', email: 'mesera@licorplus.co', role: 'MESERO', pass: 'mesa123' },
+    { name: 'Alejandro Gonzalez', email: 'admin@barminister.co', role: 'ADMIN', pass: 'admin123' },
+    { name: 'Carolina Ruiz', email: 'caja@barminister.co', role: 'CAJERO', pass: 'caja123' },
+    { name: 'Geraldine Mesa', email: 'mesera@barminister.co', role: 'MESERO', pass: 'mesa123' },
   ]
   for (const u of users) {
     await prisma.user.upsert({
@@ -214,7 +214,7 @@ async function main() {
     })
   }
 
-  console.log('Seed listo. Entra con admin@licorplus.co / admin123')
+  console.log('Seed listo. Entra con admin@barminister.co / admin123')
 }
 
 main()

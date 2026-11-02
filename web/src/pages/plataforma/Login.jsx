@@ -29,10 +29,10 @@ export default function PlataformaLogin() {
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-3 mb-10">
           <span className="w-11 h-11 rounded-xl bg-amber grid place-items-center text-night text-xl font-extrabold">
-            L
+            B
           </span>
           <div>
-            <h1 className="text-2xl font-bold leading-none">LicorPlus</h1>
+            <h1 className="text-2xl font-bold leading-none">Barminister</h1>
             <p className="text-sm text-muted mt-1.5">Panel de plataforma</p>
           </div>
         </div>

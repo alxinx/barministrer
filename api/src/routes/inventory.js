@@ -1,23 +1,13 @@
 import { Router } from 'express'
-import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { requirePermission } from '../middleware/permissions.js'
-import { pinLimiter } from '../middleware/rateLimit.js'
+import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
+import { verificarPin } from '../lib/pin.js'
 
 export const inventoryRoutes = Router()
 const adminOnly = requirePermission('cajeroGestionaInventario')
 const soloAdminReal = requireRole('ADMIN')
-
-async function verificarPin(tenantId, pin) {
-  const encargados = await prisma.user.findMany({
-    where: { tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
-  })
-  for (const u of encargados) {
-    if (await bcrypt.compare(String(pin), u.pinHash)) return u
-  }
-  return null
-}
 
 // Entradas recientes, para ver que se agrego sin tener que ir variante por
 // variante. Solo entradas (PURCHASE); el stock mismo sigue siendo el numero
@@ -83,7 +73,7 @@ inventoryRoutes.post('/inventory/movements', adminOnly, async (req, res) => {
 // mermar mas de lo que hay. Genera su propio movimiento de stock (WASTE,
 // para no perder el rastro) y un egreso de caja menor por el costo de lo
 // perdido -- nunca por el precio de venta, eso inflaria el gasto real.
-inventoryRoutes.post('/variants/:id/waste', soloAdminReal, pinLimiter, async (req, res) => {
+inventoryRoutes.post('/variants/:id/waste', soloAdminReal, async (req, res) => {
   const { qty, reason, pin } = req.body || {}
   const unidades = Number(qty) || 0
   if (unidades <= 0) return res.status(400).json({ error: 'La cantidad a eliminar debe ser mayor a cero' })
@@ -99,8 +89,12 @@ inventoryRoutes.post('/variants/:id/waste', soloAdminReal, pinLimiter, async (re
     return res.status(400).json({ error: `Solo hay ${variant.stock} en stock, no se puede mermar más de eso` })
   }
 
+  // Solo se limita aqui, no toda la ruta: cantidad invalida o sin stock
+  // suficiente no tiene nada que ver con un PIN mal escrito (ver pinLimiter
+  // en middleware/rateLimit.js).
+  if (await pinLimitExcedido(req, res)) return
   const encargado = await verificarPin(req.auth.tenantId, pin)
-  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+  if (!encargado) return pinIncorrecto(req, res)
 
   const shift = await prisma.shift.findFirst({ where: { tenantId: req.auth.tenantId, status: 'OPEN' } })
   if (!shift) {

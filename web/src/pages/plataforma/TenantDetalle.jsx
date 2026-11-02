@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { platformApi } from '../../lib/platformApi'
-import { money } from '../../lib/api'
+import { money, token } from '../../lib/api'
 import { Icon } from '../../components/Icons'
 
 const PERIODO_LABEL = { MENSUAL: 'Mensual', TRIMESTRAL: 'Trimestral', SEMESTRAL: 'Semestral', ANUAL: 'Anual' }
@@ -29,6 +29,7 @@ export default function TenantDetalle() {
   const [confirmSlug, setConfirmSlug] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
+  const [entrando, setEntrando] = useState(false)
 
   async function cargar() {
     try {
@@ -102,12 +103,52 @@ export default function TenantDetalle() {
     }
   }
 
+  // Abre el panel del bar en otra pestaña con la sesion de su ADMIN (control
+  // real, no solo lectura). setForNewTab (ver lib/api.js) pasa el token por
+  // sessionStorage, no localStorage: asi esta pestaña nueva arranca con su
+  // propia sesion sin pisar la de ninguna otra pestaña con otro tenant que ya
+  // estuviera abierta (ese era el bug: abrir un segundo bar hacia que el
+  // primero terminara mostrando los datos y el tema del segundo).
+  async function entrarAlPanel() {
+    setEntrando(true)
+    setError('')
+    try {
+      const { token: tenantToken } = await platformApi(`/tenants/${id}/impersonate`, { method: 'POST' })
+      token.setForNewTab(tenantToken)
+      window.open('/', '_blank')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setEntrando(false)
+    }
+  }
+
   async function toggleUsuario(u) {
     setUserBusyId(u.id)
     setError('')
     try {
       await platformApi(`/tenants/${id}/users/${u.id}`, { method: 'PATCH', body: { active: !u.active } })
       cargar()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setUserBusyId(null)
+    }
+  }
+
+  // Soporte: segun si el usuario ya esta bloqueado (ver estadoPin en
+  // api/src/middleware/rateLimit.js, viene en u.bloqueado desde /tenants/:id),
+  // levanta el bloqueo de 10 minutos por PINs incorrectos para que pueda
+  // volver a intentar de inmediato, o lo fuerza a mano (ej. sospecha de que
+  // alguien esta probando PINs ajenos). Recarga despues para reflejar el
+  // estado real que quedo en el servidor, no uno optimista local.
+  async function togglePin(u) {
+    setUserBusyId(u.id)
+    setError('')
+    try {
+      const accion = u.bloqueado ? 'reset-pin-lock' : 'lock-pin'
+      await platformApi(`/tenants/${id}/users/${u.id}/${accion}`, { method: 'POST' })
+      await cargar()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -163,6 +204,15 @@ export default function TenantDetalle() {
               {tenant.slug} · creado {formatFecha(tenant.createdAt)}
             </p>
           </div>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={entrarAlPanel}
+            disabled={entrando || !tenant.active}
+            title={!tenant.active ? 'Reactiva el plan para poder entrar' : undefined}
+          >
+            {entrando ? 'Entrando…' : 'Entrar al panel'}
+          </button>
           <button
             type="button"
             className={tenant.active ? 'btn-danger' : 'btn-ghost'}
@@ -226,11 +276,29 @@ export default function TenantDetalle() {
                         Inactivo
                       </span>
                     )}
+                    {u.bloqueado && (
+                      <span className="inline-flex items-center text-[10px] font-bold text-ocupada border border-ocupada/40 bg-ocupada/10 rounded-pill px-2 py-0.5">
+                        PIN bloqueado · {Math.ceil(u.segundosRestantes / 60)} min
+                      </span>
+                    )}
                   </p>
                   <p className="text-xs text-muted mt-0.5">
                     {u.email} · {ROLE_LABEL[u.role]}
                   </p>
                 </div>
+                <button
+                  type="button"
+                  className="btn-ghost text-xs"
+                  onClick={() => togglePin(u)}
+                  disabled={userBusyId === u.id}
+                  title={
+                    u.bloqueado
+                      ? 'Levanta el bloqueo para que pueda intentar de nuevo ya mismo'
+                      : 'Bloquea el PIN de este usuario por 10 minutos (ej. sospecha de que alguien esta probando PINs ajenos)'
+                  }
+                >
+                  {u.bloqueado ? 'Desbloquear PIN' : 'Bloquear PIN'}
+                </button>
                 <button
                   type="button"
                   className="btn-ghost"

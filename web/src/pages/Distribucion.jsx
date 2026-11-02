@@ -728,8 +728,10 @@ export default function Distribucion() {
               {z.name}
               <span className="opacity-60 font-normal">{z.tables.length}</span>
               {abiertas > 0 && (
+                // text-white fijo, no text-ink: en el tema sepia ink es casi
+                // negro y se pierde contra el rojo de fondo.
                 <span
-                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ocupada text-ink
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ocupada text-white
                              text-[10px] font-bold grid place-items-center border-2 border-night"
                 >
                   {abiertas}

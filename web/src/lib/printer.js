@@ -9,11 +9,25 @@
  */
 const CLAVE_BAUD = 'licorplus:impresora:baudRate'
 const CLAVE_ANCHO = 'licorplus:impresora:ancho'
+const CLAVE_SIMULADOR = 'licorplus:impresora:simulador'
 
 let puerto = null
 
 export function disponible() {
   return 'serial' in navigator
+}
+
+// Para quien no tiene impresora termica a mano todavia (ver DatosBar >
+// Impresora): en vez de abrir el puerto serial, decodifica los bytes y los
+// muestra en pantalla (ver SimuladorImpresora.jsx + ticketDecoder.js). Asi
+// se prueba el camino real de impresion -- incluido el tramado del logo en
+// ticketRaster.js -- sin hardware.
+export function modoSimulador() {
+  return localStorage.getItem(CLAVE_SIMULADOR) === '1'
+}
+
+export function setModoSimulador(activo) {
+  localStorage.setItem(CLAVE_SIMULADOR, activo ? '1' : '0')
 }
 
 export function anchoColumnas() {
@@ -88,6 +102,13 @@ export async function enviar(bytes) {
 // false si no hay impresora — asi quien llama sabe que debe caer a
 // window.print().
 export async function imprimirSilencioso(bytes) {
+  if (modoSimulador()) {
+    // SimuladorImpresora.jsx (montado una vez en Shell.jsx) escucha este
+    // evento y decodifica los bytes -- desacoplado de React a proposito,
+    // este archivo es una libreria pura sin importar componentes.
+    window.dispatchEvent(new CustomEvent('ticket-simulado', { detail: bytes }))
+    return true
+  }
   const conectado = estaConectada() || (await reconectar())
   if (!conectado) return false
   return enviar(bytes)

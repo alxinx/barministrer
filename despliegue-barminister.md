@@ -1,4 +1,4 @@
-# LicorPlus — Actualizar backend o frontend sin tocar la base de datos
+# Barminister — Actualizar backend o frontend sin tocar la base de datos
 
 Este documento cubre el caso normal: cambios de código en `api/` (backend) o
 `web/` (frontend) **sin cambios en `api/prisma/schema.prisma`**. Si el cambio
@@ -11,6 +11,20 @@ Datos de referencia:
 - Carpeta en el servidor: `/opt/barministrer`
 - Repos en ECR: `barministrer-app` (backend), `barministrer-web` (frontend)
 - Dominio: `https://app.barministrer.com`
+
+> **Nota (pendiente):** el repo le cambió el `container_name` de
+> `db`/`api`/`web` en `docker-compose.prod.yml` de `licorplus_*` a
+> `barminister_*`, pero un deploy normal (paso 4, con `--no-deps`) nunca
+> toca `db` — solo recrea `api` o `web`, que de todos modos se recrean en
+> cada deploy, así que esos dos quedan en `barminister_api`/`barminister_web`
+> solos, sin pasos extra. `db` es distinto: sigue corriendo ahora mismo como
+> `licorplus_db` y va a seguir así hasta un `docker compose down && up`
+> **deliberado** que lo recree (el volumen `db_data` no depende del nombre,
+> así que los datos no se pierden, pero es un paso aparte, no uno rutinario).
+> Los comandos de abajo usan `licorplus_db` a propósito porque ese es el
+> nombre real **hoy**. Si ya hiciste ese paso coordinado, cambia esos dos
+> comandos a `barminister_db` — confírmalo con `docker ps` antes de
+> copiar/pegar.
 
 ## 0. Backup antes de desplegar (siempre)
 
@@ -38,7 +52,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 docker exec licorplus_db mysqldump \
   -u root -p"${MYSQL_ROOT_PASSWORD}" \
   --single-transaction --set-gtid-purged=OFF \
-  "${MYSQL_DATABASE}" > "/opt/backups/licorplus_${TIMESTAMP}.sql"
+  "${MYSQL_DATABASE}" > "/opt/backups/barminister_${TIMESTAMP}.sql"
 
 ls -lh /opt/backups/
 ```
@@ -150,6 +164,11 @@ y que el `db push` no reportó ningún cambio destructivo:
 ```
 docker logs licorplus_api --tail 40
 ```
+
+(Va a pasar a llamarse `barminister_api` automaticamente la primera vez que
+despliegues `api` **despues** de subir este `docker-compose.prod.yml`
+actualizado al servidor — confirma el nombre real con `docker ps` si no
+estas seguro.)
 
 Prueba el dominio real:
 

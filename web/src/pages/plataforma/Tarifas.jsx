@@ -50,7 +50,7 @@ export default function Tarifas() {
               Bares
             </button>
             <h1 className="text-2xl font-bold">Tarifas de renta</h1>
-            <p className="text-sm text-muted mt-1">Lo que cada bar paga por usar LicorPlus.</p>
+            <p className="text-sm text-muted mt-1">Lo que cada bar paga por usar Barminister.</p>
           </div>
           <button type="button" className="btn-primary" onClick={() => setEditando({})}>
             <Icon.plus width={16} height={16} />

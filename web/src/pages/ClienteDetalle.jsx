@@ -288,7 +288,7 @@ export default function ClienteDetalle() {
         <ReciboModal
           order={factura}
           splitCount={1}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setFactura(null)}
         />
@@ -300,7 +300,7 @@ export default function ClienteDetalle() {
         <ReciboAbonoModal
           payment={comprobante}
           customer={customer}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setComprobante(null)}
         />

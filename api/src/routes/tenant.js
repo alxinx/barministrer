@@ -13,7 +13,7 @@ const soloAdmin = requireRole('ADMIN')
 // logoUrl no va aqui: solo se asigna desde POST /tenant/logo, que lo sube a
 // R2 primero. Aceptarlo aqui como texto suelto dejaria guardar cualquier URL
 // externa sin pasar por esa subida.
-const CAMPOS_DATOS = ['name', 'address', 'legalName', 'taxId', 'taxRegime']
+const CAMPOS_DATOS = ['name', 'address', 'legalName', 'taxId', 'taxRegime', 'receiptFooter']
 const CAMPOS_PERMISOS = [
   'cajeroEditaCatalogo',
   'cajeroGestionaInventario',
@@ -39,6 +39,12 @@ tenantRoutes.patch('/tenant', soloAdmin, async (req, res) => {
   if (data.name !== undefined) {
     if (!data.name.trim()) return res.status(400).json({ error: 'El negocio necesita un nombre' })
     data.name = data.name.trim()
+  }
+  if (data.receiptFooter !== undefined) {
+    // Opcional de verdad: vacio se guarda como null, no hay texto de
+    // relleno que forzar (la linea de marca fija -ver web/src/lib/brand.js-
+    // sale siempre de todos modos, sin pasar por este campo).
+    data.receiptFooter = data.receiptFooter.trim() || null
   }
   if (req.body.theme !== undefined) {
     if (!TEMAS.includes(req.body.theme)) return res.status(400).json({ error: 'Ese tema no existe' })

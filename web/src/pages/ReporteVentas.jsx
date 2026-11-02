@@ -99,7 +99,7 @@ export default function ReporteVentas() {
     escribirTitulo(
       sheet,
       {
-        titulo: `Reporte de ventas · ${session?.tenant?.name || 'LicorPlus'}`,
+        titulo: `Reporte de ventas · ${session?.tenant?.name || 'Barminister'}`,
         subtitulo: `Periodo: ${etiquetaPeriodo} · Generado el ${new Date().toLocaleDateString('es-CO', {
           day: '2-digit',
           month: 'long',

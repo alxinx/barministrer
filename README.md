@@ -1,4 +1,4 @@
-# LicorPlus
+# Barminister
 
 POS multitenant para bares. Esta es la base: autenticación con roles, aislamiento
 por bar, catálogo de productos y editor de distribución del local.
@@ -21,9 +21,9 @@ la primera vez queda con el bar de prueba listo.
 
 | Correo | Clave | Rol |
 |---|---|---|
-| admin@licorplus.co | admin123 | Administrador |
-| caja@licorplus.co | caja123 | Cajero |
-| mesera@licorplus.co | mesa123 | Mesero |
+| admin@barminister.co | admin123 | Administrador |
+| caja@barminister.co | caja123 | Cajero |
+| mesera@barminister.co | mesa123 | Mesero |
 
 El PIN de todos es `1234` (se usará para autorizar cortesías y anulaciones).
 

@@ -2,8 +2,10 @@ import { useEffect } from 'react'
 import { money } from '../lib/api'
 import { Icon } from './Icons'
 import { METHOD_LABEL } from '../lib/paymentMethods'
-import { construirTicket } from '../lib/escpos'
+import { construirTicketRaster } from '../lib/ticketRaster'
 import { imprimirSilencioso, abrirCajon } from '../lib/printer'
+import ReciboEncabezado from './ReciboEncabezado'
+import ReciboPie from './ReciboPie'
 
 /**
  * Comprobante de abono a credito: misma tirilla que el recibo de venta, pero
@@ -11,12 +13,12 @@ import { imprimirSilencioso, abrirCajon } from '../lib/printer'
  * impresora emparejada sale directo por USB sin dialogo, y si el abono fue
  * en efectivo abre el cajon detras del tiquete (igual que una venta).
  */
-export default function ReciboAbonoModal({ payment, customer, tenantName, onClose, autoPrint = true }) {
+export default function ReciboAbonoModal({ payment, customer, tenant, onClose, autoPrint = true }) {
   const nombre = `${customer.firstName} ${customer.lastName || ''}`.trim()
 
   function lineasTicket() {
     return [
-      { texto: (tenantName || 'LicorPlus').toUpperCase(), centro: true, negrita: true },
+      { texto: (tenant?.legalName || tenant?.name || 'Barminister').toUpperCase(), centro: true, negrita: true },
       { texto: 'Comprobante de abono', centro: true },
       { texto: new Date(payment.createdAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }), centro: true },
       { raya: true },
@@ -35,7 +37,8 @@ export default function ReciboAbonoModal({ payment, customer, tenantName, onClos
   }
 
   async function imprimir() {
-    const ok = await imprimirSilencioso(construirTicket(lineasTicket()))
+    const bytes = await construirTicketRaster(tenant, lineasTicket())
+    const ok = await imprimirSilencioso(bytes)
     if (!ok) {
       window.print()
       return
@@ -53,9 +56,13 @@ export default function ReciboAbonoModal({ payment, customer, tenantName, onClos
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
       <div className="flex flex-col items-center gap-3">
-        <div id="receipt-print-root" className="bg-white text-[#111] w-[310px] p-4 font-mono text-xs rounded shadow-xl">
-          <div className="text-center space-y-0.5">
-            <p className="font-bold text-sm uppercase">{tenantName || 'LicorPlus'}</p>
+        <div
+          id="receipt-print-root"
+          className="bg-white text-[#111] w-[310px] p-4 text-xs rounded shadow-xl"
+          style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
+        >
+          <ReciboEncabezado tenant={tenant} />
+          <div className="text-center space-y-0.5 mt-1">
             <p className="font-semibold">Comprobante de abono</p>
             <p>{new Date(payment.createdAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}</p>
           </div>
@@ -89,6 +96,7 @@ export default function ReciboAbonoModal({ payment, customer, tenantName, onClos
           <div className="my-2 border-t border-dashed border-black/40" />
           <p className="text-center">Atendió: {payment.createdBy?.name}</p>
           <p className="text-center">Gracias por su pago</p>
+          <ReciboPie tenant={tenant} />
         </div>
 
         <div className="flex gap-2">

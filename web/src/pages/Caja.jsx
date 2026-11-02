@@ -5,7 +5,8 @@ import { useAuth } from '../context/AuthContext'
 import { useShift } from '../context/ShiftContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
-import PinInput, { PIN_LENGTH } from '../components/PinInput'
+import PinField from '../components/PinField'
+import { usePinVerificado } from '../hooks/usePinVerificado'
 import ReciboModal from '../components/ReciboModal'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
@@ -537,7 +538,7 @@ export default function Caja() {
         <ReciboModal
           order={factura}
           splitCount={1}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setFactura(null)}
         />
@@ -548,7 +549,7 @@ export default function Caja() {
       {egresoTicket && (
         <TicketEgresoModal
           egreso={egresoTicket}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setEgresoTicket(null)}
         />
@@ -701,9 +702,17 @@ function TurnosAnterioresCard({ turnos, onVer }) {
 // con una cuenta todo el dia, pero se turnan varios ADMIN/CAJERO en el).
 function AbrirTurnoModal({ onCancel, onAbrir }) {
   const [base, setBase] = useState('')
-  const [pin, setPin] = useState('')
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+  } = usePinVerificado()
   const [saving, setSaving] = useState(false)
-  const completo = base !== '' && pin.length === PIN_LENGTH
+  const completo = base !== '' && pinValido
 
   async function confirmar() {
     setSaving(true)
@@ -728,10 +737,16 @@ function AbrirTurnoModal({ onCancel, onAbrir }) {
           <label className="label">Base inicial (efectivo)</label>
           <MoneyInput className="field" value={base} onChange={setBase} />
         </div>
-        <div>
-          <label className="label text-center">PIN de quien abre</label>
-          <PinInput value={pin} onChange={setPin} autoFocus />
-        </div>
+        <PinField
+          pin={pin}
+          onChange={setPin}
+          verificando={verificandoPin}
+          error={pinError}
+          bloqueado={pinBloqueado}
+          segundosRestantes={pinSegundosRestantes}
+          label="PIN de quien abre"
+          autoFocus
+        />
         <div className="flex gap-3 pt-1">
           <button onClick={onCancel} className="btn-ghost flex-1">
             Cancelar
@@ -867,9 +882,17 @@ function ElegirCierreModal({ cantidad, onCobrarlas, onPasarlas, onCancel }) {
 
 function CuadreModal({ onCancel, onConfirm }) {
   const [counts, setCounts] = useState({ EFECTIVO: '', NEQUI: '', TRANSFERENCIA: '', DATAFONO: '' })
-  const [pin, setPin] = useState('')
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+  } = usePinVerificado()
   const [saving, setSaving] = useState(false)
-  const completo = METHODS.every((m) => counts[m.key] !== '') && pin.length === PIN_LENGTH
+  const completo = METHODS.every((m) => counts[m.key] !== '') && pinValido
 
   async function confirmar() {
     setSaving(true)
@@ -900,10 +923,15 @@ function CuadreModal({ onCancel, onConfirm }) {
             </div>
           ))}
         </div>
-        <div>
-          <label className="label text-center">PIN de quien cierra</label>
-          <PinInput value={pin} onChange={setPin} />
-        </div>
+        <PinField
+          pin={pin}
+          onChange={setPin}
+          verificando={verificandoPin}
+          error={pinError}
+          bloqueado={pinBloqueado}
+          segundosRestantes={pinSegundosRestantes}
+          label="PIN de quien cierra"
+        />
         <div className="flex gap-3 pt-1">
           <button onClick={onCancel} className="btn-ghost flex-1">
             Cancelar
