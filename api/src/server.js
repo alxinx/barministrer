@@ -15,6 +15,7 @@ import { reportRoutes } from './routes/reports.js'
 import { cajasBancosRoutes } from './routes/cajasBancos.js'
 import { insumoRoutes } from './routes/insumos.js'
 import { comprasRoutes } from './routes/compras.js'
+import { importacionRoutes } from './routes/importacion.js'
 import { platformAuthRoutes, platformRoutes } from './routes/platform.js'
 import { requireAuth, requirePlatformAuth } from './middleware/auth.js'
 import { apiLimiter } from './middleware/rateLimit.js'
@@ -57,6 +58,7 @@ app.use('/api', requireAuth, reportRoutes)
 app.use('/api', requireAuth, cajasBancosRoutes)
 app.use('/api', requireAuth, insumoRoutes)
 app.use('/api', requireAuth, comprasRoutes)
+app.use('/api', requireAuth, importacionRoutes)
 
 app.use((_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }))
 

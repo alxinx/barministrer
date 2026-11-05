@@ -14,6 +14,12 @@ const SECTORES = [
     titulo: 'Permisos',
     descripcion: 'Dale a cajero acceso puntual a algo que hoy es solo tuyo.',
   },
+  {
+    to: '/configuracion/implementacion',
+    icon: Icon.box,
+    titulo: 'Implementación',
+    descripcion: 'Carga masiva de insumos y productos desde un Excel.',
+  },
 ]
 
 export default function Configuracion() {

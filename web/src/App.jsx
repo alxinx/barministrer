@@ -30,6 +30,7 @@ const UtilidadProducto = lazy(() => import('./pages/UtilidadProducto'))
 const Configuracion = lazy(() => import('./pages/Configuracion'))
 const DatosBar = lazy(() => import('./pages/DatosBar'))
 const Permisos = lazy(() => import('./pages/Permisos'))
+const Implementacion = lazy(() => import('./pages/Implementacion'))
 const CajasBancos = lazy(() => import('./pages/CajasBancos'))
 const PlataformaLogin = lazy(() => import('./pages/plataforma/Login'))
 const PlataformaPanel = lazy(() => import('./pages/plataforma/Panel'))
@@ -176,6 +177,7 @@ export default function App() {
               <Route path="/configuracion" element={<Protegida soloAdmin><Configuracion /></Protegida>} />
               <Route path="/configuracion/datos" element={<Protegida soloAdmin><DatosBar /></Protegida>} />
               <Route path="/configuracion/permisos" element={<Protegida soloAdmin><Permisos /></Protegida>} />
+              <Route path="/configuracion/implementacion" element={<Protegida soloAdmin><Implementacion /></Protegida>} />
               <Route
                 path="/plataforma/*"
                 element={
