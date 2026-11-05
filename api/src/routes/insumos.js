@@ -42,20 +42,72 @@ insumoRoutes.post('/insumo-categorias', adminOnly, async (req, res) => {
 // historial) es una pantalla propia que todavia no existe.
 
 insumoRoutes.get('/proveedores', async (req, res) => {
+  // ?todos=1 incluye los inactivos: sin esto, desactivar un proveedor desde
+  // /proveedores lo hacia desaparecer de esa misma pantalla sin forma de
+  // volver a encontrarlo para reactivarlo. El uso normal (InsumoForm al
+  // vuelo) sigue sin mandar el parametro, mismo comportamiento de siempre.
+  const { todos } = req.query
   const proveedores = await prisma.proveedor.findMany({
-    where: { tenantId: req.auth.tenantId, active: true },
+    where: { tenantId: req.auth.tenantId, ...(todos === '1' ? {} : { active: true }) },
     orderBy: { name: 'asc' },
   })
   res.json(proveedores)
 })
 
 insumoRoutes.post('/proveedores', adminOnly, async (req, res) => {
-  const { name } = req.body || {}
+  const {
+    name,
+    nombreComercial,
+    tipoIdentificacion,
+    numeroIdentificacion,
+    contacto,
+    telefono,
+    whatsapp,
+    email,
+    direccion,
+    ciudad,
+    observaciones,
+    condicionPago,
+    diasCredito,
+  } = req.body || {}
   if (!name?.trim()) return res.status(400).json({ error: 'El proveedor necesita un nombre' })
-  const proveedor = await prisma.proveedor.create({
-    data: { tenantId: req.auth.tenantId, name: name.trim() },
-  })
-  res.status(201).json(proveedor)
+  if (tipoIdentificacion && !['NIT', 'CEDULA'].includes(tipoIdentificacion)) {
+    return res.status(400).json({ error: 'El tipo de identificación no es válido' })
+  }
+  if (condicionPago && !['CONTADO', 'CREDITO'].includes(condicionPago)) {
+    return res.status(400).json({ error: 'La condición de pago no es válida' })
+  }
+
+  try {
+    const proveedor = await prisma.proveedor.create({
+      data: {
+        tenantId: req.auth.tenantId,
+        name: name.trim(),
+        nombreComercial: nombreComercial?.trim() || null,
+        tipoIdentificacion: tipoIdentificacion || null,
+        numeroIdentificacion: numeroIdentificacion?.toString().trim() || null,
+        contacto: contacto?.trim() || null,
+        telefono: telefono?.trim() || null,
+        whatsapp: whatsapp?.trim() || null,
+        email: email?.trim() || null,
+        direccion: direccion?.trim() || null,
+        ciudad: ciudad?.trim() || null,
+        observaciones: observaciones?.trim() || null,
+        ...(condicionPago && { condicionPago }),
+        diasCredito: condicionPago === 'CREDITO' && diasCredito ? Number(diasCredito) : null,
+      },
+    })
+    res.status(201).json(proveedor)
+  } catch (e) {
+    if (e.code === 'P2002') {
+      const target = String(e.meta?.target || '')
+      if (target.includes('numeroIdentificacion')) {
+        return res.status(409).json({ error: 'Ya hay un proveedor con ese número de identificación' })
+      }
+      return res.status(409).json({ error: 'Ya existe un proveedor con ese nombre' })
+    }
+    throw e
+  }
 })
 
 // --- Imagen de insumo --------------------------------------------------------

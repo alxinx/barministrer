@@ -1,29 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, money } from '../lib/api'
+import { useNavigate } from 'react-router-dom'
+import { api } from '../lib/api'
 import { Icon } from '../components/Icons'
 
-const TIPO_ID_LABEL = { NIT: 'NIT', CEDULA: 'Cédula' }
-const CONDICION_LABEL = { CONTADO: 'Contado', CREDITO: 'Crédito' }
-
-function formatFecha(iso) {
-  if (!iso) return ''
-  return new Date(iso).toLocaleDateString('es-CO', { dateStyle: 'medium' })
-}
-
-const ESTADO_COMPRA_LABEL = { BORRADOR: 'Borrador', RECIBIDA: 'Recibida', ANULADA: 'Anulada' }
+export const TIPO_ID_LABEL = { NIT: 'NIT', CEDULA: 'Cédula' }
+export const CONDICION_LABEL = { CONTADO: 'Contado', CREDITO: 'Crédito' }
 
 export default function Proveedores() {
+  const navigate = useNavigate()
   const [proveedores, setProveedores] = useState([])
   const [search, setSearch] = useState('')
+  const [verInactivos, setVerInactivos] = useState(false)
   const [editando, setEditando] = useState(undefined) // undefined = cerrado, null = nuevo, proveedor = editar
-  const [viendoId, setViendoId] = useState(null)
 
   useEffect(() => {
     load()
-  }, [])
+  }, [verInactivos])
 
   async function load() {
-    setProveedores(await api('/proveedores'))
+    setProveedores(await api(`/proveedores${verInactivos ? '?todos=1' : ''}`))
   }
 
   const visibles = useMemo(() => {
@@ -57,16 +52,22 @@ export default function Proveedores() {
         </button>
       </header>
 
-      <div className="relative flex-1 min-w-[220px] max-w-sm mb-6">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">
-          <Icon.search />
-        </span>
-        <input
-          className="field pl-10"
-          placeholder="Buscar proveedor"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      <div className="flex items-center gap-3 flex-wrap mb-6">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+            <Icon.search />
+          </span>
+          <input
+            className="field pl-10"
+            placeholder="Buscar proveedor"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
+          <input type="checkbox" checked={verInactivos} onChange={(e) => setVerInactivos(e.target.checked)} />
+          Ver inactivos
+        </label>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -74,7 +75,7 @@ export default function Proveedores() {
           <button
             key={p.id}
             type="button"
-            onClick={() => setViendoId(p.id)}
+            onClick={() => navigate(`/proveedores/${p.id}`)}
             className="card p-4 text-left flex flex-col gap-2 hover:border-amber/50 transition-colors"
           >
             <div className="flex items-start justify-between gap-2">
@@ -108,22 +109,11 @@ export default function Proveedores() {
       {editando !== undefined && (
         <ProveedorForm proveedor={editando} onClose={cerrarForm} onSaved={guardado} />
       )}
-
-      {viendoId && (
-        <ProveedorDetalle
-          id={viendoId}
-          onClose={() => setViendoId(null)}
-          onEditar={(p) => {
-            setViendoId(null)
-            setEditando(p)
-          }}
-        />
-      )}
     </div>
   )
 }
 
-function ProveedorForm({ proveedor, onClose, onSaved }) {
+export function ProveedorForm({ proveedor, onClose, onSaved }) {
   const esNuevo = !proveedor
   const [name, setName] = useState(proveedor?.name || '')
   const [nombreComercial, setNombreComercial] = useState(proveedor?.nombreComercial || '')
@@ -316,150 +306,6 @@ function ProveedorForm({ proveedor, onClose, onSaved }) {
             {saving ? 'Guardando…' : 'Guardar'}
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function ProveedorDetalle({ id, onClose, onEditar }) {
-  const [proveedor, setProveedor] = useState(null)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    api(`/proveedores/${id}`).then(setProveedor).catch((err) => setError(err.message))
-  }, [id])
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-2xl p-5 space-y-5 my-8">
-        <header className="flex items-start justify-between gap-3">
-          {!proveedor ? (
-            <h2 className="text-lg font-bold">Cargando…</h2>
-          ) : (
-            <div>
-              <h2 className="text-lg font-bold">{proveedor.nombreComercial || proveedor.name}</h2>
-              {proveedor.nombreComercial && <p className="text-xs text-muted mt-0.5">{proveedor.name}</p>}
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            {proveedor && (
-              <button type="button" onClick={() => onEditar(proveedor)} className="btn-ghost text-xs h-9 px-3">
-                <Icon.gear width={14} height={14} /> Editar
-              </button>
-            )}
-            <button type="button" onClick={onClose} className="text-muted hover:text-ink">
-              <Icon.x />
-            </button>
-          </div>
-        </header>
-
-        {error && (
-          <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">{error}</p>
-        )}
-
-        {proveedor && (
-          <>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-              {(proveedor.tipoIdentificacion || proveedor.numeroIdentificacion) && (
-                <div>
-                  <p className="text-xs text-muted">Identificación</p>
-                  <p>
-                    {TIPO_ID_LABEL[proveedor.tipoIdentificacion] || ''} {proveedor.numeroIdentificacion}
-                  </p>
-                </div>
-              )}
-              {proveedor.contacto && (
-                <div>
-                  <p className="text-xs text-muted">Contacto</p>
-                  <p>{proveedor.contacto}</p>
-                </div>
-              )}
-              {proveedor.telefono && (
-                <div>
-                  <p className="text-xs text-muted">Teléfono</p>
-                  <p>{proveedor.telefono}</p>
-                </div>
-              )}
-              {proveedor.whatsapp && (
-                <div>
-                  <p className="text-xs text-muted">WhatsApp</p>
-                  <p>{proveedor.whatsapp}</p>
-                </div>
-              )}
-              {proveedor.email && (
-                <div>
-                  <p className="text-xs text-muted">Correo</p>
-                  <p className="truncate">{proveedor.email}</p>
-                </div>
-              )}
-              {(proveedor.direccion || proveedor.ciudad) && (
-                <div>
-                  <p className="text-xs text-muted">Ubicación</p>
-                  <p>{[proveedor.direccion, proveedor.ciudad].filter(Boolean).join(', ')}</p>
-                </div>
-              )}
-              <div>
-                <p className="text-xs text-muted">Condición de pago</p>
-                <p>
-                  {CONDICION_LABEL[proveedor.condicionPago]}
-                  {proveedor.condicionPago === 'CREDITO' && proveedor.diasCredito ? ` · ${proveedor.diasCredito} días` : ''}
-                </p>
-              </div>
-            </div>
-
-            {proveedor.observaciones && (
-              <p className="text-sm text-muted bg-raised border border-edge rounded-xl p-3">{proveedor.observaciones}</p>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-raised border border-edge rounded-xl p-3">
-                <p className="text-[10px] font-bold tracking-wide text-muted uppercase">Total comprado</p>
-                <p className="text-base font-bold mt-0.5">{money(proveedor.totalComprado)}</p>
-              </div>
-              <div className="bg-raised border border-edge rounded-xl p-3">
-                <p className="text-[10px] font-bold tracking-wide text-muted uppercase">Saldo pendiente</p>
-                <p className={`text-base font-bold mt-0.5 ${proveedor.saldoPendiente > 0 ? 'text-ocupada' : ''}`}>
-                  {money(proveedor.saldoPendiente)}
-                </p>
-              </div>
-            </div>
-
-            {proveedor.insumos.length > 0 && (
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Insumos que suministra</h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {proveedor.insumos.map((i) => (
-                    <span key={i.id} className="text-xs px-2.5 py-1 rounded-pill border border-edge bg-raised">
-                      {i.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <h3 className="text-sm font-semibold mb-2">Historial de compras</h3>
-              {proveedor.compras.length === 0 ? (
-                <p className="text-sm text-muted">Todavía no hay compras registradas a este proveedor.</p>
-              ) : (
-                <div className="space-y-1.5 max-h-60 overflow-y-auto">
-                  {proveedor.compras.map((c) => (
-                    <div
-                      key={c.id}
-                      className="flex items-center justify-between gap-2 text-sm py-2 px-3 rounded-lg bg-raised border border-edge"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate">{c.numeroDocumento || 'Sin número'} · {formatFecha(c.fecha)}</p>
-                        <p className="text-xs text-muted">{ESTADO_COMPRA_LABEL[c.estado]}</p>
-                      </div>
-                      <p className="font-semibold shrink-0">{money(c.total)}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
       </div>
     </div>
   )
