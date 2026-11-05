@@ -44,7 +44,7 @@ tenantRoutes.patch('/tenant', soloAdmin, async (req, res) => {
     // Opcional de verdad: vacio se guarda como null, no hay texto de
     // relleno que forzar (la linea de marca fija -ver web/src/lib/brand.js-
     // sale siempre de todos modos, sin pasar por este campo).
-    data.receiptFooter = data.receiptFooter.trim() || null
+    data.receiptFooter = (data.receiptFooter || '').trim() || null
   }
   if (req.body.theme !== undefined) {
     if (!TEMAS.includes(req.body.theme)) return res.status(400).json({ error: 'Ese tema no existe' })
