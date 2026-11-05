@@ -31,6 +31,8 @@ function tenantPublic(tenant) {
     cajeroGestionaUsuarios: tenant.cajeroGestionaUsuarios,
     cajeroAplicaDescuentos: tenant.cajeroAplicaDescuentos,
     autoEnviarPedido: tenant.autoEnviarPedido,
+    moduloCajasBancos: tenant.moduloCajasBancos,
+    moduloCompras: tenant.moduloCompras,
   }
 }
 

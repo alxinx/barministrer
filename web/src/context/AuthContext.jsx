@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { api, token } from '../lib/api'
+import { getSocket } from '../lib/socket'
 
 const AuthContext = createContext(null)
 
@@ -33,6 +34,20 @@ export function AuthProvider({ children }) {
     const data = await api('/auth/me')
     setSession(data)
   }
+
+  // Si plataforma prende/apaga un modulo (u otro dato del tenant) mientras
+  // hay sesion abierta, el bar se entera sin recargar: el menu lo oculta solo
+  // (Shell ya recalcula visible() con el tenant nuevo) y la pagina del modulo
+  // reacciona mostrando ModuloNoDisponible (ver Protegida en App.jsx), ambos
+  // porque session.tenant cambio de valor, no por codigo nuevo en cada uno.
+  useEffect(() => {
+    if (!session) return
+    const socket = getSocket()
+    const onTenantActualizado = () => refreshSession()
+    socket.on('tenant:actualizado', onTenantActualizado)
+    return () => socket.off('tenant:actualizado', onTenantActualizado)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(session)])
 
   // La pestaña dice el nombre del bar mientras alguien tiene sesion abierta
   // (util con varios bares/turnos abiertos en pestanas distintas), y vuelve

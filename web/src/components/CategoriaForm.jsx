@@ -51,7 +51,7 @@ export default function CategoriaForm({ category, categories, onClose, onSaved }
     setSaving(true)
     try {
       if (esNueva) {
-        await api('/categories', {
+        const creada = await api('/categories', {
           method: 'POST',
           body: {
             name: name.trim(),
@@ -61,13 +61,14 @@ export default function CategoriaForm({ category, categories, onClose, onSaved }
             ...(parentId ? {} : { allowsPour }),
           },
         })
+        onSaved(creada)
       } else {
-        await api(`/categories/${category.id}`, {
+        const actualizada = await api(`/categories/${category.id}`, {
           method: 'PATCH',
           body: { name: name.trim(), color, ...(padreActual ? {} : { allowsPour }), active },
         })
+        onSaved(actualizada)
       }
-      onSaved()
     } catch (err) {
       setError(err.message)
     } finally {

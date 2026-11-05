@@ -280,6 +280,22 @@ El bar opera de noche con poca luz. Interfaz **oscura**, tokens en
   ADMIN real, nunca delegable (si no, un cajero podría otorgarse más acceso a
   sí mismo).
 
+## Paginación
+
+- **Todo `ORDER BY` que se pagine con `LIMIT/OFFSET` o con cursor tiene que
+  ser un orden TOTAL**: si la columna de orden admite empates (precio,
+  nombre, `createdAt` de una importación masiva), hay que cerrar con una
+  columna única -- el id -- como último criterio. Sin eso MySQL no garantiza
+  el orden de las filas empatadas entre consultas, y una misma fila sale en
+  dos páginas: en el catálogo web eso rompía el scroll infinito con
+  "Encountered two children with the same key" de React.
+- Para listados acotados por punto de venta o por catálogo (productos,
+  empleados, etc.), `OFFSET/LIMIT` es aceptable dado el volumen actual de un
+  solo negocio.
+- Para listados que puedan crecer sin límite con el tiempo (historial de
+  movimientos, compras, auditoría si se llega a implementar), preferir
+  paginación por cursor.
+
 ## Estado actual
 
 Hecho: auth con roles, aislamiento por tenant, catálogo (categorías, productos,

@@ -30,6 +30,7 @@ export default function TenantDetalle() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [entrando, setEntrando] = useState(false)
+  const [togglingModulo, setTogglingModulo] = useState(false)
 
   async function cargar() {
     try {
@@ -120,6 +121,22 @@ export default function TenantDetalle() {
       setError(err.message)
     } finally {
       setEntrando(false)
+    }
+  }
+
+  // Modulos activables: solo plataforma los prende/apaga segun lo que el bar
+  // pago o solicito (ver Tenant.moduloCajasBancos). El ADMIN del bar nunca
+  // puede tocar esto desde su propia /configuracion.
+  async function toggleModulo(campo) {
+    setTogglingModulo(true)
+    setError('')
+    try {
+      const updated = await platformApi(`/tenants/${id}`, { method: 'PATCH', body: { [campo]: !tenant[campo] } })
+      setTenant((t) => ({ ...t, [campo]: updated[campo] }))
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTogglingModulo(false)
     }
   }
 
@@ -309,6 +326,42 @@ export default function TenantDetalle() {
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="card p-5 mt-8">
+          <h2 className="font-semibold mb-1">Módulos</h2>
+          <p className="text-sm text-muted mb-4">
+            Funcionalidades que este bar tiene contratadas. El administrador del bar no puede prenderlas ni
+            apagarlas desde su propia configuración.
+          </p>
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium">Cajas y bancos</p>
+              <p className="text-xs text-muted mt-0.5">Cajas virtuales, bancos/billeteras, traslados y egresos de dinero</p>
+            </div>
+            <button
+              type="button"
+              className={tenant.moduloCajasBancos ? 'btn-primary' : 'btn-ghost'}
+              onClick={() => toggleModulo('moduloCajasBancos')}
+              disabled={togglingModulo}
+            >
+              {tenant.moduloCajasBancos ? 'Activado' : 'Desactivado'}
+            </button>
+          </div>
+          <div className="flex items-center justify-between py-2 border-t border-edge mt-2 pt-4">
+            <div>
+              <p className="text-sm font-medium">Compras y proveedores</p>
+              <p className="text-xs text-muted mt-0.5">Registrar compras de insumos, recibir mercancía y cuentas por pagar</p>
+            </div>
+            <button
+              type="button"
+              className={tenant.moduloCompras ? 'btn-primary' : 'btn-ghost'}
+              onClick={() => toggleModulo('moduloCompras')}
+              disabled={togglingModulo}
+            >
+              {tenant.moduloCompras ? 'Activado' : 'Desactivado'}
+            </button>
           </div>
         </div>
 

@@ -160,7 +160,7 @@ reportRoutes.get('/reports/utilidad-producto', soloAdmin, async (req, res) => {
       where: { tenantId, active: true, kind: 'PREPARED' },
       include: {
         category: { select: { name: true, color: true } },
-        recipe: { include: { items: { include: { sourceProduct: { include: { variants: true } }, variant: true } } } },
+        recipe: { include: { items: { include: { sourceProduct: { include: { variants: true } }, variant: true, insumo: true } } } },
       },
     }),
     prisma.order.findMany({

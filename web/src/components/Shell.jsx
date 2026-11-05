@@ -1,36 +1,72 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from './Icons'
 import { useAuth } from '../context/AuthContext'
 import SimuladorImpresora from './SimuladorImpresora'
 
+// Items sin `to`: todavia no tienen pantalla propia (ver CLAUDE.md / lo
+// acordado con Alejo nov-2026). Quedan visibles pero deshabilitados en vez de
+// desaparecer, para que se sepa que van a existir y no haya que reconstruir
+// el menu cuando se agreguen.
 const nav = [
   { to: '/venta', label: 'POS y pedidos', icon: Icon.cart, roles: ['ADMIN', 'CAJERO', 'MESERO'] },
   { to: '/caja', label: 'Caja', icon: Icon.cash, roles: ['ADMIN', 'CAJERO'] },
-  { to: '/clientes', label: 'Clientes', icon: Icon.users, roles: ['ADMIN', 'CAJERO'] },
   { to: '/distribucion', label: 'Distribución', icon: Icon.tables, roles: ['ADMIN'], permiso: 'cajeroGestionaDistribucion' },
+
   {
-    label: 'Productos',
+    section: 'Gestión comercial',
+    roles: ['ADMIN'],
+    permisoAny: ['cajeroEditaCatalogo', 'cajeroGestionaInventario'],
+  },
+  {
+    label: 'Catálogo',
     icon: Icon.box,
     roles: ['ADMIN'],
     permiso: 'cajeroEditaCatalogo',
     children: [
-      { to: '/productos', label: 'Ver productos' },
-      { to: '/productos/inventario', label: 'Agregar inventario' },
+      { to: '/productos', label: 'Productos' },
+      { label: 'Categorías' },
+      { label: 'Complementos y variantes' },
     ],
   },
+  {
+    label: 'Inventario',
+    icon: Icon.truck,
+    roles: ['ADMIN'],
+    permiso: 'cajeroGestionaInventario',
+    children: [
+      { to: '/insumos', label: 'Insumos' },
+      { to: '/productos/inventario', label: 'Ver inventario' },
+      { to: '/recetas', label: 'Recetas y preparaciones' },
+      { to: '/compras', label: 'Compras', modulo: 'moduloCompras' },
+      { to: '/proveedores', label: 'Proveedores', modulo: 'moduloCompras' },
+      { label: 'Movimientos' },
+    ],
+  },
+  { to: '/clientes', label: 'Clientes', icon: Icon.users, roles: ['ADMIN', 'CAJERO'] },
+
   { to: '/reportes', label: 'Reportes', icon: Icon.chart, roles: ['ADMIN'] },
   { to: '/usuarios', label: 'Usuarios', icon: Icon.crown, roles: ['ADMIN'], permiso: 'cajeroGestionaUsuarios' },
+  { to: '/cajas-bancos', label: 'Cajas y bancos', icon: Icon.bank, roles: ['ADMIN'], modulo: 'moduloCajasBancos' },
   { to: '/configuracion', label: 'Configuración', icon: Icon.gear, roles: ['ADMIN'] },
 ]
 
 // Admin siempre ve el item. Cajero lo ve si el dueno le delego ese permiso
 // puntual desde /configuracion/permisos (ver tambien App.jsx: el flag es el
 // mismo que protege la ruta, asi que nunca aparece un item que de clic no
-// lleve a nada).
+// lleve a nada). `permisoAny` es para un separador de seccion: se ve si
+// cualquiera de los permisos de lo que agrupa esta delegado, no hace falta
+// los dos. `modulo` es distinto de `permiso`: si el modulo esta apagado,
+// NINGUN rol lo ve, ni siquiera ADMIN -- no es un permiso delegable, es una
+// funcionalidad que el tenant puede no tener contratada (solo plataforma la
+// prende, ver Tenant.moduloCajasBancos).
 function visible(item, role, tenant) {
+  if (item.modulo && !tenant?.[item.modulo]) return false
   if (item.roles.includes(role)) return true
-  return role === 'CAJERO' && item.permiso && Boolean(tenant?.[item.permiso])
+  if (role !== 'CAJERO') return false
+  if (item.permiso) return Boolean(tenant?.[item.permiso])
+  if (item.permisoAny) return item.permisoAny.some((p) => Boolean(tenant?.[p]))
+  return false
 }
 
 const CLAVE_COLAPSADO = 'licorplus:sidebarColapsado'
@@ -132,12 +168,22 @@ export default function Shell({ children }) {
           {nav
             .filter((item) => visible(item, role, session?.tenant))
             .map((item) =>
-              item.children ? (
+              item.section ? (
+                <div key={`section:${item.section}`} className="pt-4 pb-1">
+                  <p
+                    className={`${colapsado ? 'hidden' : 'hidden nav:block'} px-3 text-[10px] font-bold tracking-wider text-muted/70 uppercase`}
+                  >
+                    {item.section}
+                  </p>
+                  <hr className={`${colapsado ? 'block' : 'block nav:hidden'} border-edge mx-3`} />
+                </div>
+              ) : item.children ? (
                 <NavGroup
                   key={item.label}
                   item={item}
                   active={item.children.some((c) => location.pathname === c.to)}
                   colapsado={colapsado}
+                  tenant={session?.tenant}
                 />
               ) : (
                 <NavLink
@@ -191,12 +237,46 @@ export default function Shell({ children }) {
   )
 }
 
-function NavGroup({ item, active, colapsado }) {
+function NavGroup({ item, active, colapsado, tenant }) {
   const [open, setOpen] = useState(active)
-  const expandido = open && !colapsado
+  const ref = useRef(null)
+
+  // Mismo criterio que `visible()` arriba, pero a nivel de hijo: un hijo con
+  // `modulo` (ej. Compras) solo se ve si el tenant lo tiene activo, sin
+  // importar el rol -- el padre ("Inventario") puede ser visible por otros
+  // hijos aunque este en particular este apagado.
+  const children = item.children.filter((c) => !c.modulo || tenant?.[c.modulo])
+
+  // `colapsado` solo cuenta la retraccion manual (>=900px). Debajo de 900px
+  // el menu se retrae solo por CSS (`nav:`), sin que este booleano se
+  // entere -- por eso aqui tambien seguimos el breakpoint con matchMedia,
+  // para saber en JS si estamos en modo solo-iconos por cualquiera de las
+  // dos razones.
+  const [anchoNav, setAnchoNav] = useState(() => window.matchMedia('(min-width: 900px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 900px)')
+    const onChange = (e) => setAnchoNav(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  const soloIconos = colapsado || !anchoNav
+  const expandido = open && !soloIconos
+
+  // En modo solo-iconos no hay espacio para expandir inline, asi que el
+  // submenu sale en un flyout flotante junto al icono. Se cierra solo con
+  // un clic afuera: si no, queda pegado abierto tapando lo de al lado.
+  useEffect(() => {
+    if (!open || !soloIconos) return
+    function onClickAfuera(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onClickAfuera)
+    return () => document.removeEventListener('mousedown', onClickAfuera)
+  }, [open, soloIconos])
 
   return (
-    <div>
+    <div ref={ref} className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -220,22 +300,49 @@ function NavGroup({ item, active, colapsado }) {
           vivo por si la ventana crece o se expande de nuevo. */}
       {expandido && (
         <div className="hidden nav:block pl-[22px] mt-1 space-y-1 border-l border-edge ml-5">
-          {item.children.map((c) => (
-            <NavLink
-              key={c.to}
-              to={c.to}
-              end
-              className={({ isActive }) =>
-                `block h-9 px-3 rounded-lg text-sm leading-9 transition-colors ${
-                  isActive ? 'bg-amber text-night font-medium' : 'text-muted hover:text-ink hover:bg-raised'
-                }`
-              }
-            >
-              {c.label}
-            </NavLink>
+          {children.map((c) => (
+            <ChildLink key={c.to || c.label} c={c} />
+          ))}
+        </div>
+      )}
+
+      {open && soloIconos && (
+        <div className="absolute left-full top-0 ml-2 z-20 min-w-[190px] card p-1.5 space-y-0.5 shadow-xl">
+          <p className="px-2.5 pt-1 pb-1.5 text-xs font-semibold text-muted">{item.label}</p>
+          {children.map((c) => (
+            <ChildLink key={c.to || c.label} c={c} onNavigate={() => setOpen(false)} />
           ))}
         </div>
       )}
     </div>
+  )
+}
+
+// Un hijo sin `to` todavia no tiene pantalla propia: se ve en el menu (para
+// que se sepa que existe en el diseno) pero no es un link de verdad, no
+// reacciona a hover ni foco. "Pronto" en vez de ocultarlo evita que alguien
+// piense que el boton no sirvio de nada.
+function ChildLink({ c, onNavigate }) {
+  if (!c.to) {
+    return (
+      <span className="flex flex-col gap-0.5 px-3 py-1.5 rounded-lg text-sm leading-tight text-muted/50 select-none">
+        {c.label}
+        <span className="text-[9px] font-semibold uppercase tracking-wide text-muted/40">Pronto</span>
+      </span>
+    )
+  }
+  return (
+    <NavLink
+      to={c.to}
+      end
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        `block px-3 py-1.5 rounded-lg text-sm leading-tight transition-colors ${
+          isActive ? 'bg-amber text-night font-medium' : 'text-muted hover:text-ink hover:bg-raised'
+        }`
+      }
+    >
+      {c.label}
+    </NavLink>
   )
 }

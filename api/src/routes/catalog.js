@@ -5,6 +5,8 @@ import { requirePermission } from '../middleware/permissions.js'
 import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
 import { subirImagenProducto } from '../lib/r2.js'
+import { costoDeReceta } from '../lib/costos.js'
+import { tituloInteligente } from '../lib/texto.js'
 
 export const catalogRoutes = Router()
 const adminOnly = requirePermission('cajeroEditaCatalogo')
@@ -106,36 +108,85 @@ catalogRoutes.get('/products', async (req, res) => {
     include: {
       category: { select: { id: true, name: true, color: true, allowsPour: true, active: true } },
       variants: { orderBy: { sortOrder: 'asc' } },
-      recipe: { include: { items: { include: { sourceProduct: { select: { id: true, name: true } } } } } },
+      recipe: {
+        include: {
+          items: {
+            include: {
+              sourceProduct: { select: { id: true, name: true } },
+              variant: { select: { id: true, name: true, stock: true, product: { select: { id: true, name: true } } } },
+              insumo: {
+                select: {
+                  id: true,
+                  name: true,
+                  stock: true,
+                  costoCompra: true,
+                  unidadCompra: true,
+                  unidadInventario: true,
+                  cantidadPromedioPorUnidad: true,
+                },
+              },
+            },
+          },
+        },
+      },
     },
     orderBy: { name: 'asc' },
   })
 
   // Un producto solo esta disponible si el y su categoria estan activos.
   // Se calcula, nunca se guarda: asi desactivar una categoria no pisa el estado
-  // individual de cada producto.
-  res.json(products.map((p) => ({ ...p, available: p.active && p.category.active })))
+  // individual de cada producto. El costo de una receta tambien se calcula
+  // siempre en el servidor (nunca confiar solo en el frontend): el front lo
+  // usa para mostrar margen/costo sin tener que recalcularlo el mismo.
+  res.json(
+    products.map((p) => ({
+      ...p,
+      available: p.active && p.category.active,
+      ...(p.kind === 'PREPARED' && { costoReceta: costoDeReceta(p.recipe?.items) }),
+    }))
+  )
 })
 
-// Un shot (o coctel/cubetazo) es una receta de un solo ingrediente vinculada a
-// una marca concreta: valida que cada ingrediente tenga producto + ml, y que
-// ese producto viva en una categoria que de verdad vende por ml.
+// Una receta (producto PREPARED: sanduche, cafe, shot...) es una lista de
+// ingredientes. El mecanismo actual es (c) N unidades-de-inventario de un
+// Insumo (Inventario > Recetas y preparaciones, costo real por insumo). Los
+// otros dos son legado de antes de que existiera Insumo: (a) ml de una marca
+// que vive en una categoria que vende por trago, (b) unidades de una
+// presentacion sellada. Una receta puede empezar vacia (sin ingredientes
+// todavia): se valida solo lo que venga.
 async function validarIngredientes(tenantId, items) {
-  if (!items?.length) return 'El shot necesita al menos un ingrediente'
-  for (const item of items) {
-    if (!item.sourceProductId || !item.ml) {
-      return 'Cada ingrediente necesita un producto de origen y sus ml'
-    }
-    const source = await prisma.product.findFirst({
-      where: { id: item.sourceProductId, tenantId },
-      include: { category: true },
-    })
-    if (!source) return 'El producto de origen del ingrediente no existe'
-    if (!source.category.allowsPour) {
-      return `"${source.name}" no esta en una categoria que vende por ml, no puede ser ingrediente de un shot`
+  for (const item of items || []) {
+    if (item.insumoId) {
+      if (!item.qty || item.qty < 1) return 'Cada ingrediente necesita su cantidad'
+      const insumo = await prisma.insumo.findFirst({ where: { id: item.insumoId, tenantId } })
+      if (!insumo) return 'Un insumo de la receta ya no existe'
+    } else if (item.variantId) {
+      if (!item.qty || item.qty < 1) return 'Cada ingrediente por unidades necesita su cantidad'
+      const variant = await prisma.variant.findFirst({
+        where: { id: item.variantId, product: { tenantId } },
+      })
+      if (!variant) return 'Una presentacion de la receta ya no existe'
+    } else if (item.sourceProductId && item.ml) {
+      const source = await prisma.product.findFirst({
+        where: { id: item.sourceProductId, tenantId },
+        include: { category: true },
+      })
+      if (!source) return 'El producto de origen del ingrediente no existe'
+      if (!source.category.allowsPour) {
+        return `"${source.name}" no esta en una categoria que vende por ml, no puede ser ingrediente de un trago`
+      }
+    } else {
+      return 'Cada ingrediente necesita un insumo con su cantidad'
     }
   }
   return null
+}
+
+function datosIngrediente(i) {
+  if (i.insumoId) return { insumoId: i.insumoId, qty: Number(i.qty) }
+  return i.variantId
+    ? { variantId: i.variantId, qty: Number(i.qty) }
+    : { sourceProductId: i.sourceProductId, ml: Number(i.ml) }
 }
 
 // El navegador ya redujo la imagen (max 800px, ~200KB) y la convirtio a
@@ -156,7 +207,7 @@ catalogRoutes.post('/products/image', adminOnly, async (req, res) => {
 })
 
 catalogRoutes.post('/products', adminOnly, async (req, res) => {
-  const { name, categoryId, kind = 'STOCK', imageUrl, variants = [], recipe } = req.body || {}
+  const { name, categoryId, kind = 'STOCK', description, imageUrl, variants = [], recipe, pin } = req.body || {}
   if (!name?.trim()) return res.status(400).json({ error: 'El producto necesita un nombre' })
   if (!categoryId) return res.status(400).json({ error: 'Elige una categoria' })
 
@@ -166,33 +217,46 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
   if (!category) return res.status(400).json({ error: 'La categoria no existe' })
 
   if (kind === 'PREPARED') {
-    // El flag vive en la categoria: si no permite venta por ml, el shot no
-    // tiene de donde servirse, sin importar que el producto diga otra cosa.
-    if (!category.allowsPour) {
-      return res.status(400).json({
-        error: `La categoria "${category.name}" no permite venta por shots. Activa esa opcion en la categoria o elige otra.`,
-      })
+    // El precio de venta de una receta es su unico precio (Recipe.price): no
+    // hay un Product.price aparte que se pueda desincronizar. Los
+    // ingredientes son opcionales al crear -- "Nueva receta" crea el
+    // producto primero y los agrega despues, en la pestaña de Receta y costos.
+    if (recipe?.price === undefined || recipe?.price === null) {
+      return res.status(400).json({ error: 'El precio de venta es obligatorio' })
     }
-    const error = await validarIngredientes(req.auth.tenantId, recipe?.items)
+    const error = await validarIngredientes(req.auth.tenantId, recipe.items)
     if (error) return res.status(400).json({ error })
+
+    // Cualquier cambio a una receta (crearla, editar ingredientes, precio,
+    // etc.) pide PIN de un encargado -- decision de Alejo (nov-2026): la
+    // receta define el costo real y lo que se descuenta de inventario en
+    // cada venta, asi que se protege igual que merma o anular una compra.
+    if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN del encargado' })
+    if (await pinLimitExcedido(req, res)) return
+    const encargado = await verificarPin(req.auth.tenantId, pin)
+    if (!encargado) return pinIncorrecto(req, res)
 
     const product = await prisma.product.create({
       data: {
         tenantId: req.auth.tenantId,
         categoryId,
-        name: name.trim(),
+        name: tituloInteligente(name.trim()),
         kind,
+        description: description?.trim() || null,
         imageUrl: imageUrl || null,
         recipe: {
           create: {
-            price: recipe.price ?? 0,
-            items: { create: recipe.items.map((i) => ({ sourceProductId: i.sourceProductId, ml: i.ml })) },
+            price: recipe.price,
+            items: { create: (recipe.items || []).map(datosIngrediente) },
           },
         },
       },
-      include: { category: true, recipe: { include: { items: { include: { sourceProduct: true } } } } },
+      include: {
+        category: true,
+        recipe: { include: { items: { include: { sourceProduct: true, variant: true, insumo: true } } } },
+      },
     })
-    return res.status(201).json(product)
+    return res.status(201).json({ ...product, costoReceta: costoDeReceta(product.recipe?.items) })
   }
 
   // Si la categoria permite venta por ml, cada presentacion debe declarar su
@@ -210,7 +274,7 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
     data: {
       tenantId: req.auth.tenantId,
       categoryId,
-      name: name.trim(),
+      name: tituloInteligente(name.trim()),
       kind,
       imageUrl: imageUrl || null,
       variants: {
@@ -230,40 +294,63 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
 })
 
 catalogRoutes.patch('/products/:id', adminOnly, async (req, res) => {
-  const { name, categoryId, imageUrl, recipe } = req.body || {}
+  const { name, categoryId, description, imageUrl, recipe, pin } = req.body || {}
   const existing = await prisma.product.findFirst({
     where: { id: req.params.id, tenantId: req.auth.tenantId },
     include: { recipe: true },
   })
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' })
 
+  // Cualquier cambio a una receta -- ingredientes, precio, o solo el nombre/
+  // categoria desde /productos (ver ProductoForm.jsx > "este producto tiene
+  // receta") -- pide PIN. Mismo criterio que crearla (ver POST /products).
+  if (existing.kind === 'PREPARED') {
+    if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN del encargado' })
+    if (await pinLimitExcedido(req, res)) return
+    const encargado = await verificarPin(req.auth.tenantId, pin)
+    if (!encargado) return pinIncorrecto(req, res)
+  }
+
   if (recipe) {
     if (existing.kind !== 'PREPARED') {
-      return res.status(400).json({ error: 'Solo un shot tiene receta para editar' })
+      return res.status(400).json({ error: 'Solo una receta tiene ingredientes para editar' })
     }
-    const error = await validarIngredientes(req.auth.tenantId, recipe.items)
-    if (error) return res.status(400).json({ error })
+    // recipe.items solo se toca si de verdad viene en el body: la pestaña de
+    // "Informacion general" guarda nombre/categoria/precio sin mandar items,
+    // y si aqui se reemplazara igual (deleteMany + create []) borraria la
+    // composicion completa sin que el usuario lo haya pedido.
+    if (recipe.items !== undefined) {
+      const error = await validarIngredientes(req.auth.tenantId, recipe.items)
+      if (error) return res.status(400).json({ error })
 
-    await prisma.recipeItem.deleteMany({ where: { recipeId: existing.recipe.id } })
-    await prisma.recipe.update({
-      where: { id: existing.recipe.id },
-      data: {
-        price: recipe.price ?? existing.recipe.price,
-        items: { create: recipe.items.map((i) => ({ sourceProductId: i.sourceProductId, ml: i.ml })) },
-      },
-    })
+      await prisma.recipeItem.deleteMany({ where: { recipeId: existing.recipe.id } })
+      await prisma.recipe.update({
+        where: { id: existing.recipe.id },
+        data: {
+          ...(recipe.price !== undefined && { price: recipe.price }),
+          items: { create: recipe.items.map(datosIngrediente) },
+        },
+      })
+    } else if (recipe.price !== undefined) {
+      await prisma.recipe.update({ where: { id: existing.recipe.id }, data: { price: recipe.price } })
+    }
   }
 
   const product = await prisma.product.update({
     where: { id: existing.id },
     data: {
-      ...(name !== undefined && { name: name.trim() }),
+      ...(name !== undefined && { name: tituloInteligente(name.trim()) }),
       ...(categoryId !== undefined && { categoryId }),
+      ...(description !== undefined && { description: description?.trim() || null }),
       ...(imageUrl !== undefined && { imageUrl }),
     },
-    include: { variants: true, category: true, recipe: { include: { items: { include: { sourceProduct: true } } } } },
+    include: {
+      variants: true,
+      category: true,
+      recipe: { include: { items: { include: { sourceProduct: true, variant: true, insumo: true } } } },
+    },
   })
-  res.json(product)
+  res.json({ ...product, ...(product.kind === 'PREPARED' && { costoReceta: costoDeReceta(product.recipe?.items) }) })
 })
 
 // Suspender/reactivar es mas sensible que editar nombre o precio: saca el
@@ -292,9 +379,13 @@ catalogRoutes.patch('/products/:id/suspend', soloAdminReal, async (req, res) => 
   const product = await prisma.product.update({
     where: { id: existing.id },
     data: { active },
-    include: { variants: true, category: true, recipe: { include: { items: { include: { sourceProduct: true } } } } },
+    include: {
+      variants: true,
+      category: true,
+      recipe: { include: { items: { include: { sourceProduct: true, variant: true, insumo: true } } } },
+    },
   })
-  res.json(product)
+  res.json({ ...product, ...(product.kind === 'PREPARED' && { costoReceta: costoDeReceta(product.recipe?.items) }) })
 })
 
 // --- Presentaciones --------------------------------------------------------

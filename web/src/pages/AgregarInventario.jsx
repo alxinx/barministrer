@@ -171,7 +171,6 @@ export default function AgregarInventario() {
       {creando && (
         <ProductoForm
           categories={categories}
-          products={products}
           product={null}
           initialName={search.trim()}
           onClose={() => setCreando(false)}

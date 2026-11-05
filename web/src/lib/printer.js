@@ -42,10 +42,6 @@ function baudRate() {
   return Number(localStorage.getItem(CLAVE_BAUD)) || 9600
 }
 
-export function setBaudRate(n) {
-  localStorage.setItem(CLAVE_BAUD, String(n))
-}
-
 export function estaConectada() {
   return Boolean(puerto?.writable)
 }
@@ -75,15 +71,6 @@ export async function emparejar() {
   await seleccionado.open({ baudRate: baudRate() })
   puerto = seleccionado
   return true
-}
-
-export async function desconectar() {
-  try {
-    await puerto?.close()
-  } catch {
-    // ya estaba cerrado
-  }
-  puerto = null
 }
 
 export async function enviar(bytes) {

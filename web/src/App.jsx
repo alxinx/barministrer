@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { PlatformAuthProvider, usePlatformAuth } from './context/PlatformAuthContext'
 import { ShiftProvider } from './context/ShiftContext'
 import Shell from './components/Shell'
+import ModuloNoDisponible from './components/ModuloNoDisponible'
 
 // Cada pantalla es su propio chunk: una mesera solo opera /venta y nunca
 // deberia descargar el codigo de Reportes, Usuarios, Permisos o el editor de
@@ -14,6 +15,10 @@ const NuevaVenta = lazy(() => import('./pages/NuevaVenta'))
 const Distribucion = lazy(() => import('./pages/Distribucion'))
 const Productos = lazy(() => import('./pages/Productos'))
 const AgregarInventario = lazy(() => import('./pages/AgregarInventario'))
+const Insumos = lazy(() => import('./pages/Insumos'))
+const Recetas = lazy(() => import('./pages/Recetas'))
+const Compras = lazy(() => import('./pages/Compras'))
+const Proveedores = lazy(() => import('./pages/Proveedores'))
 const Caja = lazy(() => import('./pages/Caja'))
 const TurnoDetalle = lazy(() => import('./pages/TurnoDetalle'))
 const Clientes = lazy(() => import('./pages/Clientes'))
@@ -25,6 +30,7 @@ const UtilidadProducto = lazy(() => import('./pages/UtilidadProducto'))
 const Configuracion = lazy(() => import('./pages/Configuracion'))
 const DatosBar = lazy(() => import('./pages/DatosBar'))
 const Permisos = lazy(() => import('./pages/Permisos'))
+const CajasBancos = lazy(() => import('./pages/CajasBancos'))
 const PlataformaLogin = lazy(() => import('./pages/plataforma/Login'))
 const PlataformaPanel = lazy(() => import('./pages/plataforma/Panel'))
 const PlataformaTarifas = lazy(() => import('./pages/plataforma/Tarifas'))
@@ -37,10 +43,24 @@ function Cargando() {
 // `permiso` es el flag de Tenant que el dueno puede prender para delegarle
 // esto a CAJERO (ver /configuracion/permisos). ADMIN siempre entra; cualquier
 // otro rol necesita que ese flag especifico este en true para este tenant.
-function Protegida({ children, soloAdmin = false, roles, permiso }) {
+// `modulo` es distinto: si el tenant no lo tiene contratado, NADIE entra, ni
+// siquiera ADMIN -- solo plataforma lo activa (ver Tenant.moduloCajasBancos).
+// A diferencia de los demas casos, no redirige: se queda en la misma ruta con
+// el Shell puesto (sidebar y topbar visibles) y muestra ModuloNoDisponible en
+// el area de contenido -- tambien reacciona en vivo si el modulo se apaga
+// mientras la persona esta parada ahi (ver el socket 'tenant:actualizado' en
+// AuthContext, que refresca session.tenant).
+function Protegida({ children, soloAdmin = false, roles, permiso, modulo, moduloNombre }) {
   const { session, loading } = useAuth()
   if (loading) return <Cargando />
   if (!session) return <Navigate to="/entrar" replace />
+  if (modulo && !session.tenant?.[modulo]) {
+    return (
+      <Shell>
+        <ModuloNoDisponible nombre={moduloNombre} />
+      </Shell>
+    )
+  }
   if (permiso) {
     const tienePermiso = session.user.role === 'ADMIN' || (session.user.role === 'CAJERO' && session.tenant[permiso])
     if (!tienePermiso) return <Navigate to="/venta" replace />
@@ -111,6 +131,30 @@ export default function App() {
                 path="/productos/inventario"
                 element={<Protegida permiso="cajeroGestionaInventario"><AgregarInventario /></Protegida>}
               />
+              <Route
+                path="/insumos"
+                element={<Protegida permiso="cajeroGestionaInventario"><Insumos /></Protegida>}
+              />
+              <Route
+                path="/recetas"
+                element={<Protegida permiso="cajeroGestionaInventario"><Recetas /></Protegida>}
+              />
+              <Route
+                path="/compras"
+                element={
+                  <Protegida modulo="moduloCompras" moduloNombre="Compras y proveedores" permiso="cajeroGestionaInventario">
+                    <Compras />
+                  </Protegida>
+                }
+              />
+              <Route
+                path="/proveedores"
+                element={
+                  <Protegida modulo="moduloCompras" moduloNombre="Compras y proveedores" permiso="cajeroGestionaInventario">
+                    <Proveedores />
+                  </Protegida>
+                }
+              />
               <Route path="/reportes" element={<Protegida soloAdmin><Reportes /></Protegida>} />
               <Route
                 path="/reportes/utilidad-producto"
@@ -120,6 +164,14 @@ export default function App() {
               <Route
                 path="/reportes/empleados"
                 element={<Protegida soloAdmin><Pendiente titulo="Reporte de empleados" /></Protegida>}
+              />
+              <Route
+                path="/cajas-bancos"
+                element={
+                  <Protegida modulo="moduloCajasBancos" moduloNombre="Cajas y bancos" soloAdmin>
+                    <CajasBancos />
+                  </Protegida>
+                }
               />
               <Route path="/configuracion" element={<Protegida soloAdmin><Configuracion /></Protegida>} />
               <Route path="/configuracion/datos" element={<Protegida soloAdmin><DatosBar /></Protegida>} />

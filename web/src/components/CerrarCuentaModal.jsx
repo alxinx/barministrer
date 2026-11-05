@@ -4,14 +4,25 @@ import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
 import PinField from './PinField'
 import { usePinVerificado } from '../hooks/usePinVerificado'
+import { useCuentasPago } from '../hooks/useCuentasPago'
 
-const METHODS = [
-  { key: 'EFECTIVO', label: 'Efectivo' },
-  { key: 'TRANSFERENCIA', label: 'Transferencia Bancolombia' },
-  { key: 'NEQUI', label: 'Nequi' },
-  { key: 'DATAFONO', label: 'Datáfono' },
-  { key: 'CREDITO', label: 'Crédito (fiado)' },
+// Tarjetas de metodo fijas (ver tarjeta "Finalizar Venta" de referencia que
+// trajo Alejo): Transferencia es una sola tarjeta que cubre banco Y
+// billetera -- cual de los dos metodos reales se manda (TRANSFERENCIA o
+// NEQUI) lo decide el pill de cuenta que se elija debajo, nunca el cajero
+// directamente. Credito solo aparece si hay cliente vinculado (ver abajo).
+const METHOD_CARDS = [
+  { key: 'EFECTIVO', label: 'Efectivo', subtitle: 'Pago físico', icon: 'cash' },
+  { key: 'TRANSFERENCIA', label: 'Transferencia', subtitle: 'Bancos y billeteras', icon: 'bank' },
+  { key: 'DATAFONO', label: 'Datáfono', subtitle: 'Pago con tarjeta', icon: 'card' },
+  { key: 'CREDITO', label: 'Crédito', subtitle: 'Fiado', icon: 'clipboard' },
 ]
+
+// La tarjeta "Transferencia" cubre tanto TRANSFERENCIA (banco) como NEQUI
+// (billetera): una fila cae bajo esa tarjeta sea cual sea el que tenga.
+function tarjetaDeMetodo(method) {
+  return method === 'NEQUI' ? 'TRANSFERENCIA' : method
+}
 
 /**
  * Cierra la cuenta: paga en uno o varios medios con cambio si es en efectivo,
@@ -36,7 +47,8 @@ export default function CerrarCuentaModal({
   onClose,
   onConfirm,
 }) {
-  const metodosDisponibles = customer ? METHODS : METHODS.filter((m) => m.key !== 'CREDITO')
+  const cuentasPago = useCuentasPago()
+  const tarjetasDisponibles = customer ? METHOD_CARDS : METHOD_CARDS.filter((c) => c.key !== 'CREDITO')
   const nombreCliente = customer
     ? [customer.firstName, customer.lastName].filter(Boolean).join(' ') + (customer.alias ? ` (${customer.alias})` : '')
     : null
@@ -44,13 +56,18 @@ export default function CerrarCuentaModal({
   const [desgloseAbierto, setDesgloseAbierto] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
   const [splitCount, setSplitCount] = useState(1)
-  const [rows, setRows] = useState([{ method: 'EFECTIVO', amount: String(total), tendered: '' }])
+  const [rows, setRows] = useState([{ method: 'EFECTIVO', amount: String(total), tendered: '', referencia: '' }])
   const [clickCount, setClickCount] = useState(0)
   const [courtesy, setCourtesy] = useState(false)
   const [totalClickCount, setTotalClickCount] = useState(0)
   const [discountOpen, setDiscountOpen] = useState(false)
   const [finalValue, setFinalValue] = useState(String(total))
   const [cost, setCost] = useState(null)
+  // Solo importa cuando hay cuentas registradas: controla si se ven los
+  // pills de bancos/billeteras dentro de la propia tarjeta "Transferencia"
+  // (ver tarjetasDisponibles abajo). Sin cuentas, esa tarjeta vuelve a
+  // comportarse como una mas (prende/apaga un campo generico).
+  const [transferenciaExpandida, setTransferenciaExpandida] = useState(false)
   const {
     pin,
     setPin,
@@ -98,11 +115,51 @@ export default function CerrarCuentaModal({
   function setRow(i, patch) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   }
-  function addRow() {
-    setRows((prev) => [...prev, { method: 'EFECTIVO', amount: restante > 0 ? String(restante) : '', tendered: '' }])
-  }
   function removeRow(i) {
     setRows((prev) => prev.filter((_, idx) => idx !== i))
+  }
+  // Cada tarjeta es un interruptor para su campo GENERICO (sin cuenta real
+  // ligada): tocarla prende/apaga ese campo, asi que combinar efectivo +
+  // transferencia es tocar las dos tarjetas, no reemplazar una por otra.
+  // Nunca toca las filas que ya tienen una cuenta especifica elegida por
+  // pill (ver agregarFilaCuenta) -- esas se quitan una por una con su propio
+  // boton. Siempre tiene que quedar al menos un medio activo, y no se puede
+  // agregar un medio nuevo si ya no falta nada por asignar (ver restante).
+  function alternarMetodo(card) {
+    // Con cuentas registradas, la tarjeta "Transferencia" no agrega nada por
+    // si sola: solo abre/cierra sus pills (ver tarjetasDisponibles abajo).
+    if (card.key === 'TRANSFERENCIA' && cuentasPago.length > 0) {
+      setTransferenciaExpandida((v) => !v)
+      return
+    }
+    const idx = rows.findIndex((r) => tarjetaDeMetodo(r.method) === card.key && !r.cuentaFinancieraId)
+    if (idx >= 0) {
+      if (rows.length === 1) return
+      removeRow(idx)
+    } else {
+      if (restante <= 0) return
+      setRows((prev) => [
+        ...prev,
+        { method: card.key, amount: restante > 0 ? String(restante) : '0', tendered: '', referencia: '' },
+      ])
+    }
+  }
+  // Cada clic en un pill SUMA una fila nueva, nunca reemplaza una existente:
+  // un cliente puede pagar parte con Nequi, parte con una cuenta de
+  // Bancolombia y parte con otra cuenta de Bancolombia -- son 3 vouchers
+  // distintos, 3 filas distintas, aunque dos caigan en el mismo banco.
+  function agregarFilaCuenta(cuenta) {
+    if (restante <= 0) return
+    setRows((prev) => [
+      ...prev,
+      {
+        method: cuenta.tipo === 'BILLETERA' ? 'NEQUI' : 'TRANSFERENCIA',
+        cuentaFinancieraId: cuenta.id,
+        amount: restante > 0 ? String(restante) : '0',
+        tendered: '',
+        referencia: '',
+      },
+    ])
   }
 
   // Mientras solo haya un medio de pago, lo mas comun, se mantiene igualado
@@ -172,6 +229,8 @@ export default function CerrarCuentaModal({
           method: r.method,
           amount: Number(r.amount) || 0,
           ...(r.method === 'EFECTIVO' && r.tendered ? { tendered: Number(r.tendered) } : {}),
+          ...(r.cuentaFinancieraId ? { cuentaFinancieraId: r.cuentaFinancieraId } : {}),
+          ...(r.referencia?.trim() ? { referencia: r.referencia.trim() } : {}),
         })),
         splitCount: Number(splitCount) || 1,
         ...(hayDescuento ? { discountAmount: descuento } : {}),
@@ -188,7 +247,7 @@ export default function CerrarCuentaModal({
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className={`card w-full max-w-md p-5 space-y-5 max-h-[90vh] overflow-y-auto transition-colors ${
+        className={`card w-full max-w-lg p-5 space-y-5 max-h-[90vh] overflow-y-auto transition-colors ${
           perdida ? 'border-2 border-ocupada' : ''
         }`}
       >
@@ -313,47 +372,142 @@ export default function CerrarCuentaModal({
 
         {!courtesy && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="label mb-0">Medios de pago</span>
-              <button type="button" onClick={addRow} className="text-xs font-semibold text-amberText flex items-center gap-1">
-                <Icon.plus width={14} height={14} /> Agregar medio
-              </button>
+            <label className="label mb-0">Medios de pago</label>
+
+            {/* Cada tarjeta prende/apaga su propio campo -- tocar una segunda
+                no reemplaza la primera, las combina. Si no queda nada por
+                asignar, una tarjeta todavia apagada no se puede prender
+                (quitar o bajar un monto existente la vuelve a habilitar). */}
+            <div className="grid grid-cols-2 gap-2">
+              {tarjetasDisponibles.map((card) => {
+                const CardIcon = Icon[card.icon]
+                const esTransferenciaConCuentas = card.key === 'TRANSFERENCIA' && cuentasPago.length > 0
+                const activa = esTransferenciaConCuentas
+                  ? transferenciaExpandida || rows.some((r) => tarjetaDeMetodo(r.method) === 'TRANSFERENCIA')
+                  : rows.some((r) => tarjetaDeMetodo(r.method) === card.key)
+                // Deshabilitada solo si tocarla agregaria un medio nuevo (no
+                // esta activa, no es el acordeon de transferencia) y ya no
+                // falta nada por pagar.
+                const deshabilitada = !activa && !esTransferenciaConCuentas && restante <= 0
+
+                return (
+                  <button
+                    key={card.key}
+                    type="button"
+                    onClick={() => alternarMetodo(card)}
+                    disabled={deshabilitada}
+                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border-2 text-left transition-colors ${
+                      activa ? 'border-amber bg-amber/10' : 'border-edge bg-raised hover:border-muted'
+                    } ${deshabilitada ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  >
+                    <span
+                      className={`w-8 h-8 rounded-lg grid place-items-center shrink-0 ${
+                        activa ? 'bg-amber text-night' : 'bg-night/30 text-muted'
+                      }`}
+                    >
+                      <CardIcon width={16} height={16} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold truncate">{card.label}</p>
+                      <p className="text-[11px] text-muted truncate">{card.subtitle}</p>
+                    </span>
+                    {esTransferenciaConCuentas && (
+                      <Icon.chevronDown
+                        width={14}
+                        height={14}
+                        className={`shrink-0 transition-transform ${transferenciaExpandida ? 'rotate-180' : ''}`}
+                      />
+                    )}
+                  </button>
+                )
+              })}
             </div>
 
+            {/* El detalle de Transferencia (pills + una linea por cuenta
+                elegida, con su monto y su comprobante juntos) vive en esta
+                misma zona de abajo, junto a los demas medios -- nunca
+                metido entre la tarjeta de Transferencia y la de Datafono en
+                la grilla de arriba. */}
+            {cuentasPago.length > 0 &&
+              (transferenciaExpandida || rows.some((r) => tarjetaDeMetodo(r.method) === 'TRANSFERENCIA')) && (
+                <div className="bg-raised border border-edge rounded-xl p-3 space-y-2.5">
+                  <p className="text-xs font-semibold text-muted">Transferencia</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cuentasPago.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => agregarFilaCuenta(c)}
+                        disabled={restante <= 0}
+                        className={`px-2.5 py-1 rounded-pill text-xs font-semibold border border-edge text-muted hover:text-ink hover:border-muted transition-colors ${
+                          restante <= 0 ? 'opacity-40 cursor-not-allowed' : ''
+                        }`}
+                      >
+                        + {c.nombre}
+                      </button>
+                    ))}
+                  </div>
+
+                  {rows.map((r, i) =>
+                    tarjetaDeMetodo(r.method) !== 'TRANSFERENCIA' ? null : (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-muted w-20 shrink-0 truncate">
+                          {cuentasPago.find((c) => c.id === r.cuentaFinancieraId)?.nombre}
+                        </span>
+                        <MoneyInput
+                          className="field h-9 flex-1 min-w-0"
+                          value={r.amount}
+                          onChange={(v) => setRow(i, { amount: v })}
+                          placeholder="Monto"
+                        />
+                        <input
+                          className="field h-9 flex-1 min-w-0"
+                          value={r.referencia || ''}
+                          onChange={(e) => setRow(i, { referencia: e.target.value })}
+                          placeholder="Nº comprobante"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeRow(i)}
+                          aria-label="Quitar esta transferencia"
+                          className="text-muted hover:text-ocupada shrink-0"
+                        >
+                          <Icon.trash width={15} height={15} />
+                        </button>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+
             {rows.map((r, i) => {
+              // Las filas de transferencia con cuenta real ya se muestran
+              // dentro de su propia tarjeta (arriba); aqui solo van
+              // efectivo, datafono, credito, y transferencia generica (solo
+              // existe sin ningun banco/billetera registrado).
+              if (tarjetaDeMetodo(r.method) === 'TRANSFERENCIA' && cuentasPago.length > 0) return null
+              const card = METHOD_CARDS.find((c) => c.key === tarjetaDeMetodo(r.method))
+              const esTransferencia = tarjetaDeMetodo(r.method) === 'TRANSFERENCIA'
               const cambio = r.method === 'EFECTIVO' && r.tendered ? Number(r.tendered) - Number(r.amount || 0) : 0
               return (
                 <div key={i} className="bg-raised border border-edge rounded-xl p-3 space-y-2.5">
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label className="label text-xs">Medio de pago</label>
-                      <select
-                        className="field h-9"
-                        value={r.method}
-                        onChange={(e) => setRow(i, { method: e.target.value, tendered: '' })}
-                      >
-                        {metodosDisponibles.map((m) => (
-                          <option key={m.key} value={m.key}>
-                            {m.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-muted">{card?.label}</p>
                     {rows.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeRow(i)}
                         aria-label="Quitar este medio de pago"
-                        className="h-9 px-1 text-muted hover:text-ocupada"
+                        className="text-muted hover:text-ocupada"
                       >
-                        <Icon.trash width={16} height={16} />
+                        <Icon.trash width={15} height={15} />
                       </button>
                     )}
                   </div>
 
                   <div className="flex gap-2">
                     <div className="flex-1">
-                      <label className="label text-xs">Monto con este medio</label>
+                      <label className="label text-xs">{esTransferencia ? 'Monto' : 'Monto con este medio'}</label>
                       <MoneyInput className="field h-9" value={r.amount} onChange={(v) => setRow(i, { amount: v })} />
                     </div>
                     {r.method === 'EFECTIVO' && (
@@ -364,6 +518,17 @@ export default function CerrarCuentaModal({
                           value={r.tendered}
                           onChange={(v) => setRow(i, { tendered: v })}
                           placeholder="Igual al monto"
+                        />
+                      </div>
+                    )}
+                    {esTransferencia && (
+                      <div className="flex-1">
+                        <label className="label text-xs">Nº comprobante (opcional)</label>
+                        <input
+                          className="field h-9"
+                          value={r.referencia || ''}
+                          onChange={(e) => setRow(i, { referencia: e.target.value })}
+                          placeholder="Ej: 123456789"
                         />
                       </div>
                     )}

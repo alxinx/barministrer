@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { categoryTree, flattenCategories } from '../lib/categories'
@@ -10,17 +11,19 @@ import { usePinVerificado } from '../hooks/usePinVerificado'
 import TicketMermaModal from './TicketMermaModal'
 
 /**
- * Crea o edita un producto. Dos tipos, un solo formulario:
- * - STOCK: presentaciones selladas con stock propio (botella, unidad...).
- * - PREPARED (shot): una receta de un solo ingrediente vinculada a una marca
- *   concreta. Solo existe si la categoria tiene allowsPour, porque ahi vive
- *   el permiso de vender por ml, no en el producto.
+ * Crea o edita un producto STOCK (presentacion sellada con stock propio:
+ * botella, unidad...). Un producto PREPARED (receta: shot, sanduche, cafe)
+ * ya no se crea ni se edita aqui -- eso vive en Inventario > Recetas y
+ * preparaciones, que ademas arma la composicion con Insumo y calcula costo
+ * real. Si este formulario abre un producto PREPARED existente (legado, o
+ * creado desde la otra pantalla), solo deja tocar lo general (nombre,
+ * categoria, imagen, activo) y manda a esa pantalla para la receta.
  */
-export default function ProductoForm({ categories, products, product, initialName, onClose, onSaved }) {
+export default function ProductoForm({ categories, product, initialName, onClose, onSaved }) {
   const { session } = useAuth()
   const esAdminReal = session?.user.role === 'ADMIN' // nunca delegable: ni cajeroEditaCatalogo lo habilita
   const isEdit = Boolean(product)
-  const [kind, setKind] = useState(product?.kind || 'STOCK')
+  const esPrepared = product?.kind === 'PREPARED'
   const [categoryId, setCategoryId] = useState(product?.categoryId || '')
   const [name, setName] = useState(product?.name || initialName || '')
   const [variants, setVariants] = useState(
@@ -34,12 +37,6 @@ export default function ProductoForm({ categories, products, product, initialNam
           stock: v.stock,
         }))
       : [{ name: '', price: '', cost: '', volumeMl: '', stock: '' }]
-  )
-  const [recipePrice, setRecipePrice] = useState(product?.recipe?.price || '')
-  const [recipeItems, setRecipeItems] = useState(
-    product?.recipe?.items?.length
-      ? product.recipe.items.map((i) => ({ sourceProductId: i.sourceProductId, ml: i.ml }))
-      : [{ sourceProductId: '', ml: 30 }]
   )
   const [imageUrl, setImageUrl] = useState(product?.imageUrl || '')
   const [subiendoImagen, setSubiendoImagen] = useState(false)
@@ -125,21 +122,8 @@ export default function ProductoForm({ categories, products, product, initialNam
   const category = categories.find((c) => c.id === categoryId)
   const allowsPour = Boolean(category?.allowsPour)
 
-  // El shot solo existe si la categoria vende por ml. Si cambian de categoria
-  // a una que no, no se queda a medias: vuelve a presentacion sellada.
-  useEffect(() => {
-    if (kind === 'PREPARED' && !allowsPour) setKind('STOCK')
-  }, [allowsPour, kind])
-
-  const ingredientOptions = products.filter(
-    (p) => p.kind === 'STOCK' && p.category?.allowsPour && p.id !== product?.id
-  )
-
   function setVariant(i, patch) {
     setVariants((prev) => prev.map((v, idx) => (idx === i ? { ...v, ...patch } : v)))
-  }
-  function setIngredient(i, patch) {
-    setRecipeItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)))
   }
 
   async function submit(e) {
@@ -147,30 +131,25 @@ export default function ProductoForm({ categories, products, product, initialNam
     setError('')
     if (!name.trim()) return setError('El producto necesita un nombre')
     if (!categoryId) return setError('Elige una categoría')
+    if (esPrepared && !pinValido) return setError('Escribe el PIN del encargado para guardar cambios en una receta')
 
-    let body
-    if (kind === 'PREPARED') {
-      const items = recipeItems
-        .filter((i) => i.sourceProductId && i.ml)
-        .map((i) => ({ sourceProductId: i.sourceProductId, ml: Number(i.ml) }))
-      if (!items.length) return setError('Agrega al menos un ingrediente con su marca y sus ml')
-      body = { name: name.trim(), categoryId, kind, recipe: { price: Number(recipePrice) || 0, items } }
-    } else {
+    const body = { name: name.trim(), categoryId, imageUrl: imageUrl || null }
+    if (esPrepared) body.pin = pin
+    if (!esPrepared) {
       const clean = variants.filter((v) => v.name.trim())
       if (!clean.length) return setError('Agrega al menos una presentación')
       if (allowsPour && clean.some((v) => !v.volumeMl)) {
         return setError('Cada presentación necesita su volumen en ml para poder vender shots')
       }
-      body = { name: name.trim(), categoryId, kind: 'STOCK' }
+      body.kind = 'STOCK'
     }
-    body.imageUrl = imageUrl || null
 
     setSaving(true)
     try {
       let saved
       if (isEdit) {
         saved = await api(`/products/${product.id}`, { method: 'PATCH', body })
-        if (kind !== 'PREPARED') {
+        if (!esPrepared) {
           // Quitar una presentacion con el basurero es local hasta aqui: lo
           // que ya existia en el producto y ya no esta en la lista actual se
           // borra de verdad al guardar.
@@ -191,17 +170,15 @@ export default function ProductoForm({ categories, products, product, initialNam
           }
         }
       } else {
-        if (kind !== 'PREPARED') {
-          body.variants = variants
-            .filter((v) => v.name.trim())
-            .map((v) => ({
-              name: v.name.trim(),
-              price: Number(v.price) || 0,
-              cost: Number(v.cost) || 0,
-              volumeMl: v.volumeMl ? Number(v.volumeMl) : null,
-              stock: Number(v.stock) || 0,
-            }))
-        }
+        body.variants = variants
+          .filter((v) => v.name.trim())
+          .map((v) => ({
+            name: v.name.trim(),
+            price: Number(v.price) || 0,
+            cost: Number(v.cost) || 0,
+            volumeMl: v.volumeMl ? Number(v.volumeMl) : null,
+            stock: Number(v.stock) || 0,
+          }))
         saved = await api('/products', { method: 'POST', body })
       }
       onSaved(saved)
@@ -365,7 +342,7 @@ export default function ProductoForm({ categories, products, product, initialNam
             </option>
             {options.map((c) => (
               <option key={c.id} value={c.id}>
-                {'— '.repeat(c.depth)}
+                {'— '.repeat(c.depth)}
                 {c.name}
                 {c.allowsPour ? ' · ml' : ''}
               </option>
@@ -383,33 +360,25 @@ export default function ProductoForm({ categories, products, product, initialNam
           />
         </div>
 
-        {!isEdit && (
-          <div>
-            <label className="label">Tipo de producto</label>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setKind('STOCK')} className={tabClass(kind === 'STOCK')}>
-                Presentación sellada
-              </button>
-              <button
-                type="button"
-                disabled={!allowsPour}
-                onClick={() => setKind('PREPARED')}
-                className={tabClass(kind === 'PREPARED')}
-              >
-                <Icon.drop width={16} height={16} />
-                Shot
-              </button>
-            </div>
-            {!allowsPour && (
-              <p className="text-xs text-muted mt-1.5">
-                Un shot solo existe en una categoría que venda por ml. Elige esa categoría arriba para
-                habilitarlo.
-              </p>
-            )}
+        {esPrepared ? (
+          <div className="space-y-3">
+            <p className="text-xs text-muted bg-raised border border-edge rounded-xl px-3 py-2.5">
+              Este producto tiene receta. Sus ingredientes, precio y costo se editan en{' '}
+              <Link to="/recetas" className="text-amberText font-medium" onClick={onClose}>
+                Inventario → Recetas y preparaciones
+              </Link>
+              . Cualquier cambio aquí, incluido el nombre, necesita el PIN del encargado.
+            </p>
+            <PinField
+              pin={pin}
+              onChange={setPin}
+              verificando={verificandoPin}
+              error={pinError}
+              bloqueado={pinBloqueado}
+              segundosRestantes={pinSegundosRestantes}
+            />
           </div>
-        )}
-
-        {kind === 'STOCK' ? (
+        ) : (
           <div className="space-y-3">
             {/* Un producto es una sola presentacion: media, botella y garrafa
                 del mismo licor son productos separados, no variantes de uno
@@ -469,69 +438,6 @@ export default function ProductoForm({ categories, products, product, initialNam
               </div>
             ))}
           </div>
-        ) : (
-          <div className="space-y-3">
-            <div>
-              <label className="label">Precio del shot</label>
-              <MoneyInput className="field" value={recipePrice} onChange={setRecipePrice} />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="label mb-0">Ingredientes</span>
-              <button
-                type="button"
-                onClick={() => setRecipeItems((prev) => [...prev, { sourceProductId: '', ml: 30 }])}
-                className="text-xs font-semibold text-amberText flex items-center gap-1"
-              >
-                <Icon.plus width={14} height={14} /> Agregar
-              </button>
-            </div>
-
-            {recipeItems.map((item, i) => (
-              <div key={i} className="flex flex-wrap gap-2 items-end bg-raised border border-edge rounded-xl p-3">
-                <div className="flex-1 min-w-[160px]">
-                  <label className="label text-xs">Marca</label>
-                  <select
-                    className="field h-9"
-                    value={item.sourceProductId}
-                    onChange={(e) => setIngredient(i, { sourceProductId: e.target.value })}
-                  >
-                    <option value="">Elige una marca</option>
-                    {ingredientOptions.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="w-20">
-                  <label className="label text-xs">ml</label>
-                  <input
-                    type="number"
-                    className="field h-9"
-                    value={item.ml}
-                    onChange={(e) => setIngredient(i, { ml: e.target.value })}
-                  />
-                </div>
-                {recipeItems.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => setRecipeItems((prev) => prev.filter((_, idx) => idx !== i))}
-                    className="text-muted hover:text-ocupada self-center h-9 px-1"
-                  >
-                    <Icon.trash width={16} height={16} />
-                  </button>
-                )}
-              </div>
-            ))}
-
-            {!ingredientOptions.length && (
-              <p className="text-xs text-ocupada">
-                No hay ninguna marca que venda por ml todavía. Crea primero la botella (ej: Aguardiente
-                Antioqueño) y después el shot.
-              </p>
-            )}
-          </div>
         )}
 
         {isEdit && esAdminReal && (
@@ -555,7 +461,7 @@ export default function ProductoForm({ categories, products, product, initialNam
           </div>
         )}
 
-        {isEdit && esAdminReal && product.kind === 'STOCK' && (
+        {isEdit && esAdminReal && !esPrepared && (
           <div className="flex items-center justify-between bg-raised border border-edge rounded-xl p-3">
             <div>
               <p className="text-sm font-medium">Merma o pérdida</p>
@@ -613,7 +519,7 @@ export default function ProductoForm({ categories, products, product, initialNam
           <button type="button" onClick={onClose} className="btn-ghost flex-1">
             Cancelar
           </button>
-          <button type="submit" disabled={saving} className="btn-primary flex-1">
+          <button type="submit" disabled={saving || (esPrepared && !pinValido)} className="btn-primary flex-1">
             {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear producto'}
           </button>
         </div>
@@ -633,10 +539,4 @@ export default function ProductoForm({ categories, products, product, initialNam
       )}
     </div>
   )
-}
-
-function tabClass(active) {
-  return `flex-1 h-10 rounded-xl text-sm font-semibold border flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-    active ? 'bg-amber text-night border-amber' : 'bg-raised text-muted border-edge hover:text-ink'
-  }`
 }

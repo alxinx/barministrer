@@ -42,3 +42,37 @@ export function resizeLogo(file) {
 export function resizeProductImage(file) {
   return resizeImage(file, { maxWidth: 800, maxHeight: 800, format: 'image/webp', quality: 0.9, maxBytes: 200_000 })
 }
+
+// Foto de insumo: mismas reglas que la de producto, carpeta propia "insumos/".
+export function resizeInsumoImage(file) {
+  return resizeImage(file, { maxWidth: 800, maxHeight: 800, format: 'image/webp', quality: 0.9, maxBytes: 200_000 })
+}
+
+function leerComoDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'))
+    reader.readAsDataURL(file)
+  })
+}
+
+// Factura de una compra: foto o PDF del documento del proveedor -- un soporte
+// contable, no una imagen ilustrativa, asi que a diferencia de las de arriba
+// no se convierte a webp ni se aprieta tanto (los numeros tienen que seguir
+// siendo legibles). Un PDF no se puede recomprimir desde el navegador, asi
+// que solo se valida su peso; una foto si se reduce para quedar bajo el
+// limite que exige el servidor (ver POST /compras/factura).
+const MAX_FACTURA_BYTES = 1_500_000
+export async function prepararFactura(file) {
+  if (file.type === 'application/pdf') {
+    if (file.size > MAX_FACTURA_BYTES) {
+      throw new Error('El PDF pesa más de 1.5 MB; usa uno más liviano o adjunta una foto en su lugar')
+    }
+    return leerComoDataURL(file)
+  }
+  if (!['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
+    throw new Error('Solo se aceptan facturas en JPG, PNG, GIF o PDF')
+  }
+  return resizeImage(file, { maxWidth: 1800, maxHeight: 1800, format: 'image/jpeg', quality: 0.85, maxBytes: 1_300_000 })
+}

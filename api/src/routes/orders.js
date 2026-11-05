@@ -6,6 +6,7 @@ import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
 import { avisarEncargados, avisarTenant } from '../lib/realtime.js'
 import { calcularCostos } from '../lib/costos.js'
+import { resolverCuentaPago } from '../lib/cuentaPago.js'
 
 export const orderRoutes = Router()
 const puedeCerrar = requireRole('ADMIN', 'CAJERO') // cobrar/cerrar cuenta no es cosa de mesera
@@ -18,7 +19,9 @@ const ITEM_INCLUDE = {
 }
 const ORDER_INCLUDE = {
   items: { include: ITEM_INCLUDE, orderBy: { orderedAt: 'asc' } },
-  payments: { orderBy: { createdAt: 'asc' } },
+  // cuentaFinanciera: para que la factura muestre a cual banco/billetera
+  // real entro cada pago (ver ReciboModal.jsx), no solo el metodo generico.
+  payments: { orderBy: { createdAt: 'asc' }, include: { cuentaFinanciera: { select: { nombre: true } } } },
   openedBy: { select: { id: true, name: true } },
   closedBy: { select: { id: true, name: true } },
   table: { select: { id: true, number: true, zoneId: true } },
@@ -58,6 +61,44 @@ function stockOpsPorVariante(tenantId, userId, porVariante, type, note) {
     )
   }
   return ops
+}
+
+// Movimientos de stock de insumos por venta (SALE, resta) o devolucion
+// (SALE_VOID, suma), agrupados por insumo igual que stockOpsPorVariante.
+// Nunca valida que el stock no quede negativo: es un aviso, no un bloqueo.
+function insumoOpsPorInsumo(tenantId, userId, porInsumo, type, note) {
+  const signo = type === 'SALE' ? -1 : 1
+  const ops = []
+  for (const [insumoId, qty] of porInsumo) {
+    ops.push(
+      prisma.insumo.update({ where: { id: insumoId }, data: { stock: { [signo < 0 ? 'decrement' : 'increment']: qty } } }),
+      prisma.insumoMovement.create({
+        data: { tenantId, insumoId, type, qty: signo * qty, note, createdById: userId },
+      })
+    )
+  }
+  return ops
+}
+
+// Un producto PREPARED puede tener ingredientes por unidades (variantId+qty,
+// ej. 2 lonjas de jamon) o por insumo (insumoId+qty, ej. cebolla/queso en su
+// unidadInventario): ambos tienen stock real y se descuentan igual que una
+// presentacion vendida directa, sumando a los mapas que stockOpsPorVariante/
+// insumoOpsPorInsumo ya saben mover. Los ingredientes por ml (sourceProductId)
+// no descuentan nada todavia: el OpenContainer que los respalda no existe
+// (ver CLAUDE.md).
+async function sumarIngredientesPorUnidad(porVariante, porInsumo, productId, cantidadVendida) {
+  const recipe = await prisma.recipe.findUnique({
+    where: { productId },
+    include: { items: { where: { OR: [{ variantId: { not: null } }, { insumoId: { not: null } }] } } },
+  })
+  for (const item of recipe?.items || []) {
+    if (item.variantId) {
+      porVariante.set(item.variantId, (porVariante.get(item.variantId) || 0) + item.qty * cantidadVendida)
+    } else if (item.insumoId) {
+      porInsumo.set(item.insumoId, (porInsumo.get(item.insumoId) || 0) + item.qty * cantidadVendida)
+    }
+  }
 }
 
 // --- Mas pedidos por zona ----------------------------------------------------
@@ -289,6 +330,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
   const status = req.auth.role === 'ADMIN' ? 'ACTIVE' : 'PENDING'
   const data = []
   const porVariante = new Map() // solo se llena si queda ACTIVE: un pre-pedido todavia no llego a la barra
+  const porInsumo = new Map()
   for (const it of items) {
     const qty = Number(it.qty) || 1
     if (it.variantId) {
@@ -317,7 +359,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         where: { id: it.productId, tenantId: req.auth.tenantId },
         include: { recipe: true },
       })
-      if (!product?.recipe) return res.status(400).json({ error: 'Ese shot ya no existe' })
+      if (!product?.recipe) return res.status(400).json({ error: 'Ese producto ya no existe' })
       data.push({
         tenantId: req.auth.tenantId,
         orderId: order.id,
@@ -329,6 +371,9 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         status,
         createdById: req.auth.userId,
       })
+      if (status === 'ACTIVE') {
+        await sumarIngredientesPorUnidad(porVariante, porInsumo, product.id, qty)
+      }
     } else {
       return res.status(400).json({ error: 'Cada producto necesita una presentacion o un shot' })
     }
@@ -340,6 +385,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
   await prisma.$transaction([
     prisma.orderItem.createMany({ data }),
     ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Venta directa (admin)'),
+    ...insumoOpsPorInsumo(req.auth.tenantId, req.auth.userId, porInsumo, 'SALE', 'Venta directa (admin)'),
   ])
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
 
@@ -373,8 +419,14 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
   if (!pendientes.length) return res.status(400).json({ error: 'Esta mesa no tiene un pre-pedido esperando envio' })
 
   const porVariante = new Map()
+  const porInsumo = new Map()
+  const porProductoPreparado = new Map()
   for (const it of pendientes) {
     if (it.variantId) porVariante.set(it.variantId, (porVariante.get(it.variantId) || 0) + it.qty)
+    else if (it.productId) porProductoPreparado.set(it.productId, (porProductoPreparado.get(it.productId) || 0) + it.qty)
+  }
+  for (const [productId, qty] of porProductoPreparado) {
+    await sumarIngredientesPorUnidad(porVariante, porInsumo, productId, qty)
   }
 
   // Recien aqui el pre-pedido llega de verdad a la barra: aqui se descuenta,
@@ -385,6 +437,7 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
       data: { status: 'ACTIVE' },
     }),
     ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Pre-pedido enviado a la barra'),
+    ...insumoOpsPorInsumo(req.auth.tenantId, req.auth.userId, porInsumo, 'SALE', 'Pre-pedido enviado a la barra'),
   ])
 
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
@@ -455,8 +508,15 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
   // Solo repone stock si ya estaba ACTIVE: si seguia PENDING nunca se le
   // habia restado nada (eso pasa al enviar, no al crear el pre-pedido).
   const porVariante = new Map()
-  if (item.status === 'ACTIVE' && item.variantId) porVariante.set(item.variantId, qtyDevuelta)
-  const stockOps = stockOpsPorVariante(req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`)
+  const porInsumo = new Map()
+  if (item.status === 'ACTIVE') {
+    if (item.variantId) porVariante.set(item.variantId, qtyDevuelta)
+    else if (item.productId) await sumarIngredientesPorUnidad(porVariante, porInsumo, item.productId, qtyDevuelta)
+  }
+  const stockOps = [
+    ...stockOpsPorVariante(req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`),
+    ...insumoOpsPorInsumo(req.auth.tenantId, encargado.id, porInsumo, 'SALE_VOID', `Devuelto: ${reason.trim()}`),
+  ]
 
   let updated
   if (qtyDevuelta === item.qty) {
@@ -612,6 +672,20 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       }
     }
 
+    // Si el operador eligio un banco/billetera real (modulo de Cajas y
+    // bancos), cada pago se resuelve contra su cuenta antes de la
+    // transaccion: nunca confiar en que el id que llego del cliente es
+    // valido. El metodo que se cuenta en el cuadre sigue siendo el generico
+    // (ver resolverCuentaPago) -- esto solo liga el pago a la cuenta real.
+    const cuentasPorPago = await Promise.all(
+      payments.map((p) => resolverCuentaPago(req.auth.tenantId, p.method, p.cuentaFinancieraId))
+    )
+    for (let i = 0; i < payments.length; i++) {
+      if (payments[i].cuentaFinancieraId && !cuentasPorPago[i]) {
+        return res.status(400).json({ error: 'Esa cuenta de pago no es válida' })
+      }
+    }
+
     // Credito: no entra a caja, se carga como deuda al cliente vinculado a la
     // cuenta. Sin credito habilitado, o si este fiado deja el saldo por
     // encima del cupo, no se bloquea del todo -es decision del encargado, no
@@ -683,20 +757,46 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
           await tx.orderItem.update({ where: { id: u.id }, data: { discountAmount: parte } })
         }
       }
-      await tx.orderPayment.createMany({
-        data: payments.map((p) => {
-          const amount = Number(p.amount)
-          const tendered = p.method === 'EFECTIVO' ? Number(p.tendered ?? amount) : null
-          return {
+      // Create (no createMany): createMany no devuelve las filas creadas en
+      // MySQL, y aqui si hace falta el id de vuelta -- el movimiento
+      // financiero que puede colgar de este pago lo necesita para poder
+      // reimprimir despues la factura real desde Cajas y bancos (ver
+      // orderPaymentId en MovimientoFinanciero). Son como mucho un par de
+      // pagos partidos, no hay costo real en hacerlo uno por uno.
+      for (let i = 0; i < payments.length; i++) {
+        const p = payments[i]
+        const amount = Number(p.amount)
+        const tendered = p.method === 'EFECTIVO' ? Number(p.tendered ?? amount) : null
+        const cuenta = cuentasPorPago[i]
+        const referencia = p.referencia?.toString().trim() || null
+        const orderPayment = await tx.orderPayment.create({
+          data: {
             tenantId: req.auth.tenantId,
             orderId: order.id,
             method: p.method,
             amount,
             tendered,
             change: tendered !== null ? tendered - amount : null,
-          }
-        }),
-      })
+            cuentaFinancieraId: cuenta?.id,
+            referencia,
+          },
+        })
+        if (cuenta) {
+          await tx.movimientoFinanciero.create({
+            data: {
+              tenantId: req.auth.tenantId,
+              cuentaId: cuenta.id,
+              tipo: 'INGRESO',
+              valor: amount,
+              concepto: referencia
+                ? `Venta mesa ${order.table.number} · Comprobante ${referencia}`
+                : `Venta mesa ${order.table.number}`,
+              createdById: req.auth.userId,
+              orderPaymentId: orderPayment.id,
+            },
+          })
+        }
+      }
       await tx.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } })
       // Si esta cuenta tenia mesas fusionadas temporalmente, se sueltan solas
       // aqui: la fusion dura lo que dura la cuenta, nunca mas.

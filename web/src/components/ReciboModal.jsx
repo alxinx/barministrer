@@ -14,6 +14,15 @@ const METHOD_LABEL = {
   CREDITO: 'Crédito',
 }
 
+// Si el pago quedo ligado a un banco/billetera real (modulo de Cajas y
+// bancos), la factura muestra esa cuenta por su nombre, no solo el metodo
+// generico -- es la unica forma de que el dueno pueda conciliar un pago
+// contra su extracto real.
+function etiquetaPago(p) {
+  const base = METHOD_LABEL[p.method] || p.method
+  return p.cuentaFinanciera ? `${base} · ${p.cuentaFinanciera.nombre}` : base
+}
+
 /**
  * Tirilla de venta: se abre sola al cerrar una cuenta. Si hay una impresora
  * termica emparejada (ver DatosBar > Impresora) sale directo por USB sin
@@ -68,7 +77,10 @@ export default function ReciboModal({ order, splitCount, tenant, onClose, autoPr
       l.push({ feed: 1 }, { texto: 'CORTESÍA', centro: true, negrita: true, grande: true }, { feed: 1 })
     } else {
       l.push({ raya: true })
-      order.payments.forEach((p) => l.push({ cols: [METHOD_LABEL[p.method] || p.method, money(p.amount)] }))
+      order.payments.forEach((p) => {
+        l.push({ cols: [etiquetaPago(p), money(p.amount)] })
+        if (p.referencia) l.push({ texto: `  Comprobante: ${p.referencia}` })
+      })
       if (cambioTotal > 0) l.push({ cols: ['Cambio', money(cambioTotal)] })
       if (montoCredito > 0) l.push({ feed: 1 }, { texto: 'CRÉDITO', centro: true, negrita: true, grande: true }, { feed: 1 })
     }
@@ -211,9 +223,12 @@ export default function ReciboModal({ order, splitCount, tenant, onClose, autoPr
               <div className="my-2 border-t border-dashed border-black/40" />
               <div className="space-y-1">
                 {order.payments.map((p) => (
-                  <div key={p.id} className="flex justify-between">
-                    <span>{METHOD_LABEL[p.method] || p.method}</span>
-                    <span>{money(p.amount)}</span>
+                  <div key={p.id}>
+                    <div className="flex justify-between">
+                      <span>{etiquetaPago(p)}</span>
+                      <span>{money(p.amount)}</span>
+                    </div>
+                    {p.referencia && <p className="text-black/50 text-[10px]">Comprobante: {p.referencia}</p>}
                   </div>
                 ))}
                 {cambioTotal > 0 && (

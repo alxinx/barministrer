@@ -4,6 +4,7 @@ import { requireRole } from '../middleware/auth.js'
 import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
 import { diaLocal, rangoEntreFechas, rangoValido } from '../lib/fechas.js'
+import { crearShiftExpense } from '../lib/shiftExpense.js'
 
 export const shiftRoutes = Router()
 const cajero = requireRole('ADMIN', 'CAJERO')
@@ -398,40 +399,29 @@ shiftRoutes.post('/shifts', cajero, async (req, res) => {
 })
 
 // --- Egresos --------------------------------------------------------------
-// Retiro (sacar efectivo del cajon) o gasto de caja menor (hielo, limones,
-// cortesias). Los dos descuentan del efectivo esperado al cuadrar.
+// Retiro (sacar efectivo del cajon, ej. pagarle a un proveedor -- ver tambien
+// el modulo de Compras, que reusa crearShiftExpense para lo mismo dentro de
+// su propia transaccion) o gasto de caja menor (hielo, limones, cortesias).
+// Los dos descuentan del efectivo esperado al cuadrar.
 shiftRoutes.post('/shifts/:id/expenses', cajero, async (req, res) => {
-  const shift = await prisma.shift.findFirst({
-    where: { id: req.params.id, tenantId: req.auth.tenantId },
-  })
-  if (!shift) return res.status(404).json({ error: 'Turno no encontrado' })
-  if (shift.status !== 'OPEN') {
-    return res.status(400).json({ error: 'Este turno ya esta cerrado, no se le pueden agregar egresos' })
-  }
-
   const { type, amount, reason } = req.body || {}
-  if (!['RETIRO', 'GASTO'].includes(type)) {
-    return res.status(400).json({ error: 'El egreso necesita un tipo: retiro o gasto' })
-  }
-  if (!amount || Number(amount) <= 0) {
-    return res.status(400).json({ error: 'El egreso necesita un monto mayor a cero' })
-  }
-  if (!reason?.trim()) {
-    return res.status(400).json({ error: 'El egreso necesita un motivo' })
-  }
-
-  const expense = await prisma.shiftExpense.create({
-    data: {
+  try {
+    const expense = await crearShiftExpense(prisma, {
       tenantId: req.auth.tenantId,
-      shiftId: shift.id,
+      shiftId: req.params.id,
       type,
       amount,
-      reason: reason.trim(),
+      reason,
       authorizedById: req.auth.userId,
-    },
-    include: { authorizedBy: { select: { id: true, name: true } } },
-  })
-  res.status(201).json(expense)
+    })
+    const conAutor = await prisma.shiftExpense.findUnique({
+      where: { id: expense.id },
+      include: { authorizedBy: { select: { id: true, name: true } } },
+    })
+    res.status(201).json(conAutor)
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message })
+  }
 })
 
 // --- Cuadre y cierre --------------------------------------------------------

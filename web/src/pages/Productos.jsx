@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import ProductoForm from '../components/ProductoForm'
 import CategoriaForm from '../components/CategoriaForm'
+import { unidadesDisponibles } from '../lib/recetas'
 
 export default function Productos() {
   const { session } = useAuth()
@@ -175,7 +176,16 @@ export default function Productos() {
                 const price = v ? v.price : p.recipe?.price
                 const subtitle = v
                   ? `${v.name}${v.volumeMl ? ` · ${v.volumeMl} ml` : ''}`
-                  : p.recipe?.items.map((i) => `${i.ml} ml de ${i.sourceProduct?.name}`).join(' + ')
+                  : p.recipe?.items
+                      .map((i) =>
+                        i.insumoId
+                          ? `${i.qty} x ${i.insumo?.name}`
+                          : i.variantId
+                            ? `${i.qty} x ${i.variant?.product?.name} (${i.variant?.name})`
+                            : `${i.ml} ml de ${i.sourceProduct?.name}`
+                      )
+                      .join(' + ')
+                const quedan = !v ? unidadesDisponibles(p.recipe?.items) : null
 
                 return (
                   <button
@@ -198,20 +208,39 @@ export default function Productos() {
                     <div className="min-w-0">
                       <p className="font-medium text-sm leading-snug flex items-center gap-1.5">
                         <span className="truncate">{p.name}</span>
-                        {p.kind === 'PREPARED' && <Icon.drop width={12} height={12} className="text-muted shrink-0" />}
+                        {p.kind === 'PREPARED' &&
+                          (p.recipe?.items.some((i) => i.ml) ? (
+                            <Icon.drop width={12} height={12} className="text-muted shrink-0" />
+                          ) : (
+                            <Icon.box width={12} height={12} className="text-muted shrink-0" />
+                          ))}
                       </p>
                       <p className="text-xs text-muted truncate">{subtitle}</p>
                     </div>
 
                     <div className="flex items-center justify-between gap-2 mt-auto">
                       <span className="font-semibold text-sm">{money(price)}</span>
-                      <span
-                        className={`text-[10px] font-semibold px-2 py-1 rounded-pill border shrink-0 ${
-                          available ? 'text-libre border-libre/40 bg-libre/10' : 'text-muted border-edge bg-raised'
-                        }`}
-                      >
-                        {available ? 'Disponible' : p.active ? 'Categoría apagada' : 'Desactivado'}
-                      </span>
+                      {quedan !== null ? (
+                        <span
+                          className={`text-[10px] font-semibold px-2 py-1 rounded-pill border shrink-0 ${
+                            !available
+                              ? 'text-muted border-edge bg-raised'
+                              : quedan > 0
+                                ? 'text-libre border-libre/40 bg-libre/10'
+                                : 'text-ocupada border-ocupada/40 bg-ocupada/10'
+                          }`}
+                        >
+                          {!available ? (p.active ? 'Categoría apagada' : 'Desactivado') : quedan > 0 ? `Quedan ${quedan}` : 'Agotado'}
+                        </span>
+                      ) : (
+                        <span
+                          className={`text-[10px] font-semibold px-2 py-1 rounded-pill border shrink-0 ${
+                            available ? 'text-libre border-libre/40 bg-libre/10' : 'text-muted border-edge bg-raised'
+                          }`}
+                        >
+                          {available ? 'Disponible' : p.active ? 'Categoría apagada' : 'Desactivado'}
+                        </span>
+                      )}
                     </div>
                   </button>
                 )
@@ -228,7 +257,6 @@ export default function Productos() {
       {target !== undefined && (
         <ProductoForm
           categories={categories}
-          products={products}
           product={target}
           onClose={cerrar}
           onSaved={guardado}

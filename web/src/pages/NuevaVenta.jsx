@@ -16,6 +16,7 @@ import TrasladarMesaModal from '../components/TrasladarMesaModal'
 import HistorialMesaModal from '../components/HistorialMesaModal'
 import ReciboModal from '../components/ReciboModal'
 import { Icon, zoneIcon } from '../components/Icons'
+import { unidadesDisponibles } from '../lib/recetas'
 
 const estados = [
   { key: 'AVAILABLE', label: 'Disponible', dot: 'bg-libre' },
@@ -842,7 +843,7 @@ export default function NuevaVenta() {
         />
       )}
 
-      <div className="grid lg:grid-cols-[1fr_380px] gap-5 items-start">
+      <div className="grid xl:grid-cols-[1fr_380px] gap-5 items-start">
         <section>
           <div className="flex gap-2 flex-wrap mb-4">
             {zones.map((z) => {
@@ -963,25 +964,29 @@ export default function NuevaVenta() {
             </section>
           )}
 
-          {/* Debajo de "lg" (donde el plano y la cuenta dejan de ir lado a
+          {/* Debajo de "xl" (donde el plano y la cuenta dejan de ir lado a
               lado) tocar una mesa despliega esto como un panel desde la
               derecha, en vez de empujarlo mas abajo: evita que el operador
-              tenga que bajar para ver que puede pedir. */}
+              tenga que bajar para ver que puede pedir. El punto de quiebre es
+              xl (1280px), no el lg (1024px) de Tailwind: entre esos dos el
+              plano se sentia apretado por la columna fija de 380px -- mejor
+              que el menu solo aparezca al tocar una mesa hasta que de verdad
+              sobre espacio para los dos lado a lado. */}
           {table && (
-            <div className="lg:hidden fixed inset-0 z-30 bg-black/60" onClick={() => setTable(null)} />
+            <div className="xl:hidden fixed inset-0 z-30 bg-black/60" onClick={() => setTable(null)} />
           )}
           <div
             ref={panelRef}
             className={`fixed inset-y-0 right-0 z-40 w-full max-w-sm bg-canvas p-4 overflow-y-auto shadow-2xl
                          space-y-4 transition-transform duration-300
                          ${table ? 'translate-x-0' : 'translate-x-full'}
-                         lg:static lg:translate-x-0 lg:z-auto lg:w-auto lg:max-w-none lg:bg-transparent
-                         lg:p-0 lg:shadow-none lg:space-y-4`}
+                         xl:static xl:translate-x-0 xl:z-auto xl:w-auto xl:max-w-none xl:bg-transparent
+                         xl:p-0 xl:shadow-none xl:space-y-4`}
           >
             <button
               type="button"
               onClick={() => setTable(null)}
-              className="lg:hidden flex items-center gap-1.5 text-sm text-muted hover:text-ink"
+              className="xl:hidden flex items-center gap-1.5 text-sm text-muted hover:text-ink"
             >
               <Icon.chevronLeft width={16} height={16} />
               Volver al plano
@@ -1315,9 +1320,12 @@ export default function NuevaVenta() {
                 const price = p.kind === 'PREPARED' ? p.recipe.price : v.price
                 // Agotado es un aviso, nunca un bloqueo: cualquier rol lo sigue
                 // pudiendo agregar (si llega a faltar en la barra se marca
-                // sobreconsumo, no se pierde la venta). Solo aplica a
-                // presentaciones selladas; un shot no tiene stock propio.
-                const agotado = v && v.stock <= 0
+                // sobreconsumo, no se pierde la venta). Un shot por ml no tiene
+                // stock propio todavia (ver CLAUDE.md), pero una receta armada
+                // con presentaciones (ej. sanduche de jamon y pan) si tiene
+                // stock real por ingrediente.
+                const quedanReceta = p.kind === 'PREPARED' ? unidadesDisponibles(p.recipe?.items) : null
+                const agotado = (v && v.stock <= 0) || (quedanReceta !== null && quedanReceta <= 0)
                 return (
                   <button
                     key={p.id}
@@ -1343,9 +1351,16 @@ export default function NuevaVenta() {
                     <div className="min-w-0 flex-1">
                       <NombreCenefa text={p.name} className="text-sm font-semibold leading-tight" />
                       <p className="text-xs text-muted mt-0.5 truncate">
-                        {p.kind === 'PREPARED' ? 'Shot' : v.name}
+                        {p.kind === 'PREPARED' ? (p.recipe?.items?.some((i) => i.ml) ? 'Shot' : 'Receta') : v.name}
                         {v?.volumeMl ? ` · ${v.volumeMl} ml` : ''}
-                        {agotado ? <span className="text-ocupada font-semibold"> · Agotado</span> : null}
+                        {agotado ? (
+                          <span className="text-ocupada font-semibold"> · Agotado</span>
+                        ) : quedanReceta !== null ? (
+                          <span className={quedanReceta <= 3 ? 'text-amberText font-semibold' : ''}>
+                            {' '}
+                            · {quedanReceta} und.
+                          </span>
+                        ) : null}
                       </p>
                       <p className="text-sm font-bold mt-1">{money(price)}</p>
                     </div>

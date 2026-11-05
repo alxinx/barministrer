@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { signToken, signPlatformToken, requirePlatformAuth } from '../middleware/auth.js'
 import { loginLimiter, pinLimiter, estadoPin, bloquearPinManual } from '../middleware/rateLimit.js'
+import { avisarTenant } from '../lib/realtime.js'
 
 export const platformAuthRoutes = Router()
 export const platformRoutes = Router()
@@ -158,6 +159,8 @@ platformRoutes.get('/tenants/:id', requirePlatformAuth, async (req, res) => {
     active: tenant.active,
     createdAt: tenant.createdAt,
     rentalPlan: tenant.rentalPlan,
+    moduloCajasBancos: tenant.moduloCajasBancos,
+    moduloCompras: tenant.moduloCompras,
     userCount,
     diasActivosSemana,
     users: usersConPin,
@@ -174,7 +177,7 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
   if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
 
-  const { name, rentalPlanId, active } = req.body || {}
+  const { name, rentalPlanId, active, moduloCajasBancos, moduloCompras } = req.body || {}
   const data = {}
 
   if (name !== undefined) {
@@ -189,14 +192,28 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
     data.rentalPlanId = rentalPlanId
   }
   if (active !== undefined) data.active = Boolean(active)
+  // Modulos activables: solo plataforma los prende/apaga, nunca el ADMIN del
+  // bar (ver Tenant.moduloCajasBancos en schema.prisma).
+  if (moduloCajasBancos !== undefined) data.moduloCajasBancos = Boolean(moduloCajasBancos)
+  if (moduloCompras !== undefined) data.moduloCompras = Boolean(moduloCompras)
 
   const updated = await prisma.tenant.update({ where: { id: tenant.id }, data, include: { rentalPlan: true } })
+
+  // Avisa en vivo a quien tenga sesion abierta en ese bar: un modulo que se
+  // apaga mientras alguien lo esta mirando tiene que desaparecer del menu y
+  // bloquear la pagina sin que tenga que recargar (ver socket en
+  // AuthContext.jsx). Tambien cubre active/name/rentalPlan por si mas
+  // adelante algo mas depende de refrescar la sesion en vivo.
+  avisarTenant(tenant.id, 'tenant:actualizado', {})
+
   res.json({
     id: updated.id,
     name: updated.name,
     slug: updated.slug,
     active: updated.active,
     rentalPlan: updated.rentalPlan,
+    moduloCajasBancos: updated.moduloCajasBancos,
+    moduloCompras: updated.moduloCompras,
   })
 })
 

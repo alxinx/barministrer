@@ -168,6 +168,11 @@ export const Icon = {
       <path d="M15 5l-7 7 7 7" />
     </svg>
   ),
+  chevronRight: (p) => (
+    <svg {...base} {...p}>
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  ),
   chevronDown: (p) => (
     <svg {...base} {...p}>
       <path d="M5 9l7 7 7-7" />
@@ -271,6 +276,11 @@ export const Icon = {
     <svg {...base} {...p}>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 7.5V12l3.2 2" />
+    </svg>
+  ),
+  swap: (p) => (
+    <svg {...base} {...p}>
+      <path d="M4 7h14m0 0-4-4m4 4-4 4M20 17H6m0 0 4 4m-4-4 4-4" />
     </svg>
   ),
 }

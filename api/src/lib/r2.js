@@ -43,3 +43,20 @@ export async function subirLogo(tenantId, buffer, contentType = 'image/webp') {
 export async function subirImagenProducto(buffer, contentType = 'image/webp') {
   return subirArchivo(`productos/${randomUUID()}.webp`, buffer, contentType)
 }
+
+// Fotos de insumo: misma logica que la de producto, carpeta propia
+// "insumos/" para no mezclar las dos carpetas en R2.
+export async function subirImagenInsumo(buffer, contentType = 'image/webp') {
+  return subirArchivo(`insumos/${randomUUID()}.webp`, buffer, contentType)
+}
+
+// Factura de una compra (foto o PDF escaneado del documento del proveedor):
+// carpeta por tenant, a diferencia de las fotos de producto/insumo que son
+// globales -- esto es un soporte contable privado del bar, no una imagen
+// comercial compartida. Tampoco se recomprime a webp como esas: un PDF no se
+// puede, y una foto de factura pierde legibilidad de los numeros si se
+// aprieta demasiado (ver resizeFacturaImage en web/src/lib/image.js, que ya
+// la deja liviana sin pasarla por webp).
+export async function subirFacturaCompra(tenantId, buffer, contentType, extension) {
+  return subirArchivo(`facturas/${tenantId}/${randomUUID()}.${extension}`, buffer, contentType)
+}
