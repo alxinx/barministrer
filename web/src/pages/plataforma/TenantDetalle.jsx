@@ -12,6 +12,64 @@ function formatFecha(iso) {
   return new Date(iso).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Confirmacion de dos pasos para cualquier formateo: resolver una cuenta
+// simple + escribir la palabra "confirmar". El backend vuelve a exigir esa
+// palabra en el body (ver exigirConfirmacion en routes/platform.js) -- esto
+// de aqui es para que a nadie se le vaya el dedo con un click de mas, no la
+// unica barrera.
+function ModalConfirmacionFormateo({ titulo, descripcion, textoBoton, onConfirmar, onCancelar, ejecutando, error }) {
+  const [a] = useState(() => 1 + Math.floor(Math.random() * 8))
+  const [b] = useState(() => 1 + Math.floor(Math.random() * 8))
+  const [respuesta, setRespuesta] = useState('')
+  const [palabra, setPalabra] = useState('')
+
+  const listo = Number(respuesta) === a + b && palabra.trim().toLowerCase() === 'confirmar'
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => !ejecutando && onCancelar()}>
+      <div className="card w-full max-w-md p-6 space-y-4 border-ocupada/30" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-bold text-ocupada">{titulo}</h2>
+        <p className="text-sm text-muted">{descripcion}</p>
+
+        <div>
+          <label className="label">¿Cuánto es {a} + {b}?</label>
+          <input
+            className="field font-mono"
+            inputMode="numeric"
+            value={respuesta}
+            onChange={(e) => setRespuesta(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="label">
+            Escribe <span className="font-mono text-ink">confirmar</span>
+          </label>
+          <input className="field font-mono" value={palabra} onChange={(e) => setPalabra(e.target.value)} />
+        </div>
+
+        {error && (
+          <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">{error}</p>
+        )}
+
+        <div className="flex items-center gap-3 pt-1">
+          <button type="button" className="btn-ghost flex-1" onClick={onCancelar} disabled={ejecutando}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn-danger flex-1"
+            onClick={() => onConfirmar(palabra)}
+            disabled={!listo || ejecutando}
+          >
+            {ejecutando ? 'Un momento…' : textoBoton}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function TenantDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -31,6 +89,21 @@ export default function TenantDetalle() {
   const [deleteError, setDeleteError] = useState('')
   const [entrando, setEntrando] = useState(false)
   const [togglingModulo, setTogglingModulo] = useState(false)
+
+  // Formateo: 'todo' y 'movimientos' van directo a confirmar. 'productos' es
+  // un flujo propio (elegir categorias -> ver preview -> elegir que hacer
+  // con lo que tiene historial -> confirmar), asi que confirmando guarda
+  // cual de los tres se esta por ejecutar (o null) y prodSeleccion/prodPreview
+  // solo aplican a ese ultimo.
+  const [confirmandoFormateo, setConfirmandoFormateo] = useState(null) // 'todo' | 'movimientos' | 'productos' | null
+  const [formateando, setFormateando] = useState(false)
+  const [errorFormateo, setErrorFormateo] = useState('')
+  const [formateoOk, setFormateoOk] = useState('')
+  const [prodSeleccion, setProdSeleccion] = useState({ productos: false, insumos: false, recetas: false })
+  const [prodPreview, setProdPreview] = useState(null)
+  const [prodModo, setProdModo] = useState('conservar')
+  const [cargandoPreview, setCargandoPreview] = useState(false)
+  const [errorPreview, setErrorPreview] = useState('')
 
   async function cargar() {
     try {
@@ -137,6 +210,53 @@ export default function TenantDetalle() {
       setError(err.message)
     } finally {
       setTogglingModulo(false)
+    }
+  }
+
+  async function verPreviewProductos() {
+    setCargandoPreview(true)
+    setErrorPreview('')
+    setProdPreview(null)
+    try {
+      const params = new URLSearchParams()
+      if (prodSeleccion.productos) params.set('productos', '1')
+      if (prodSeleccion.insumos) params.set('insumos', '1')
+      if (prodSeleccion.recetas) params.set('recetas', '1')
+      const preview = await platformApi(`/tenants/${id}/formatear/productos/preview?${params}`)
+      setProdPreview(preview)
+      setProdModo('conservar')
+    } catch (err) {
+      setErrorPreview(err.message)
+    } finally {
+      setCargandoPreview(false)
+    }
+  }
+
+  async function ejecutarFormateo(confirmPalabra) {
+    setFormateando(true)
+    setErrorFormateo('')
+    try {
+      if (confirmandoFormateo === 'todo') {
+        await platformApi(`/tenants/${id}/formatear/todo`, { method: 'POST', body: { confirmPalabra } })
+        setFormateoOk('Se formateó todo el bar. El plano, los usuarios y los datos del negocio quedaron intactos.')
+      } else if (confirmandoFormateo === 'movimientos') {
+        await platformApi(`/tenants/${id}/formatear/movimientos`, { method: 'POST', body: { confirmPalabra } })
+        setFormateoOk('Se formatearon los movimientos. El catálogo, los clientes y las cuentas quedaron intactos.')
+      } else if (confirmandoFormateo === 'productos') {
+        await platformApi(`/tenants/${id}/formatear/productos`, {
+          method: 'POST',
+          body: { ...prodSeleccion, modo: prodModo, confirmPalabra },
+        })
+        setFormateoOk('Se formatearon los productos/insumos/recetas elegidos.')
+        setProdSeleccion({ productos: false, insumos: false, recetas: false })
+        setProdPreview(null)
+      }
+      setConfirmandoFormateo(null)
+      setTimeout(() => setFormateoOk(''), 5000)
+    } catch (err) {
+      setErrorFormateo(err.message)
+    } finally {
+      setFormateando(false)
     }
   }
 
@@ -365,6 +485,179 @@ export default function TenantDetalle() {
           </div>
         </div>
 
+        <div className="card p-5 mt-8 border-amber/30">
+          <h2 className="font-semibold">Formatear datos</h2>
+          <p className="text-sm text-muted mt-1 mb-4">
+            Borra datos operativos de {tenant.name} sin tocar el bar en sí: nunca afecta a los demás bares, nunca
+            borra usuarios ni los datos del negocio (nombre, logo, configuración), y nunca borra el plano (mesas y
+            zonas).
+          </p>
+
+          {formateoOk && (
+            <p className="text-sm text-libre border border-libre/30 bg-libre/10 rounded-xl px-3 py-2.5 mb-4">
+              {formateoOk}
+            </p>
+          )}
+          {errorFormateo && !confirmandoFormateo && (
+            <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5 mb-4">
+              {errorFormateo}
+            </p>
+          )}
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between py-2 border-b border-edge/60">
+              <div>
+                <p className="text-sm font-medium">1. Formatear todo</p>
+                <p className="text-xs text-muted mt-0.5">
+                  Ventas, turnos, inventario, catálogo, compras, caja, clientes — todo lo operativo.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-danger shrink-0"
+                onClick={() => {
+                  setErrorFormateo('')
+                  setConfirmandoFormateo('todo')
+                }}
+              >
+                Formatear todo
+              </button>
+            </div>
+
+            <div className="py-3 border-b border-edge/60">
+              <p className="text-sm font-medium">2. Formatear productos</p>
+              <p className="text-xs text-muted mt-0.5 mb-3">Elige qué parte del catálogo quieres vaciar.</p>
+              <div className="flex flex-wrap gap-4 mb-3">
+                {[
+                  ['productos', 'Todos los productos'],
+                  ['insumos', 'Todos los insumos'],
+                  ['recetas', 'Todas las recetas'],
+                ].map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={prodSeleccion[key]}
+                      onChange={(e) => {
+                        setProdSeleccion((s) => ({ ...s, [key]: e.target.checked }))
+                        setProdPreview(null)
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="btn-ghost text-sm"
+                onClick={verPreviewProductos}
+                disabled={
+                  cargandoPreview || (!prodSeleccion.productos && !prodSeleccion.insumos && !prodSeleccion.recetas)
+                }
+              >
+                {cargandoPreview ? 'Revisando…' : 'Ver qué se va a borrar'}
+              </button>
+
+              {errorPreview && <p className="text-sm text-ocupada mt-2">{errorPreview}</p>}
+
+              {prodPreview && (
+                <div className="mt-3 p-4 rounded-lg bg-raised border border-edge space-y-3">
+                  {prodPreview.productos && (
+                    <p className="text-sm">
+                      <strong>Productos:</strong> {prodPreview.productos.libres} sin historial (se borran siempre),{' '}
+                      {prodPreview.productos.conHistorial} con historial.
+                    </p>
+                  )}
+                  {prodPreview.insumos && (
+                    <p className="text-sm">
+                      <strong>Insumos:</strong> {prodPreview.insumos.libres} sin historial (se borran siempre),{' '}
+                      {prodPreview.insumos.conHistorial} con historial.
+                    </p>
+                  )}
+                  {prodPreview.recetas && (
+                    <p className="text-sm">
+                      <strong>Recetas:</strong> {prodPreview.recetas.libres} sin historial (se borran siempre),{' '}
+                      {prodPreview.recetas.conHistorial} con historial.
+                    </p>
+                  )}
+
+                  {(() => {
+                    const totalConHistorial =
+                      (prodPreview.productos?.conHistorial || 0) +
+                      (prodPreview.insumos?.conHistorial || 0) +
+                      (prodPreview.recetas?.conHistorial || 0)
+                    const ordenes = (prodPreview.productos?.ordenesAfectadas || 0) + (prodPreview.recetas?.ordenesAfectadas || 0)
+                    const compras = (prodPreview.productos?.comprasAfectadas || 0) + (prodPreview.insumos?.comprasAfectadas || 0)
+                    if (totalConHistorial === 0) return null
+                    return (
+                      <div className="pt-2 border-t border-edge space-y-2">
+                        <p className="text-sm text-muted">
+                          {totalConHistorial} elemento(s) ya tienen una venta, una compra o una receta enganchada.
+                          ¿Qué hacer con ellos?
+                        </p>
+                        <label className="flex items-start gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="prodModo"
+                            checked={prodModo === 'conservar'}
+                            onChange={() => setProdModo('conservar')}
+                            className="mt-0.5"
+                          />
+                          <span>Conservar su historial (se saltan, solo se borra lo nunca usado)</span>
+                        </label>
+                        <label className="flex items-start gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="prodModo"
+                            checked={prodModo === 'borrar'}
+                            onChange={() => setProdModo('borrar')}
+                            className="mt-0.5"
+                          />
+                          <span>
+                            Borrar todo — también borra {ordenes} pedido(s) y {compras} compra(s) COMPLETOS (con
+                            todas sus otras líneas), no solo la línea de este producto/insumo/receta
+                          </span>
+                        </label>
+                      </div>
+                    )
+                  })()}
+
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    onClick={() => {
+                      setErrorFormateo('')
+                      setConfirmandoFormateo('productos')
+                    }}
+                  >
+                    Formatear lo elegido
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium">3. Formatear movimientos</p>
+                <p className="text-xs text-muted mt-0.5">
+                  Ventas, turnos, compras y movimientos financieros. El catálogo, los clientes y las cuentas quedan
+                  intactos (el stock en cache vuelve a 0).
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-danger shrink-0"
+                onClick={() => {
+                  setErrorFormateo('')
+                  setConfirmandoFormateo('movimientos')
+                }}
+              >
+                Formatear movimientos
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className="card p-5 mt-8 border-ocupada/30">
           <h2 className="font-semibold text-ocupada">Zona peligrosa</h2>
           <p className="text-sm text-muted mt-1 mb-4">
@@ -411,6 +704,32 @@ export default function TenantDetalle() {
             </div>
           </div>
         </div>
+      )}
+
+      {confirmandoFormateo && (
+        <ModalConfirmacionFormateo
+          titulo={
+            confirmandoFormateo === 'todo'
+              ? `Formatear todo en ${tenant.name}`
+              : confirmandoFormateo === 'movimientos'
+              ? `Formatear movimientos en ${tenant.name}`
+              : `Formatear productos en ${tenant.name}`
+          }
+          descripcion={
+            confirmandoFormateo === 'todo'
+              ? 'Esto borra todas las ventas, turnos, inventario, catálogo, compras, caja y clientes de este bar. No hay forma de recuperarlo. El plano, los usuarios y los datos del negocio quedan intactos.'
+              : confirmandoFormateo === 'movimientos'
+              ? 'Esto borra todas las ventas, turnos, compras y movimientos financieros de este bar. No hay forma de recuperarlo. El catálogo, los clientes y las cuentas quedan intactos.'
+              : prodModo === 'borrar'
+              ? 'Esto borra lo elegido Y los pedidos/compras completos que lo referencian. No hay forma de recuperarlo.'
+              : 'Esto borra lo elegido que nunca se usó. Lo que ya tiene historial se conserva intacto.'
+          }
+          textoBoton={confirmandoFormateo === 'todo' ? 'Formatear todo' : 'Formatear'}
+          onConfirmar={(palabra) => ejecutarFormateo(palabra)}
+          onCancelar={() => !formateando && setConfirmandoFormateo(null)}
+          ejecutando={formateando}
+          error={errorFormateo}
+        />
       )}
 
       {eliminando && (

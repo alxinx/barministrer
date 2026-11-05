@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js'
 import { signToken, signPlatformToken, requirePlatformAuth } from '../middleware/auth.js'
 import { loginLimiter, pinLimiter, estadoPin, bloquearPinManual } from '../middleware/rateLimit.js'
 import { avisarTenant } from '../lib/realtime.js'
+import { formatearTodo, formatearMovimientos, previsualizarFormateoProductos, ejecutarFormateoProductos } from '../lib/formateoTenant.js'
 
 export const platformAuthRoutes = Router()
 export const platformRoutes = Router()
@@ -233,6 +234,78 @@ platformRoutes.delete('/tenants/:id', requirePlatformAuth, async (req, res) => {
 
   await prisma.tenant.delete({ where: { id: tenant.id } })
   res.status(204).end()
+})
+
+// --- Formateo de datos (zona peligrosa, pero reversible-en-el-sentido-de
+// "el bar sigue existiendo"): a diferencia de DELETE /tenants/:id esto borra
+// SOLO datos operativos de un tenant puntual, nunca el bar ni sus usuarios.
+// La palabra "confirmar" en el body es defensa server-side ademas de lo que
+// ya exige el frontend (resolver una cuenta + escribirla) -- mismo criterio
+// que confirmSlug arriba: la confirmacion real vive aqui, no solo en la UI.
+function exigirConfirmacion(req, res) {
+  const { confirmPalabra } = req.body || {}
+  if (String(confirmPalabra || '').trim().toLowerCase() !== 'confirmar') {
+    res.status(400).json({ error: 'Falta confirmar la acción' })
+    return false
+  }
+  return true
+}
+
+platformRoutes.post('/tenants/:id/formatear/todo', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+  if (!exigirConfirmacion(req, res)) return
+
+  await formatearTodo(tenant.id)
+  avisarTenant(tenant.id, 'tenant:actualizado', {})
+  res.json({ ok: true })
+})
+
+platformRoutes.post('/tenants/:id/formatear/movimientos', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+  if (!exigirConfirmacion(req, res)) return
+
+  await formatearMovimientos(tenant.id)
+  avisarTenant(tenant.id, 'tenant:actualizado', {})
+  res.json({ ok: true })
+})
+
+platformRoutes.get('/tenants/:id/formatear/productos/preview', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+
+  const { productos, insumos, recetas } = req.query
+  const seleccion = { productos: productos === '1', insumos: insumos === '1', recetas: recetas === '1' }
+  if (!seleccion.productos && !seleccion.insumos && !seleccion.recetas) {
+    return res.status(400).json({ error: 'Elige al menos una categoría' })
+  }
+
+  const preview = await previsualizarFormateoProductos(tenant.id, seleccion)
+  res.json(preview)
+})
+
+platformRoutes.post('/tenants/:id/formatear/productos', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+  if (!exigirConfirmacion(req, res)) return
+
+  const { productos, insumos, recetas, modo } = req.body || {}
+  if (!productos && !insumos && !recetas) {
+    return res.status(400).json({ error: 'Elige al menos una categoría' })
+  }
+  if (!['conservar', 'borrar'].includes(modo)) {
+    return res.status(400).json({ error: 'Falta decidir qué hacer con lo que ya tiene historial' })
+  }
+
+  await ejecutarFormateoProductos(tenant.id, {
+    productos: Boolean(productos),
+    insumos: Boolean(insumos),
+    recetas: Boolean(recetas),
+    modo,
+  })
+  avisarTenant(tenant.id, 'tenant:actualizado', {})
+  res.json({ ok: true })
 })
 
 // Soporte basico desde plataforma: activar/desactivar un usuario del bar
