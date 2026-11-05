@@ -6,11 +6,13 @@ import PinField from '../components/PinField'
 import RangoFechas from '../components/RangoFechas'
 import SelectorFecha from '../components/SelectorFecha'
 import InsumoForm from '../components/InsumoForm'
+import ProductoForm from '../components/ProductoForm'
 import ReciboEncabezado from '../components/ReciboEncabezado'
 import ReciboPie from '../components/ReciboPie'
 import { usePinVerificado } from '../hooks/usePinVerificado'
 import { useShift } from '../context/ShiftContext'
 import { useAuth } from '../context/AuthContext'
+import { getCategories } from '../lib/categoriesStore'
 import { parseISOLocal, calcularRangoDias, isoLocal } from '../lib/fechas'
 import { prepararFactura } from '../lib/image'
 import { construirTicketRaster } from '../lib/ticketRaster'
@@ -55,10 +57,21 @@ function diasParaVencer(fechaVencimiento) {
   const venc = parseISOLocal(fechaVencimiento.slice(0, 10))
   return Math.round((venc - hoy) / 86400000)
 }
+// Una linea de compra es un insumo (receta) o un producto de consumo final
+// (cerveza, gaseosa, pan empacado -- ver CompraItem en el schema): nunca los
+// dos, nunca ninguno. Estos dos helpers son el unico lugar que sabe leer esa
+// diferencia, para no repetir el if/else en cada pantalla que lista items.
+function claveItemCompra(it) {
+  return it.insumo?.id || it.variant?.id
+}
+function nombreItemCompra(it) {
+  return it.insumo ? it.insumo.name : `${it.variant.product.name} · ${it.variant.name}`
+}
+
 function resumenItems(items) {
   if (!items || items.length === 0) return 'Sin insumos'
-  if (items.length === 1) return items[0].insumo.name
-  return `${items[0].insumo.name} + ${items.length - 1} más`
+  if (items.length === 1) return nombreItemCompra(items[0])
+  return `${nombreItemCompra(items[0])} + ${items.length - 1} más`
 }
 function nombreUnidad(codigo, unidades) {
   return unidades.find((u) => u.codigo === codigo)?.nombre.split(' ')[0] || codigo
@@ -136,6 +149,8 @@ export default function Compras() {
   const [categoriasInsumo, setCategoriasInsumo] = useState([])
   const [unidades, setUnidades] = useState([])
   const [recetas, setRecetas] = useState([]) // productos PREPARED, solo para contar de cuantos depende cada insumo
+  const [productosStock, setProductosStock] = useState([]) // productos de consumo final (cerveza, gaseosa, pan...), para agregarlos a una compra junto con los insumos
+  const [categoriasProducto, setCategoriasProducto] = useState([]) // categorias de catalogo (no las de insumo), solo para "matricular producto nuevo"
   const [search, setSearch] = useState('')
   const [filtroProveedor, setFiltroProveedor] = useState('')
   const [filtro, setFiltro] = useState('todas')
@@ -178,18 +193,21 @@ export default function Compras() {
   }
 
   async function cargarCatalogos() {
-    const [p, i, c, u, prod] = await Promise.all([
+    const [p, i, c, u, prod, catsProducto] = await Promise.all([
       api('/proveedores'),
       api('/insumos'),
       api('/insumo-categorias'),
       api('/insumos/unidades'),
       api('/products'),
+      getCategories(session?.tenant.id),
     ])
     setProveedores(p)
     setInsumos(i)
     setCategoriasInsumo(c)
     setUnidades(u)
     setRecetas(prod.filter((pr) => pr.kind === 'PREPARED'))
+    setProductosStock(prod.filter((pr) => pr.kind === 'STOCK' && pr.variants?.some((v) => v.active)))
+    setCategoriasProducto(catsProducto)
   }
 
   async function cargarListaCompra() {
@@ -315,6 +333,12 @@ export default function Compras() {
   }
   function onCategoriaInsumoCreada(c) {
     setCategoriasInsumo((prev) => [...prev, c])
+  }
+  // Mismo criterio, para "crear producto nuevo" (ver CompraForm): un
+  // producto de consumo final matriculado al vuelo se suma a la lista en
+  // memoria para que aparezca ya mismo en el buscador.
+  function onProductoCreado(p) {
+    setProductosStock((prev) => [...prev, p])
   }
 
   const rangoCalendario = rango ? { from: parseISOLocal(rango.desde), to: parseISOLocal(rango.hasta) } : calcularRangoDias(30)
@@ -599,11 +623,14 @@ export default function Compras() {
                   <CompraForm
                     proveedores={proveedores}
                     insumos={insumos}
+                    productosStock={productosStock}
                     categoriasInsumo={categoriasInsumo}
+                    categoriasProducto={categoriasProducto}
                     unidades={unidades}
                     onProveedorCreado={(p) => setProveedores((prev) => [...prev, p])}
                     onInsumoCreado={onInsumoCreado}
                     onCategoriaInsumoCreada={onCategoriaInsumoCreada}
+                    onProductoCreado={onProductoCreado}
                     onCreated={async (compra) => {
                       await recargarTodo()
                       setSelectedId(compra.id)
@@ -616,11 +643,14 @@ export default function Compras() {
                     id={selected}
                     proveedores={proveedores}
                     insumos={insumos}
+                    productosStock={productosStock}
                     categoriasInsumo={categoriasInsumo}
+                    categoriasProducto={categoriasProducto}
                     unidades={unidades}
                     onProveedorCreado={(p) => setProveedores((prev) => [...prev, p])}
                     onInsumoCreado={onInsumoCreado}
                     onCategoriaInsumoCreada={onCategoriaInsumoCreada}
+                    onProductoCreado={onProductoCreado}
                     onActualizada={recargarTodo}
                     onCancel={() => setSelectedId(undefined)}
                   />
@@ -1002,11 +1032,14 @@ function CompraForm({
   compraExistente,
   proveedores,
   insumos,
+  productosStock,
   categoriasInsumo,
+  categoriasProducto,
   unidades,
   onProveedorCreado,
   onInsumoCreado,
   onCategoriaInsumoCreada,
+  onProductoCreado,
   onCreated,
   onSaved,
   onCancel,
@@ -1031,7 +1064,8 @@ function CompraForm({
 
   const [items, setItems] = useState(
     (compraExistente?.items || []).map((it) => ({
-      insumo: it.insumo,
+      insumo: it.insumo || null,
+      variant: it.variant || null,
       cantidad: String(it.cantidad),
       precioUnitario: String(it.precioUnitario),
       descuento: it.descuento && Number(it.descuento) > 0 ? String(it.descuento) : '',
@@ -1044,6 +1078,10 @@ function CompraForm({
   // cerrado) -- se precarga con lo que ya se escribio en el buscador, para
   // no hacer re-escribir el nombre que ya no encontro coincidencias.
   const [matriculandoInsumo, setMatriculandoInsumo] = useState(null)
+  // Mismo criterio, para "crear producto nuevo" -- un insumo y un producto
+  // nunca se matriculan a la vez, asi que alcanza con dos banderas simples
+  // en vez de una sola con el tipo adentro.
+  const [matriculandoProducto, setMatriculandoProducto] = useState(null)
   const [insumosProveedor, setInsumosProveedor] = useState([])
 
   // Recibir mercancia sube stock de una (ver api/src/routes/compras.js); este
@@ -1100,21 +1138,44 @@ function CompraForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proveedorId])
 
+  // Busca en los dos catalogos a la vez: insumos (receta) y presentaciones
+  // de productos de consumo final (cerveza, gaseosa, pan empacado -- lo que
+  // no entra a ninguna receta). Una presentacion se nombra "Producto ·
+  // Presentacion" para distinguir "Coca-Cola · Lata" de "Coca-Cola · Litro".
   const coincidencias = useMemo(() => {
     const term = buscarInsumo.trim().toLowerCase()
     if (!term) return []
-    const yaAgregados = new Set(items.map((it) => it.insumo.id))
-    return insumos.filter((i) => buscarEntidadTexto(i).includes(term) && !yaAgregados.has(i.id)).slice(0, 6)
-  }, [buscarInsumo, insumos, items])
+    const insumosAgregados = new Set(items.filter((it) => it.insumo).map((it) => it.insumo.id))
+    const variantesAgregadas = new Set(items.filter((it) => it.variant).map((it) => it.variant.id))
+
+    const insumosMatch = insumos
+      .filter((i) => buscarEntidadTexto(i).includes(term) && !insumosAgregados.has(i.id))
+      .slice(0, 5)
+      .map((insumo) => ({ insumo, variant: null }))
+
+    const variantesMatch = []
+    for (const producto of productosStock) {
+      for (const v of producto.variants || []) {
+        if (!v.active || variantesAgregadas.has(v.id)) continue
+        if (!`${producto.name} ${v.name}`.toLowerCase().includes(term)) continue
+        variantesMatch.push({ insumo: null, variant: { ...v, product: producto } })
+        if (variantesMatch.length >= 5) break
+      }
+      if (variantesMatch.length >= 5) break
+    }
+
+    return [...insumosMatch, ...variantesMatch]
+  }, [buscarInsumo, insumos, productosStock, items])
 
   const rapidos = useMemo(() => {
-    const yaAgregados = new Set(items.map((it) => it.insumo.id))
+    const yaAgregados = new Set(items.filter((it) => it.insumo).map((it) => it.insumo.id))
     return insumosProveedor.filter((i) => !yaAgregados.has(i.id)).slice(0, 4)
   }, [insumosProveedor, items])
 
   // Estimado inicial de cuanto llega en unidadInventario, para insumos sin
   // conversion fija (ver sinConversionFija) -- el operador lo corrige si lo
-  // que de verdad llego fue distinto.
+  // que de verdad llego fue distinto. No aplica a productos (variant): esos
+  // siempre son unidades enteras, sin conversion.
   function estimarCantidadInventarioReal(insumo, cantidad) {
     if (!insumo.cantidadPromedioPorUnidad) return ''
     return String(Math.round((Number(cantidad) || 0) * Number(insumo.cantidadPromedioPorUnidad)))
@@ -1125,6 +1186,7 @@ function CompraForm({
       ...prev,
       {
         insumo,
+        variant: null,
         cantidad: cantidadInicial,
         precioUnitario: String(insumo.costoCompra || ''),
         descuento: '',
@@ -1135,37 +1197,54 @@ function CompraForm({
     ])
     setBuscarInsumo('')
   }
-  function actualizarItem(insumoId, campo, valor) {
+  function agregarVariante(variant) {
+    setItems((prev) => [
+      ...prev,
+      {
+        insumo: null,
+        variant,
+        cantidad: '1',
+        precioUnitario: String(variant.cost || ''),
+        descuento: '',
+        porcentajeImpuesto: '',
+        cantidadInventarioReal: '',
+        cantidadInventarioRealManual: false,
+      },
+    ])
+    setBuscarInsumo('')
+  }
+  function actualizarItem(clave, campo, valor) {
     setItems((prev) =>
       prev.map((it) => {
-        if (it.insumo.id !== insumoId) return it
+        if (claveItemCompra(it) !== clave) return it
         if (campo === 'cantidadInventarioReal') {
           return { ...it, cantidadInventarioReal: valor, cantidadInventarioRealManual: true }
         }
-        if (campo === 'cantidad' && !it.cantidadInventarioRealManual) {
+        if (campo === 'cantidad' && it.insumo && !it.cantidadInventarioRealManual) {
           return { ...it, cantidad: valor, cantidadInventarioReal: estimarCantidadInventarioReal(it.insumo, valor) }
         }
         return { ...it, [campo]: valor }
       })
     )
   }
-  function sumarCantidad(insumoId, delta) {
+  function sumarCantidad(clave, delta) {
     setItems((prev) =>
       prev.map((it) => {
-        if (it.insumo.id !== insumoId) return it
+        if (claveItemCompra(it) !== clave) return it
         const cantidad = String(Math.max(0, (Number(it.cantidad) || 0) + delta))
         return {
           ...it,
           cantidad,
-          cantidadInventarioReal: it.cantidadInventarioRealManual
-            ? it.cantidadInventarioReal
-            : estimarCantidadInventarioReal(it.insumo, cantidad),
+          cantidadInventarioReal:
+            it.insumo && !it.cantidadInventarioRealManual
+              ? estimarCantidadInventarioReal(it.insumo, cantidad)
+              : it.cantidadInventarioReal,
         }
       })
     )
   }
-  function quitarItem(insumoId) {
-    setItems((prev) => prev.filter((it) => it.insumo.id !== insumoId))
+  function quitarItem(clave) {
+    setItems((prev) => prev.filter((it) => claveItemCompra(it) !== clave))
   }
 
   async function crearProveedor() {
@@ -1222,20 +1301,26 @@ function CompraForm({
     return ''
   }
   function errorItems() {
-    if (items.length === 0) return 'Agrega al menos un insumo a la compra'
+    if (items.length === 0) return 'Agrega al menos un insumo o producto a la compra'
     for (const it of items) {
-      if (!Number(it.cantidad) || Number(it.cantidad) <= 0) return `La cantidad de "${it.insumo.name}" debe ser mayor a cero`
-      if (it.precioUnitario === '' || Number(it.precioUnitario) < 0) return `El precio de "${it.insumo.name}" no es válido`
+      const nombre = nombreItemCompra(it)
+      if (!Number(it.cantidad) || Number(it.cantidad) <= 0) return `La cantidad de "${nombre}" debe ser mayor a cero`
+      if (it.precioUnitario === '' || Number(it.precioUnitario) < 0) return `El precio de "${nombre}" no es válido`
     }
     return ''
   }
   // Solo exigido al RECIBIR (sube stock de una): mientras sigue en borrador
-  // puede no haberse contado/pesado todavia. Ver sinConversionFija.
+  // puede no haberse contado/pesado todavia. Ver sinConversionFija. No aplica
+  // a productos (variant): esos no tienen conversion de unidad.
   function errorItemsParaRecibir() {
     const err = errorItems()
     if (err) return err
     for (const it of items) {
-      if (sinConversionFija(it.insumo, unidades) && (!it.cantidadInventarioReal || Number(it.cantidadInventarioReal) <= 0)) {
+      if (
+        it.insumo &&
+        sinConversionFija(it.insumo, unidades) &&
+        (!it.cantidadInventarioReal || Number(it.cantidadInventarioReal) <= 0)
+      ) {
         return `Escribe cuánto llegó en total de "${it.insumo.name}" para poder recibirlo`
       }
     }
@@ -1252,12 +1337,12 @@ function CompraForm({
       facturaUrl: facturaUrl || null,
       facturaNombre: facturaNombre || null,
       items: items.map((it) => ({
-        insumoId: it.insumo.id,
+        ...(it.insumo ? { insumoId: it.insumo.id } : { variantId: it.variant.id }),
         cantidad: Number(it.cantidad),
         precioUnitario: Number(it.precioUnitario),
         descuento: Number(it.descuento) || 0,
         porcentajeImpuesto: Number(it.porcentajeImpuesto) || 0,
-        cantidadInventarioReal: it.cantidadInventarioReal ? Number(it.cantidadInventarioReal) : null,
+        cantidadInventarioReal: it.insumo && it.cantidadInventarioReal ? Number(it.cantidadInventarioReal) : null,
       })),
       accion,
     }
@@ -1525,7 +1610,7 @@ function CompraForm({
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <h3 className="text-sm font-bold tracking-wide uppercase flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-amber inline-block" />
-            2. Insumos, materia prima y empaques
+            2. Insumos y productos
           </h3>
           <span
             className={`text-[10px] font-semibold px-2 py-1 rounded-pill border ${
@@ -1558,29 +1643,47 @@ function CompraForm({
           </span>
           <input
             className="field pl-10"
-            placeholder="Buscar insumo para agregar…"
+            placeholder="Buscar insumo o producto para agregar…"
             value={buscarInsumo}
             onChange={(e) => setBuscarInsumo(e.target.value)}
           />
           {coincidencias.length > 0 && (
             <div className="absolute z-10 top-full left-0 right-0 mt-1 card p-1.5 space-y-0.5 shadow-xl max-h-60 overflow-y-auto">
-              {coincidencias.map((i) => (
-                <button
-                  key={i.id}
-                  type="button"
-                  onClick={() => agregarInsumo(i)}
-                  className="w-full flex items-center justify-between gap-2 text-left px-2.5 py-2 rounded-lg text-sm hover:bg-raised"
-                >
-                  <span>{i.name}</span>
-                  <span className="text-xs text-muted">{i.unidadCompra}</span>
-                </button>
-              ))}
+              {coincidencias.map((c) =>
+                c.insumo ? (
+                  <button
+                    key={`i-${c.insumo.id}`}
+                    type="button"
+                    onClick={() => agregarInsumo(c.insumo)}
+                    className="w-full flex items-center justify-between gap-2 text-left px-2.5 py-2 rounded-lg text-sm hover:bg-raised"
+                  >
+                    <span>{c.insumo.name}</span>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-pill border border-edge text-muted shrink-0">
+                      Insumo
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    key={`v-${c.variant.id}`}
+                    type="button"
+                    onClick={() => agregarVariante(c.variant)}
+                    className="w-full flex items-center justify-between gap-2 text-left px-2.5 py-2 rounded-lg text-sm hover:bg-raised"
+                  >
+                    <span>
+                      {c.variant.product.name} <span className="text-muted">· {c.variant.name}</span>
+                    </span>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-pill border border-amber/40 text-amberText shrink-0">
+                      Producto
+                    </span>
+                  </button>
+                )
+              )}
             </div>
           )}
           {buscarInsumo.trim() && coincidencias.length === 0 && (
             <div className="absolute z-10 top-full left-0 right-0 mt-1 card p-3 shadow-xl space-y-2">
               <p className="text-xs text-muted">
-                No encontramos insumos para "{buscarInsumo.trim()}".
+                No encontramos insumos ni productos para "{buscarInsumo.trim()}".
               </p>
               <button
                 type="button"
@@ -1588,6 +1691,13 @@ function CompraForm({
                 className="btn-ghost w-full justify-center text-xs h-9"
               >
                 <Icon.plus width={14} height={14} /> Matricular "{buscarInsumo.trim()}" como insumo nuevo
+              </button>
+              <button
+                type="button"
+                onClick={() => setMatriculandoProducto(buscarInsumo.trim())}
+                className="btn-ghost w-full justify-center text-xs h-9"
+              >
+                <Icon.plus width={14} height={14} /> Crear "{buscarInsumo.trim()}" como producto nuevo
               </button>
             </div>
           )}
@@ -1610,9 +1720,28 @@ function CompraForm({
           />
         )}
 
+        {/* Mismo atajo que matricular un insumo, pero para un producto de
+            consumo final (cerveza, gaseosa, pan empacado): asi el operador
+            no tiene que saber de antemano en que catalogo va lo que esta
+            comprando ni salir de la compra para registrarlo en /productos. */}
+        {matriculandoProducto !== null && (
+          <ProductoForm
+            initialName={matriculandoProducto}
+            categories={categoriasProducto}
+            onClose={() => setMatriculandoProducto(null)}
+            onSaved={(creado) => {
+              onProductoCreado(creado)
+              for (const v of creado.variants || []) {
+                agregarVariante({ ...v, product: { id: creado.id, name: creado.name } })
+              }
+              setMatriculandoProducto(null)
+            }}
+          />
+        )}
+
         {itemsCalculados.length === 0 ? (
           <p className="text-sm text-muted text-center py-8 border border-dashed border-edge rounded-xl">
-            Todavía no hay insumos. Búscalos arriba y agrégalos a la compra.
+            Todavía no hay insumos ni productos. Búscalos arriba y agrégalos a la compra.
           </p>
         ) : (
           <div className="rounded-xl border border-edge overflow-x-auto">
@@ -1620,7 +1749,7 @@ function CompraForm({
               <thead>
                 <tr className="text-left text-xs text-muted uppercase tracking-wide bg-raised">
                   <th className="py-2.5 px-3 font-semibold w-8">#</th>
-                  <th className="py-2.5 px-3 font-semibold">Insumo / Descripción</th>
+                  <th className="py-2.5 px-3 font-semibold">Insumo o producto</th>
                   <th className="py-2.5 px-3 font-semibold">Unidad</th>
                   <th className="py-2.5 px-3 font-semibold">Cantidad</th>
                   <th className="py-2.5 px-3 font-semibold">Costo unitario</th>
@@ -1631,24 +1760,26 @@ function CompraForm({
                 </tr>
               </thead>
               <tbody>
-                {itemsCalculados.map((it, idx) => (
-                  <Fragment key={it.insumo.id}>
+                {itemsCalculados.map((it, idx) => {
+                  const clave = claveItemCompra(it)
+                  return (
+                  <Fragment key={clave}>
                   <tr className={idx > 0 ? 'border-t border-edge' : ''}>
                     <td className="py-2 px-3 text-xs text-muted">{String(idx + 1).padStart(2, '0')}</td>
                     <td className="py-2 px-3">
-                      <p className="truncate font-medium">{it.insumo.name}</p>
-                      {it.insumo.codigoInterno && <p className="text-xs text-muted">{it.insumo.codigoInterno}</p>}
+                      <p className="truncate font-medium">{nombreItemCompra(it)}</p>
+                      {it.insumo?.codigoInterno && <p className="text-xs text-muted">{it.insumo.codigoInterno}</p>}
                     </td>
                     <td className="py-2 px-3">
                       <span className="text-xs px-2 py-1 rounded-pill border border-edge bg-raised whitespace-nowrap">
-                        {it.insumo.unidadCompra}
+                        {it.insumo ? it.insumo.unidadCompra : 'Unidad'}
                       </span>
                     </td>
                     <td className="py-2 px-3">
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => sumarCantidad(it.insumo.id, -1)}
+                          onClick={() => sumarCantidad(clave, -1)}
                           className="w-7 h-8 rounded-lg border border-edge text-muted hover:text-ink grid place-items-center shrink-0"
                         >
                           −
@@ -1656,14 +1787,14 @@ function CompraForm({
                         <input
                           type="number"
                           min="0"
-                          step="0.001"
+                          step={it.insumo ? '0.001' : '1'}
                           className="field h-8 w-16 text-center px-1"
                           value={it.cantidad}
-                          onChange={(e) => actualizarItem(it.insumo.id, 'cantidad', e.target.value)}
+                          onChange={(e) => actualizarItem(clave, 'cantidad', e.target.value)}
                         />
                         <button
                           type="button"
-                          onClick={() => sumarCantidad(it.insumo.id, 1)}
+                          onClick={() => sumarCantidad(clave, 1)}
                           className="w-7 h-8 rounded-lg border border-edge text-muted hover:text-ink grid place-items-center shrink-0"
                         >
                           +
@@ -1674,14 +1805,14 @@ function CompraForm({
                       <MoneyInput
                         className="field h-8 w-28"
                         value={it.precioUnitario}
-                        onChange={(v) => actualizarItem(it.insumo.id, 'precioUnitario', v)}
+                        onChange={(v) => actualizarItem(clave, 'precioUnitario', v)}
                       />
                     </td>
                     <td className="py-2 px-3">
                       <MoneyInput
                         className="field h-8 w-24"
                         value={it.descuento}
-                        onChange={(v) => actualizarItem(it.insumo.id, 'descuento', v)}
+                        onChange={(v) => actualizarItem(clave, 'descuento', v)}
                       />
                     </td>
                     <td className="py-2 px-3">
@@ -1692,18 +1823,18 @@ function CompraForm({
                           max="100"
                           className="field h-8 w-16 text-center px-1"
                           value={it.porcentajeImpuesto}
-                          onChange={(e) => actualizarItem(it.insumo.id, 'porcentajeImpuesto', e.target.value)}
+                          onChange={(e) => actualizarItem(clave, 'porcentajeImpuesto', e.target.value)}
                         />
                       </div>
                     </td>
                     <td className="py-2 px-3 font-medium whitespace-nowrap">{money(it.total)}</td>
                     <td className="py-2 px-3 text-right">
-                      <button type="button" onClick={() => quitarItem(it.insumo.id)} className="text-muted hover:text-ocupada p-1">
+                      <button type="button" onClick={() => quitarItem(clave)} className="text-muted hover:text-ocupada p-1">
                         <Icon.trash width={15} height={15} />
                       </button>
                     </td>
                   </tr>
-                  {sinConversionFija(it.insumo, unidades) && (
+                  {it.insumo && sinConversionFija(it.insumo, unidades) && (
                     <tr className="bg-raised/60">
                       <td></td>
                       <td colSpan={8} className="px-3 pb-2.5 pt-0">
@@ -1718,7 +1849,7 @@ function CompraForm({
                             step="0.01"
                             className="field h-7 w-28 text-xs"
                             value={it.cantidadInventarioReal}
-                            onChange={(e) => actualizarItem(it.insumo.id, 'cantidadInventarioReal', e.target.value)}
+                            onChange={(e) => actualizarItem(clave, 'cantidadInventarioReal', e.target.value)}
                             placeholder="0"
                           />
                           <span className="text-muted">{it.insumo.unidadInventario} en total</span>
@@ -1727,7 +1858,8 @@ function CompraForm({
                     </tr>
                   )}
                   </Fragment>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -1843,11 +1975,14 @@ function CompraDetalle({
   id,
   proveedores,
   insumos,
+  productosStock,
   categoriasInsumo,
+  categoriasProducto,
   unidades,
   onProveedorCreado,
   onInsumoCreado,
   onCategoriaInsumoCreada,
+  onProductoCreado,
   onActualizada,
   onCancel,
 }) {
@@ -1921,11 +2056,14 @@ function CompraDetalle({
         compraExistente={compra}
         proveedores={proveedores}
         insumos={insumos}
+        productosStock={productosStock}
         categoriasInsumo={categoriasInsumo}
+        categoriasProducto={categoriasProducto}
         unidades={unidades}
         onProveedorCreado={onProveedorCreado}
         onInsumoCreado={onInsumoCreado}
         onCategoriaInsumoCreada={onCategoriaInsumoCreada}
+        onProductoCreado={onProductoCreado}
         onSaved={async () => {
           setEditando(false)
           await refrescar()
@@ -1995,29 +2133,31 @@ function CompraDetalle({
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="text-left text-xs text-muted uppercase tracking-wide bg-raised">
-              <th className="py-2.5 px-3 font-semibold">Insumo</th>
+              <th className="py-2.5 px-3 font-semibold">Insumo o producto</th>
               <th className="py-2.5 px-3 font-semibold">Cantidad</th>
               <th className="py-2.5 px-3 font-semibold">Precio unit.</th>
               <th className="py-2.5 px-3 font-semibold">Total</th>
             </tr>
           </thead>
           <tbody>
-            {compra.items.map((it, idx) => (
+            {compra.items.map((it, idx) => {
+              const imageUrl = it.insumo ? it.insumo.imageUrl : it.variant?.product?.imageUrl
+              return (
               <tr key={it.id} className={idx > 0 ? 'border-t border-edge' : ''}>
                 <td className="py-2 px-3">
                   <div className="flex items-center gap-2.5">
                     <span className="w-8 h-8 rounded-lg overflow-hidden shrink-0 grid place-items-center bg-canvas border border-edge">
-                      {it.insumo.imageUrl ? (
-                        <img src={it.insumo.imageUrl} alt="" className="w-full h-full object-cover" />
+                      {imageUrl ? (
+                        <img src={imageUrl} alt="" className="w-full h-full object-cover" />
                       ) : (
                         <Icon.box width={14} height={14} className="text-muted" />
                       )}
                     </span>
-                    <span className="truncate">{it.insumo.name}</span>
+                    <span className="truncate">{nombreItemCompra(it)}</span>
                   </div>
                 </td>
                 <td className="py-2 px-3">
-                  {it.cantidad} {it.insumo.unidadCompra}
+                  {it.cantidad} {it.insumo ? it.insumo.unidadCompra : 'unidad(es)'}
                   {it.cantidadInventarioReal != null && (
                     <span className="block text-xs text-muted">
                       {it.cantidadInventarioReal} {it.insumo.unidadInventario} reales
@@ -2027,7 +2167,8 @@ function CompraDetalle({
                 <td className="py-2 px-3 text-muted">{money(it.precioUnitario)}</td>
                 <td className="py-2 px-3 font-medium">{money(it.total)}</td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

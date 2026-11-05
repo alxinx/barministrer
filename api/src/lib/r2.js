@@ -60,3 +60,13 @@ export async function subirImagenInsumo(buffer, contentType = 'image/webp') {
 export async function subirFacturaCompra(tenantId, buffer, contentType, extension) {
   return subirArchivo(`facturas/${tenantId}/${randomUUID()}.${extension}`, buffer, contentType)
 }
+
+// facturaUrl viaja de vuelta al cliente y luego el cliente la manda de
+// vuelta al guardar la compra (igual que imageUrl en productos/insumos):
+// sin esto, cualquiera podria mandar "javascript:..." como facturaUrl y
+// que se ejecute cuando otro usuario del mismo tenant le de clic al botón
+// de factura. Solo se acepta lo que de verdad salio de subirFacturaCompra.
+export function esUrlDeFactura(url) {
+  if (!url) return true // null/"" es "sin factura", valido
+  return typeof url === 'string' && url.startsWith(`${process.env.R2_PUBLIC_URL}/facturas/`)
+}

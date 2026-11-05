@@ -257,16 +257,18 @@ model Variant {
   product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
   asIngredientOf RecipeItem[]    @relation("IngredientVariant")
   movements      StockMovement[]
+  compraItems    CompraItem[]
 
   @@unique([productId, name])
   @@index([productId])
 }
 
 enum StockMovementType {
-  PURCHASE     // entrada de inventario: compra, suma al stock
-  SALE         // se envio a la barra (pedido ACTIVE): resta al stock, puede dejarlo en negativo
-  VOID_RESTORE // se devolvio un producto ya activo: repone lo que se habia restado
-  WASTE        // merma/perdida registrada a mano: resta al stock, nunca mas de lo que hay
+  PURCHASE      // entrada de inventario: compra, suma al stock
+  PURCHASE_VOID // una Compra (ver COMPRAS) que la habia subido se anulo, resta lo que esa compra sumo
+  SALE          // se envio a la barra (pedido ACTIVE): resta al stock, puede dejarlo en negativo
+  VOID_RESTORE  // se devolvio un producto ya activo: repone lo que se habia restado
+  WASTE         // merma/perdida registrada a mano: resta al stock, nunca mas de lo que hay
 }
 
 /// Entrada de inventario: la compra por empaque (caja, canasta) se resuelve
@@ -286,9 +288,16 @@ model StockMovement {
 
   createdById String
 
-  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  createdBy User    @relation(fields: [createdById], references: [id])
+  // Si esta entrada nacio de recibir una Compra (ver COMPRAS mas abajo, un
+  // producto de consumo final -- cerveza, gaseosa, pan -- comprado junto con
+  // insumos en la misma orden), el rastro queda aqui. Null para una entrada
+  // manual desde /productos/inventario, que no pasa por Compras.
+  compraItemId String?
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variant    Variant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdBy  User        @relation(fields: [createdById], references: [id])
+  compraItem CompraItem? @relation(fields: [compraItemId], references: [id])
 
   @@index([variantId])
   @@index([tenantId])
@@ -533,16 +542,22 @@ model Compra {
   @@index([proveedorId])
 }
 
-/// cantidad va en unidadCompra del insumo (puede ser fraccionaria: 2.5 kg).
-/// Al recibir, cantidadConvertida = round(cantidad * factorConversion) es lo
-/// que de verdad sube Insumo.stock (Int): se redondea al entero mas cercano
-/// de unidadInventario, igual que cualquier conversion de unidad de aqui.
+/// Una linea es un insumo (materia prima de receta) O un producto de consumo
+/// final (cerveza, gaseosa, pan empacado -- lo que se vende tal cual, no
+/// entra a ninguna receta): exactamente uno de insumoId/variantId, nunca los
+/// dos ni ninguno. Mismo criterio que RecipeItem ya usa para sus tres tipos
+/// de ingrediente. Para un insumo, cantidad va en su unidadCompra (puede ser
+/// fraccionaria: 2.5 kg) y cantidadConvertida = round(cantidad *
+/// factorConversion) es lo que de verdad sube Insumo.stock. Para un
+/// producto, cantidad ya son unidades enteras (un Variant siempre se cuenta
+/// en unidades, ver CLAUDE.md) y sube Variant.stock directo, sin conversion.
 model CompraItem {
   id                 String  @id @default(uuid())
   compraId           String
-  insumoId           String
+  insumoId           String?
+  variantId          String?
   cantidad           Decimal @db.Decimal(12, 3)
-  precioUnitario     Decimal @db.Decimal(12, 2) // precio de 1 unidadCompra
+  precioUnitario     Decimal @db.Decimal(12, 2) // precio de 1 unidadCompra (insumo) o de 1 unidad (producto)
   descuento          Decimal @db.Decimal(12, 2) @default(0) // valor, no porcentaje
   porcentajeImpuesto Decimal @db.Decimal(5, 2)  @default(0) // 0 = sin IVA/exento
   // Solo para insumos sin conversion fija (ver sinConversionFija): la
@@ -550,18 +565,22 @@ model CompraItem {
   // unidadInventario del insumo (ej. 1450 gramos para 3 lechugas, o 24
   // unidades para 2 paquetes de pan). Esto -- no cantidad*promedio -- es lo
   // que sube Insumo.stock, porque cada unidad o paquete trae distinto. Null
-  // para insumos normales (misma magnitud, conversion fija real).
+  // para insumos normales (misma magnitud, conversion fija real) y para
+  // productos (variantId), que no tienen este caso especial.
   cantidadInventarioReal Decimal? @db.Decimal(12, 3)
   subtotal           Decimal @db.Decimal(12, 2)
   impuesto           Decimal @db.Decimal(12, 2) @default(0)
   total              Decimal @db.Decimal(12, 2)
 
-  compra      Compra           @relation(fields: [compraId], references: [id], onDelete: Cascade)
-  insumo      Insumo           @relation(fields: [insumoId], references: [id])
-  movimientos InsumoMovement[]
+  compra         Compra           @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  insumo         Insumo?          @relation(fields: [insumoId], references: [id])
+  variant        Variant?         @relation(fields: [variantId], references: [id])
+  movimientos    InsumoMovement[]
+  movimientosStock StockMovement[]
 
   @@index([compraId])
   @@index([insumoId])
+  @@index([variantId])
 }
 
 /// Un pago o abono sobre una compra. Exactamente uno de los dos links de

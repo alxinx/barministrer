@@ -6,7 +6,7 @@ import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
 import { factorConversion, sinConversionFija } from '../lib/unidades.js'
 import { crearShiftExpense } from '../lib/shiftExpense.js'
-import { subirFacturaCompra } from '../lib/r2.js'
+import { subirFacturaCompra, esUrlDeFactura } from '../lib/r2.js'
 
 export const comprasRoutes = Router()
 
@@ -43,12 +43,16 @@ function cantidadConvertida({ cantidad, cantidadInventarioReal, insumo }) {
   return Math.round(Number(cantidad) * factor)
 }
 
-// Nunca se confia en subtotal/impuesto/total que mande el cliente: siempre
-// se recalculan aqui a partir de cantidad/precio/descuento/% impuesto.
-function calcularItem(raw, insumosPorId) {
-  const insumo = insumosPorId.get(raw?.insumoId)
-  if (!insumo) throw badRequest('Uno de los insumos de la compra no existe')
+function calcularTotalesItem({ cantidad, precioUnitario, descuento, porcentajeImpuesto, nombre }) {
+  const bruto = cantidad * precioUnitario
+  if (descuento > bruto) throw badRequest(`El descuento de "${nombre}" no puede superar su subtotal`)
+  const subtotal = bruto - descuento
+  const impuesto = subtotal * (porcentajeImpuesto / 100)
+  const total = subtotal + impuesto
+  return { subtotal, impuesto, total }
+}
 
+function calcularItemInsumo(raw, insumo) {
   const cantidad = Number(raw.cantidad)
   const precioUnitario = Number(raw.precioUnitario)
   const descuento = Number(raw.descuento || 0)
@@ -76,15 +80,17 @@ function calcularItem(raw, insumosPorId) {
     throw badRequest(`El peso o volumen real de "${insumo.name}" no es válido`)
   }
 
-  const bruto = cantidad * precioUnitario
-  if (descuento > bruto) throw badRequest(`El descuento de "${insumo.name}" no puede superar su subtotal`)
-
-  const subtotal = bruto - descuento
-  const impuesto = subtotal * (porcentajeImpuesto / 100)
-  const total = subtotal + impuesto
+  const { subtotal, impuesto, total } = calcularTotalesItem({
+    cantidad,
+    precioUnitario,
+    descuento,
+    porcentajeImpuesto,
+    nombre: insumo.name,
+  })
 
   return {
     insumoId: insumo.id,
+    variantId: null,
     cantidad,
     precioUnitario,
     descuento,
@@ -94,6 +100,81 @@ function calcularItem(raw, insumosPorId) {
     impuesto,
     total,
     insumo,
+    variant: null,
+  }
+}
+
+// Producto de consumo final (cerveza, gaseosa, pan empacado -- no entra a
+// ninguna receta): sin conversion de unidad, un Variant siempre se cuenta en
+// unidades enteras (ver CLAUDE.md > Productos, presentaciones y recetas), y
+// no tiene el caso especial de cantidadInventarioReal (eso es solo de
+// insumos comprados por unidad/paquete sin tamano fijo).
+function calcularItemVariante(raw, variant) {
+  const nombre = `${variant.product.name} · ${variant.name}`
+  const cantidad = Math.round(Number(raw.cantidad))
+  const precioUnitario = Number(raw.precioUnitario)
+  const descuento = Number(raw.descuento || 0)
+  const porcentajeImpuesto = Number(raw.porcentajeImpuesto || 0)
+
+  if (!Number.isFinite(cantidad) || cantidad <= 0) throw badRequest(`La cantidad de "${nombre}" debe ser mayor a cero`)
+  if (!Number.isFinite(precioUnitario) || precioUnitario < 0) throw badRequest(`El precio de "${nombre}" no es válido`)
+  if (!Number.isFinite(descuento) || descuento < 0) throw badRequest(`El descuento de "${nombre}" no es válido`)
+  if (!Number.isFinite(porcentajeImpuesto) || porcentajeImpuesto < 0 || porcentajeImpuesto > 100) {
+    throw badRequest(`El impuesto de "${nombre}" no es válido`)
+  }
+
+  const { subtotal, impuesto, total } = calcularTotalesItem({ cantidad, precioUnitario, descuento, porcentajeImpuesto, nombre })
+
+  return {
+    insumoId: null,
+    variantId: variant.id,
+    cantidad,
+    precioUnitario,
+    descuento,
+    porcentajeImpuesto,
+    cantidadInventarioReal: null,
+    subtotal,
+    impuesto,
+    total,
+    insumo: null,
+    variant,
+  }
+}
+
+// Nunca se confia en subtotal/impuesto/total que mande el cliente: siempre
+// se recalculan aqui a partir de cantidad/precio/descuento/% impuesto. Cada
+// linea es un insumo (receta) O un producto de consumo final (variantId) --
+// ver CompraItem en el schema.
+function calcularItem(raw, insumosPorId, variantesPorId) {
+  if (raw?.insumoId) {
+    const insumo = insumosPorId.get(raw.insumoId)
+    if (!insumo) throw badRequest('Uno de los insumos de la compra no existe')
+    return calcularItemInsumo(raw, insumo)
+  }
+  if (raw?.variantId) {
+    const variant = variantesPorId.get(raw.variantId)
+    if (!variant) throw badRequest('Uno de los productos de la compra no existe')
+    return calcularItemVariante(raw, variant)
+  }
+  throw badRequest('Cada línea necesita un insumo o un producto')
+}
+
+// Arma los dos mapas (insumo/variant por id) a partir de los items crudos
+// que llegan en el body o de los ya guardados en una Compra -- un solo lugar
+// en vez de repetir "sacar los ids, pedirlos, armar el Map" 4 veces.
+async function catalogosDeItems(tenantId, items) {
+  const insumoIds = [...new Set(items.map((i) => i?.insumoId).filter(Boolean))]
+  const variantIds = [...new Set(items.map((i) => i?.variantId).filter(Boolean))]
+  const [insumos, variantes] = await Promise.all([
+    prisma.insumo.findMany({ where: { id: { in: insumoIds }, tenantId } }),
+    prisma.variant.findMany({
+      where: { id: { in: variantIds }, product: { tenantId } },
+      include: { product: { select: { name: true } } },
+    }),
+  ])
+  return {
+    insumosPorId: new Map(insumos.map((i) => [i.id, i])),
+    variantesPorId: new Map(variantes.map((v) => [v.id, v])),
   }
 }
 
@@ -211,17 +292,38 @@ async function resolverPagos(tx, { tenantId, compraId, pagos, encargadoId, saldo
 // Por cada linea: InsumoMovement PURCHASE + sube Insumo.stock (convertido a
 // su unidadInventario) + sobrescribe Insumo.costoCompra con el precio de
 // esta compra (ultimo costo pagado, igual que hoy se edita a mano).
-async function aplicarRecepcion(tx, { tenantId, items, insumosPorId, encargadoId }) {
+async function aplicarRecepcion(tx, { tenantId, items, insumosPorId, variantesPorId, encargadoId }) {
   for (const item of items) {
-    const insumo = insumosPorId.get(item.insumoId)
-    const qty = cantidadConvertida({ cantidad: item.cantidad, cantidadInventarioReal: item.cantidadInventarioReal, insumo })
-    await tx.insumoMovement.create({
-      data: { tenantId, insumoId: insumo.id, type: 'PURCHASE', qty, compraItemId: item.id, createdById: encargadoId },
-    })
-    await tx.insumo.update({
-      where: { id: insumo.id },
-      data: { stock: { increment: qty }, costoCompra: item.precioUnitario },
-    })
+    if (item.insumoId) {
+      const insumo = insumosPorId.get(item.insumoId)
+      const qty = cantidadConvertida({ cantidad: item.cantidad, cantidadInventarioReal: item.cantidadInventarioReal, insumo })
+      await tx.insumoMovement.create({
+        data: { tenantId, insumoId: insumo.id, type: 'PURCHASE', qty, compraItemId: item.id, createdById: encargadoId },
+      })
+      await tx.insumo.update({
+        where: { id: insumo.id },
+        data: { stock: { increment: qty }, costoCompra: item.precioUnitario },
+      })
+    } else {
+      // Producto de consumo final: ya en unidades enteras, sin conversion.
+      const variant = variantesPorId.get(item.variantId)
+      const qty = Math.round(Number(item.cantidad))
+      await tx.stockMovement.create({
+        data: {
+          tenantId,
+          variantId: variant.id,
+          type: 'PURCHASE',
+          qty,
+          cost: item.precioUnitario,
+          compraItemId: item.id,
+          createdById: encargadoId,
+        },
+      })
+      await tx.variant.update({
+        where: { id: variant.id },
+        data: { stock: { increment: qty }, cost: item.precioUnitario },
+      })
+    }
   }
 }
 
@@ -268,6 +370,9 @@ comprasRoutes.patch('/compras/:id/factura', async (req, res) => {
   if (!compra) return res.status(404).json({ error: 'Compra no encontrada' })
 
   const { facturaUrl, facturaNombre } = req.body || {}
+  if (!esUrlDeFactura(facturaUrl)) {
+    return res.status(400).json({ error: 'La URL de la factura no es válida' })
+  }
   const actualizada = await prisma.compra.update({
     where: { id: compra.id },
     data: { facturaUrl: facturaUrl || null, facturaNombre: facturaUrl ? facturaNombre || null : null },
@@ -410,7 +515,12 @@ comprasRoutes.get('/compras', async (req, res) => {
       // Solo el nombre de cada insumo, para el resumen de la tarjeta en la
       // lista ("Leche Entera + 3 más") -- nunca precios ni cantidades, eso
       // solo se pide al abrir el detalle.
-      items: { select: { insumo: { select: { name: true } } } },
+      items: {
+        select: {
+          insumo: { select: { name: true } },
+          variant: { select: { name: true, product: { select: { name: true } } } },
+        },
+      },
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: COMPRAS_POR_PAGINA + 1, // uno de mas, para saber si hay otra pagina
@@ -507,6 +617,9 @@ comprasRoutes.get('/compras/:id', async (req, res) => {
       items: {
         include: {
           insumo: { select: { id: true, name: true, imageUrl: true, unidadCompra: true, unidadInventario: true } },
+          variant: {
+            select: { id: true, name: true, product: { select: { id: true, name: true, imageUrl: true } } },
+          },
         },
       },
       pagos: { orderBy: { createdAt: 'asc' }, include: { createdBy: { select: { name: true } } } },
@@ -536,22 +649,21 @@ comprasRoutes.post('/compras', async (req, res) => {
 
   if (!proveedorId) return res.status(400).json({ error: 'Elige un proveedor' })
   if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'Agrega al menos un insumo a la compra' })
+    return res.status(400).json({ error: 'Agrega al menos un insumo o producto a la compra' })
   }
   if (!['guardar', 'recibir'].includes(accion)) return res.status(400).json({ error: 'Acción inválida' })
+  if (!esUrlDeFactura(facturaUrl)) return res.status(400).json({ error: 'La URL de la factura no es válida' })
 
   const proveedor = await prisma.proveedor.findFirst({
     where: { id: proveedorId, tenantId: req.auth.tenantId, active: true },
   })
   if (!proveedor) return res.status(400).json({ error: 'El proveedor no existe' })
 
-  const insumoIds = [...new Set(items.map((i) => i?.insumoId))]
-  const insumos = await prisma.insumo.findMany({ where: { id: { in: insumoIds }, tenantId: req.auth.tenantId } })
-  const insumosPorId = new Map(insumos.map((i) => [i.id, i]))
+  const { insumosPorId, variantesPorId } = await catalogosDeItems(req.auth.tenantId, items)
 
   let calculados
   try {
-    calculados = items.map((raw) => calcularItem(raw, insumosPorId))
+    calculados = items.map((raw) => calcularItem(raw, insumosPorId, variantesPorId))
   } catch (err) {
     return res.status(err.status || 400).json({ error: err.message })
   }
@@ -572,7 +684,7 @@ comprasRoutes.post('/compras', async (req, res) => {
     total: totales.total,
     createdById: req.auth.userId,
   }
-  const itemsParaCrear = calculados.map(({ insumo, ...it }) => it)
+  const itemsParaCrear = calculados.map(({ insumo, variant, ...it }) => it)
 
   if (accion === 'guardar') {
     try {
@@ -612,6 +724,7 @@ comprasRoutes.post('/compras', async (req, res) => {
         tenantId: req.auth.tenantId,
         items: compra.items,
         insumosPorId,
+        variantesPorId,
         encargadoId: encargado.id,
       })
 
@@ -649,6 +762,10 @@ comprasRoutes.patch('/compras/:id', async (req, res) => {
   const { proveedorId, numeroDocumento, fecha, fechaVencimiento, observaciones, facturaUrl, facturaNombre, items } =
     req.body || {}
 
+  if (facturaUrl !== undefined && !esUrlDeFactura(facturaUrl)) {
+    return res.status(400).json({ error: 'La URL de la factura no es válida' })
+  }
+
   if (proveedorId !== undefined) {
     const proveedor = await prisma.proveedor.findFirst({
       where: { id: proveedorId, tenantId: req.auth.tenantId, active: true },
@@ -659,19 +776,17 @@ comprasRoutes.patch('/compras/:id', async (req, res) => {
   let itemsParaCrear, totales
   if (items !== undefined) {
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Agrega al menos un insumo a la compra' })
+      return res.status(400).json({ error: 'Agrega al menos un insumo o producto a la compra' })
     }
-    const insumoIds = [...new Set(items.map((i) => i?.insumoId))]
-    const insumos = await prisma.insumo.findMany({ where: { id: { in: insumoIds }, tenantId: req.auth.tenantId } })
-    const insumosPorId = new Map(insumos.map((i) => [i.id, i]))
+    const { insumosPorId, variantesPorId } = await catalogosDeItems(req.auth.tenantId, items)
     let calculados
     try {
-      calculados = items.map((raw) => calcularItem(raw, insumosPorId))
+      calculados = items.map((raw) => calcularItem(raw, insumosPorId, variantesPorId))
     } catch (err) {
       return res.status(err.status || 400).json({ error: err.message })
     }
     totales = sumarTotales(calculados)
-    itemsParaCrear = calculados.map(({ insumo, ...it }) => it)
+    itemsParaCrear = calculados.map(({ insumo, variant, ...it }) => it)
   }
 
   try {
@@ -724,10 +839,7 @@ comprasRoutes.post('/compras/:id/recibir', async (req, res) => {
   const encargado = await verificarPin(req.auth.tenantId, pin)
   if (!encargado) return pinIncorrecto(req, res)
 
-  const insumos = await prisma.insumo.findMany({
-    where: { id: { in: compra.items.map((i) => i.insumoId) }, tenantId: req.auth.tenantId },
-  })
-  const insumosPorId = new Map(insumos.map((i) => [i.id, i]))
+  const { insumosPorId, variantesPorId } = await catalogosDeItems(req.auth.tenantId, compra.items)
 
   try {
     const resultado = await prisma.$transaction(async (tx) => {
@@ -735,6 +847,7 @@ comprasRoutes.post('/compras/:id/recibir', async (req, res) => {
         tenantId: req.auth.tenantId,
         items: compra.items,
         insumosPorId,
+        variantesPorId,
         encargadoId: encargado.id,
       })
 
@@ -835,29 +948,42 @@ comprasRoutes.post('/compras/:id/anular', async (req, res) => {
   const encargado = await verificarPin(req.auth.tenantId, pin)
   if (!encargado) return pinIncorrecto(req, res)
 
-  const insumos = await prisma.insumo.findMany({
-    where: { id: { in: compra.items.map((i) => i.insumoId) }, tenantId: req.auth.tenantId },
-  })
-  const insumosPorId = new Map(insumos.map((i) => [i.id, i]))
+  const { insumosPorId, variantesPorId } = await catalogosDeItems(req.auth.tenantId, compra.items)
 
   const anulada = await prisma.$transaction(async (tx) => {
     for (const item of compra.items) {
-      const insumo = insumosPorId.get(item.insumoId)
-      // Reversa exactamente lo que se habia sumado al recibir (incluido el
-      // peso/volumen REAL ya guardado en item.cantidadInventarioReal para un
-      // insumo pesable por unidad), no un estimado recalculado.
-      const qty = cantidadConvertida({ cantidad: item.cantidad, cantidadInventarioReal: item.cantidadInventarioReal, insumo })
-      await tx.insumoMovement.create({
-        data: {
-          tenantId: req.auth.tenantId,
-          insumoId: insumo.id,
-          type: 'PURCHASE_VOID',
-          qty,
-          compraItemId: item.id,
-          createdById: encargado.id,
-        },
-      })
-      await tx.insumo.update({ where: { id: insumo.id }, data: { stock: { decrement: qty } } })
+      if (item.insumoId) {
+        const insumo = insumosPorId.get(item.insumoId)
+        // Reversa exactamente lo que se habia sumado al recibir (incluido el
+        // peso/volumen REAL ya guardado en item.cantidadInventarioReal para
+        // un insumo pesable por unidad), no un estimado recalculado.
+        const qty = cantidadConvertida({ cantidad: item.cantidad, cantidadInventarioReal: item.cantidadInventarioReal, insumo })
+        await tx.insumoMovement.create({
+          data: {
+            tenantId: req.auth.tenantId,
+            insumoId: insumo.id,
+            type: 'PURCHASE_VOID',
+            qty,
+            compraItemId: item.id,
+            createdById: encargado.id,
+          },
+        })
+        await tx.insumo.update({ where: { id: insumo.id }, data: { stock: { decrement: qty } } })
+      } else {
+        const variant = variantesPorId.get(item.variantId)
+        const qty = Math.round(Number(item.cantidad))
+        await tx.stockMovement.create({
+          data: {
+            tenantId: req.auth.tenantId,
+            variantId: variant.id,
+            type: 'PURCHASE_VOID',
+            qty,
+            compraItemId: item.id,
+            createdById: encargado.id,
+          },
+        })
+        await tx.variant.update({ where: { id: variant.id }, data: { stock: { decrement: qty } } })
+      }
     }
     return tx.compra.update({
       where: { id: compra.id },

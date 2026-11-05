@@ -98,7 +98,7 @@ insumoRoutes.get('/insumos', async (req, res) => {
 // menos que sea el caso especial de sinConversionFija (se compra por unidad
 // o por paquete pero no hay un tamano fijo real, ej. lechugas por unidad o
 // pan por paquete, y recetas en gramos/unidad): ese combo se permite aparte.
-function validarUnidades(unidadInventario, unidadCompra) {
+export function validarUnidades(unidadInventario, unidadCompra) {
   if (factorConversion(unidadCompra, unidadInventario) !== null) return null
   if (sinConversionFija(unidadCompra, unidadInventario)) return null
   return 'La unidad de compra y la unidad de inventario deben ser de la misma magnitud (ambas de peso, ambas de volumen, o ambas "unidad")'
@@ -109,7 +109,7 @@ function validarUnidades(unidadInventario, unidadCompra) {
 // obligatorio -- se usa para costear la receta y sugerir el total al
 // registrar la compra (la cantidad real de cada compra se declara aparte,
 // ver compras.js).
-function validarCantidadPromedio(unidadInventario, unidadCompra, cantidadPromedioPorUnidad) {
+export function validarCantidadPromedio(unidadInventario, unidadCompra, cantidadPromedioPorUnidad) {
   if (!sinConversionFija(unidadCompra, unidadInventario)) return null
   const valor = Number(cantidadPromedioPorUnidad)
   if (!cantidadPromedioPorUnidad || !Number.isFinite(valor) || valor <= 0) {
