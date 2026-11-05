@@ -104,12 +104,87 @@ export default function Shell({ children }) {
     navigate('/entrar')
   }
 
+  // Debajo de md (768px) el <aside> de escritorio se oculta entero -- sin
+  // esto no habia NINGUNA forma de navegar desde un celular. Se cierra solo
+  // al cambiar de ruta (ChildLink/NavLink ya llaman onNavigate, esto es
+  // ademas un respaldo para atras/adelante del navegador).
+  const [menuMovil, setMenuMovil] = useState(false)
+  useEffect(() => {
+    setMenuMovil(false)
+  }, [location.pathname])
+
+  function salirMovil() {
+    setMenuMovil(false)
+    salir()
+  }
+
   return (
-    <div className="h-full flex bg-canvas">
+    <div className="h-full flex flex-col md:flex-row bg-canvas">
+      {/* Barra superior solo en celular: unico punto de entrada al menu ahi
+          abajo de md, donde el <aside> de escritorio esta oculto entero. */}
+      <header className="md:hidden flex items-center gap-3 px-4 h-14 shrink-0 border-b border-sidebarEdge bg-sidebar text-sidebarInk sidebar-panel">
+        <button
+          type="button"
+          onClick={() => setMenuMovil(true)}
+          aria-label="Abrir menú"
+          className="text-sidebarMuted hover:text-sidebarInk -ml-1 p-1.5"
+        >
+          <Icon.menu width={22} height={22} />
+        </button>
+        <span className="font-bold truncate">{session?.tenant.name || 'Barminister'}</span>
+      </header>
+
+      {/* Fondo oscuro detras del panel flotante: un clic afuera lo cierra. */}
+      {menuMovil && (
+        <div className="md:hidden fixed inset-0 z-40 bg-black/60" onClick={() => setMenuMovil(false)} />
+      )}
+
+      {/* Panel flotante del menu en celular: desliza desde la izquierda,
+          siempre con los textos visibles (nunca el modo solo-iconos del
+          escritorio, no tendria sentido en un panel que ya es flotante). */}
+      <aside
+        className={`md:hidden fixed inset-y-0 left-0 z-50 w-[280px] max-w-[85vw] flex flex-col border-r border-sidebarEdge bg-sidebar text-sidebarInk transition-transform duration-200 ${
+          menuMovil ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3 px-4 h-14 shrink-0 border-b border-sidebarEdge">
+          <span className="font-bold truncate">{session?.tenant.name || 'Barminister'}</span>
+          <button
+            type="button"
+            onClick={() => setMenuMovil(false)}
+            aria-label="Cerrar menú"
+            className="text-sidebarMuted hover:text-sidebarInk p-1 shrink-0"
+          >
+            <Icon.x width={20} height={20} />
+          </button>
+        </div>
+
+        <NavListMovil role={role} tenant={session?.tenant} location={location} onNavigate={() => setMenuMovil(false)} />
+
+        <div className="p-3 border-t border-sidebarEdge flex items-center gap-3 shrink-0">
+          <span className="rounded-full bg-sidebarRaised border border-sidebarEdge grid place-items-center font-bold shrink-0 w-9 h-9 text-sm">
+            {session?.user.name
+              .split(' ')
+              .slice(0, 2)
+              .map((w) => w[0])
+              .join('')}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium truncate">{session?.user.name}</p>
+            <p className="text-xs text-sidebarMuted capitalize">{role?.toLowerCase()}</p>
+          </div>
+          <button onClick={salirMovil} title="Cerrar sesión" className="text-sidebarMuted hover:text-sidebarOcupada p-1 shrink-0">
+            <Icon.exit width={16} height={16} />
+          </button>
+        </div>
+      </aside>
+
       {/* Debajo de 900px (breakpoint `nav`, no uno estandar de Tailwind) se
           retrae a solo iconos: una barra angosta todavia dice donde esta
           cada cosa sin robarle espacio a la pantalla de venta. Encima de eso,
-          `colapsado` hace lo mismo pero por eleccion del usuario. */}
+          `colapsado` hace lo mismo pero por eleccion del usuario. Todo esto
+          es ademas invisible debajo de md -- ahi el menu vive en el panel
+          flotante de arriba. */}
       <aside
         className={`hidden md:flex relative shrink-0 flex-col border-r border-sidebarEdge bg-sidebar text-sidebarInk w-16 sidebar-panel ${
           colapsado ? '' : 'nav:w-60'
@@ -352,5 +427,79 @@ function ChildLink({ c, onNavigate }) {
     >
       {c.label}
     </NavLink>
+  )
+}
+
+// Version del menu para el panel flotante de celular: siempre expandido, sin
+// modo solo-iconos ni flyout -- en un panel que ya es flotante y a pantalla
+// completa de ancho no tiene sentido retraer nada. Reusa `nav`, `visible()`
+// y `ChildLink` tal cual; solo cambia como se renderiza el contenedor.
+function NavListMovil({ role, tenant, location, onNavigate }) {
+  return (
+    <nav className="px-3 py-3 flex-1 space-y-1 overflow-y-auto">
+      {nav
+        .filter((item) => visible(item, role, tenant))
+        .map((item) =>
+          item.section ? (
+            <p
+              key={`section:${item.section}`}
+              className="pt-4 pb-1 px-3 text-[10px] font-bold tracking-wider text-sidebarMuted/70 uppercase"
+            >
+              {item.section}
+            </p>
+          ) : item.children ? (
+            <NavGroupMovil
+              key={item.label}
+              item={item}
+              active={item.children.some((c) => location.pathname === c.to)}
+              tenant={tenant}
+              onNavigate={onNavigate}
+            />
+          ) : (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                `flex items-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
+                  isActive ? 'bg-amber text-night' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'
+                }`
+              }
+            >
+              <item.icon />
+              <span>{item.label}</span>
+            </NavLink>
+          )
+        )}
+    </nav>
+  )
+}
+
+function NavGroupMovil({ item, active, tenant, onNavigate }) {
+  const [open, setOpen] = useState(active)
+  const children = item.children.filter((c) => !c.modulo || tenant?.[c.modulo])
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`w-full flex items-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
+          active && !open ? 'text-amber' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'
+        }`}
+      >
+        <item.icon />
+        <span className="flex-1 text-left">{item.label}</span>
+        <Icon.chevronDown width={15} height={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="pl-[22px] mt-1 space-y-1 border-l border-sidebarEdge ml-5">
+          {children.map((c) => (
+            <ChildLink key={c.to || c.label} c={c} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

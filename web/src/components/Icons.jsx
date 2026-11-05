@@ -307,6 +307,11 @@ export const Icon = {
       <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
     </svg>
   ),
+  menu: (p) => (
+    <svg {...base} {...p}>
+      <path d="M3 6h18M3 12h18M3 18h18" />
+    </svg>
+  ),
 }
 
 export const zoneIcon = { table: Icon.tables, sun: Icon.sun, crown: Icon.crown, glass: Icon.glass }
