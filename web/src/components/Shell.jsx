@@ -111,7 +111,7 @@ export default function Shell({ children }) {
           cada cosa sin robarle espacio a la pantalla de venta. Encima de eso,
           `colapsado` hace lo mismo pero por eleccion del usuario. */}
       <aside
-        className={`hidden md:flex relative shrink-0 flex-col border-r border-edge bg-surface w-16 ${
+        className={`hidden md:flex relative shrink-0 flex-col border-r border-sidebarEdge bg-sidebar text-sidebarInk w-16 sidebar-panel ${
           colapsado ? '' : 'nav:w-60'
         }`}
       >
@@ -121,7 +121,7 @@ export default function Shell({ children }) {
           type="button"
           onClick={alternarColapsado}
           title={colapsado ? 'Expandir menú' : 'Retraer menú'}
-          className="hidden nav:flex absolute -right-3 top-6 w-6 h-6 rounded-full border border-edge bg-raised text-muted hover:text-ink items-center justify-center z-10"
+          className="hidden nav:flex absolute -right-3 top-6 w-6 h-6 rounded-full border border-sidebarEdge bg-sidebarRaised text-sidebarMuted hover:text-sidebarInk items-center justify-center z-10"
         >
           <Icon.chevronLeft width={13} height={13} className={colapsado ? 'rotate-180' : ''} />
         </button>
@@ -157,7 +157,7 @@ export default function Shell({ children }) {
                 </span>
                 <div>
                   <p className="font-bold leading-none">Barminister</p>
-                  <p className="text-xs text-muted mt-1">{session?.tenant.name}</p>
+                  <p className="text-xs text-sidebarMuted mt-1">{session?.tenant.name}</p>
                 </div>
               </div>
             )}
@@ -171,11 +171,11 @@ export default function Shell({ children }) {
               item.section ? (
                 <div key={`section:${item.section}`} className="pt-4 pb-1">
                   <p
-                    className={`${colapsado ? 'hidden' : 'hidden nav:block'} px-3 text-[10px] font-bold tracking-wider text-muted/70 uppercase`}
+                    className={`${colapsado ? 'hidden' : 'hidden nav:block'} px-3 text-[10px] font-bold tracking-wider text-sidebarMuted/70 uppercase`}
                   >
                     {item.section}
                   </p>
-                  <hr className={`${colapsado ? 'block' : 'block nav:hidden'} border-edge mx-3`} />
+                  <hr className={`${colapsado ? 'block' : 'block nav:hidden'} border-sidebarEdge mx-3`} />
                 </div>
               ) : item.children ? (
                 <NavGroup
@@ -192,7 +192,7 @@ export default function Shell({ children }) {
                   title={item.label}
                   className={({ isActive }) =>
                     `flex items-center justify-center ${colapsado ? '' : 'nav:justify-start'} gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
-                      isActive ? 'bg-amber text-night' : 'text-muted hover:text-ink hover:bg-raised'
+                      isActive ? 'bg-amber text-night' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'
                     }`
                   }
                 >
@@ -203,14 +203,14 @@ export default function Shell({ children }) {
             )}
         </nav>
 
-        <div className={`p-2 border-t border-edge ${colapsado ? '' : 'nav:p-3'}`}>
+        <div className={`p-2 border-t border-sidebarEdge ${colapsado ? '' : 'nav:p-3'}`}>
           <div
             className={`flex flex-col items-center gap-2 px-1 py-2 ${
               colapsado ? '' : 'nav:flex-row nav:gap-3 nav:px-2'
             }`}
           >
             <span
-              className={`rounded-full bg-raised border border-edge grid place-items-center font-bold shrink-0 w-8 h-8 text-xs ${
+              className={`rounded-full bg-sidebarRaised border border-sidebarEdge grid place-items-center font-bold shrink-0 w-8 h-8 text-xs ${
                 colapsado ? '' : 'nav:w-9 nav:h-9 nav:text-sm'
               }`}
             >
@@ -222,9 +222,9 @@ export default function Shell({ children }) {
             </span>
             <div className={colapsado ? 'hidden' : 'hidden nav:block min-w-0 flex-1'}>
               <p className="text-sm font-medium truncate">{session?.user.name}</p>
-              <p className="text-xs text-muted capitalize">{role?.toLowerCase()}</p>
+              <p className="text-xs text-sidebarMuted capitalize">{role?.toLowerCase()}</p>
             </div>
-            <button onClick={salir} title="Cerrar sesión" className="text-muted hover:text-ocupada p-1">
+            <button onClick={salir} title="Cerrar sesión" className="text-sidebarMuted hover:text-sidebarOcupada p-1">
               <Icon.exit width={16} height={16} />
             </button>
           </div>
@@ -283,9 +283,17 @@ function NavGroup({ item, active, colapsado, tenant }) {
         title={item.label}
         className={`w-full flex items-center justify-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
           colapsado ? '' : 'nav:justify-start'
-        } ${active && !expandido ? 'text-amberText' : 'text-muted hover:text-ink hover:bg-raised'}`}
+        } ${active && !expandido ? 'text-amber' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'}`}
       >
-        <item.icon />
+        <span className="relative shrink-0">
+          <item.icon />
+          {/* Solo-iconos no deja espacio para la flechita de abajo -- sin
+              esto, un grupo con submenu era indistinguible de un link
+              normal hasta que alguien le hacia clic por curiosidad. Un
+              triangulo chiquito en la esquina basta para avisar "esto
+              despliega algo", sin competir con el icono. */}
+          {soloIconos && <span className="absolute -bottom-0.5 -right-1 w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-amber" />}
+        </span>
         <span className={colapsado ? 'hidden' : 'hidden nav:block flex-1 text-left'}>{item.label}</span>
         <Icon.chevronDown
           width={15}
@@ -299,7 +307,7 @@ function NavGroup({ item, active, colapsado, tenant }) {
           texto (los hijos no tienen icono propio). El estado `open` sigue
           vivo por si la ventana crece o se expande de nuevo. */}
       {expandido && (
-        <div className="hidden nav:block pl-[22px] mt-1 space-y-1 border-l border-edge ml-5">
+        <div className="hidden nav:block pl-[22px] mt-1 space-y-1 border-l border-sidebarEdge ml-5">
           {children.map((c) => (
             <ChildLink key={c.to || c.label} c={c} />
           ))}
@@ -307,8 +315,8 @@ function NavGroup({ item, active, colapsado, tenant }) {
       )}
 
       {open && soloIconos && (
-        <div className="absolute left-full top-0 ml-2 z-20 min-w-[190px] card p-1.5 space-y-0.5 shadow-xl">
-          <p className="px-2.5 pt-1 pb-1.5 text-xs font-semibold text-muted">{item.label}</p>
+        <div className="absolute left-full top-0 ml-2 z-20 min-w-[190px] bg-sidebarRaised border border-sidebarEdge text-sidebarInk rounded-2xl p-1.5 space-y-0.5 shadow-xl">
+          <p className="px-2.5 pt-1 pb-1.5 text-xs font-semibold text-sidebarMuted">{item.label}</p>
           {children.map((c) => (
             <ChildLink key={c.to || c.label} c={c} onNavigate={() => setOpen(false)} />
           ))}
@@ -325,9 +333,9 @@ function NavGroup({ item, active, colapsado, tenant }) {
 function ChildLink({ c, onNavigate }) {
   if (!c.to) {
     return (
-      <span className="flex flex-col gap-0.5 px-3 py-1.5 rounded-lg text-sm leading-tight text-muted/50 select-none">
+      <span className="flex flex-col gap-0.5 px-3 py-1.5 rounded-lg text-sm leading-tight text-sidebarMuted/50 select-none">
         {c.label}
-        <span className="text-[9px] font-semibold uppercase tracking-wide text-muted/40">Pronto</span>
+        <span className="text-[9px] font-semibold uppercase tracking-wide text-sidebarMuted/40">Pronto</span>
       </span>
     )
   }
@@ -338,7 +346,7 @@ function ChildLink({ c, onNavigate }) {
       onClick={onNavigate}
       className={({ isActive }) =>
         `block px-3 py-1.5 rounded-lg text-sm leading-tight transition-colors ${
-          isActive ? 'bg-amber text-night font-medium' : 'text-muted hover:text-ink hover:bg-raised'
+          isActive ? 'bg-amber text-night font-medium' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'
         }`
       }
     >

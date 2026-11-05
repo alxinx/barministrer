@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { PlatformAuthProvider, usePlatformAuth } from './context/PlatformAuthContext'
 import { ShiftProvider } from './context/ShiftContext'
@@ -19,6 +19,7 @@ const Insumos = lazy(() => import('./pages/Insumos'))
 const Recetas = lazy(() => import('./pages/Recetas'))
 const Compras = lazy(() => import('./pages/Compras'))
 const Proveedores = lazy(() => import('./pages/Proveedores'))
+const ProveedorDetalle = lazy(() => import('./pages/ProveedorDetalle'))
 const Caja = lazy(() => import('./pages/Caja'))
 const TurnoDetalle = lazy(() => import('./pages/TurnoDetalle'))
 const Clientes = lazy(() => import('./pages/Clientes'))
@@ -41,35 +42,51 @@ function Cargando() {
   return <div className="h-full grid place-items-center text-muted">Cargando…</div>
 }
 
+// Layout persistente del area autenticada: Shell (sidebar) se monta una sola
+// vez aqui arriba, antes de que React Router decida que hijo mostrar, asi
+// que navegar entre pantallas nunca lo desmonta ni lo tapa con el fallback
+// de carga -- solo el <Outlet/> de adentro cambia. Antes Shell vivia dentro
+// de cada <Protegida>, una instancia nueva por ruta: cada clic desmontaba y
+// remontaba el menu completo, y como el unico <Suspense> de mas abajo
+// envolvia tambien a Shell, mientras el chunk de la pagina nueva cargaba se
+// veia el sidebar desaparecer entero (el "parpadeo" que Alejo reporto).
+function AppLayout() {
+  const { session, loading } = useAuth()
+  if (loading) return <Cargando />
+  if (!session) return <Navigate to="/entrar" replace />
+  return (
+    <Shell>
+      <Suspense fallback={<Cargando />}>
+        <Outlet />
+      </Suspense>
+    </Shell>
+  )
+}
+
 // `permiso` es el flag de Tenant que el dueno puede prender para delegarle
 // esto a CAJERO (ver /configuracion/permisos). ADMIN siempre entra; cualquier
 // otro rol necesita que ese flag especifico este en true para este tenant.
 // `modulo` es distinto: si el tenant no lo tiene contratado, NADIE entra, ni
 // siquiera ADMIN -- solo plataforma lo activa (ver Tenant.moduloCajasBancos).
 // A diferencia de los demas casos, no redirige: se queda en la misma ruta con
-// el Shell puesto (sidebar y topbar visibles) y muestra ModuloNoDisponible en
-// el area de contenido -- tambien reacciona en vivo si el modulo se apaga
+// el Shell puesto (ya lo pone AppLayout arriba) y muestra ModuloNoDisponible
+// en el area de contenido -- tambien reacciona en vivo si el modulo se apaga
 // mientras la persona esta parada ahi (ver el socket 'tenant:actualizado' en
-// AuthContext, que refresca session.tenant).
+// AuthContext, que refresca session.tenant). La sesion/loading ya se
+// resolvieron en AppLayout, asi que aqui solo quedan los chequeos por ruta.
 function Protegida({ children, soloAdmin = false, roles, permiso, modulo, moduloNombre }) {
-  const { session, loading } = useAuth()
-  if (loading) return <Cargando />
-  if (!session) return <Navigate to="/entrar" replace />
+  const { session } = useAuth()
   if (modulo && !session.tenant?.[modulo]) {
-    return (
-      <Shell>
-        <ModuloNoDisponible nombre={moduloNombre} />
-      </Shell>
-    )
+    return <ModuloNoDisponible nombre={moduloNombre} />
   }
   if (permiso) {
     const tienePermiso = session.user.role === 'ADMIN' || (session.user.role === 'CAJERO' && session.tenant[permiso])
     if (!tienePermiso) return <Navigate to="/venta" replace />
-    return <Shell>{children}</Shell>
+    return children
   }
   if (soloAdmin && session.user.role !== 'ADMIN') return <Navigate to="/venta" replace />
   if (roles && !roles.includes(session.user.role)) return <Navigate to="/venta" replace />
-  return <Shell>{children}</Shell>
+  return children
 }
 
 // La plataforma es otra sesion (PlatformAdmin, sin tenantId), asi que no
@@ -99,85 +116,95 @@ export default function App() {
           <Suspense fallback={<Cargando />}>
             <Routes>
               <Route path="/entrar" element={<Login />} />
-              <Route path="/venta" element={<Protegida><NuevaVenta /></Protegida>} />
-              <Route
-                path="/caja"
-                element={<Protegida roles={['ADMIN', 'CAJERO']}><Caja /></Protegida>}
-              />
-              <Route
-                path="/caja/turnos/:id"
-                element={<Protegida roles={['ADMIN', 'CAJERO']}><TurnoDetalle /></Protegida>}
-              />
-              <Route
-                path="/clientes"
-                element={<Protegida roles={['ADMIN', 'CAJERO']}><Clientes /></Protegida>}
-              />
-              <Route
-                path="/clientes/:id"
-                element={<Protegida roles={['ADMIN', 'CAJERO']}><ClienteDetalle /></Protegida>}
-              />
-              <Route
-                path="/distribucion"
-                element={<Protegida permiso="cajeroGestionaDistribucion"><Distribucion /></Protegida>}
-              />
-              <Route
-                path="/usuarios"
-                element={<Protegida permiso="cajeroGestionaUsuarios"><Usuarios /></Protegida>}
-              />
-              <Route
-                path="/productos"
-                element={<Protegida permiso="cajeroEditaCatalogo"><Productos /></Protegida>}
-              />
-              <Route
-                path="/productos/inventario"
-                element={<Protegida permiso="cajeroGestionaInventario"><AgregarInventario /></Protegida>}
-              />
-              <Route
-                path="/insumos"
-                element={<Protegida permiso="cajeroGestionaInventario"><Insumos /></Protegida>}
-              />
-              <Route
-                path="/recetas"
-                element={<Protegida permiso="cajeroGestionaInventario"><Recetas /></Protegida>}
-              />
-              <Route
-                path="/compras"
-                element={
-                  <Protegida modulo="moduloCompras" moduloNombre="Compras y proveedores" permiso="cajeroGestionaInventario">
-                    <Compras />
-                  </Protegida>
-                }
-              />
-              <Route
-                path="/proveedores"
-                element={
-                  <Protegida modulo="moduloCompras" moduloNombre="Compras y proveedores" permiso="cajeroGestionaInventario">
-                    <Proveedores />
-                  </Protegida>
-                }
-              />
-              <Route path="/reportes" element={<Protegida soloAdmin><Reportes /></Protegida>} />
-              <Route
-                path="/reportes/utilidad-producto"
-                element={<Protegida soloAdmin><UtilidadProducto /></Protegida>}
-              />
-              <Route path="/reportes/ventas" element={<Protegida soloAdmin><ReporteVentas /></Protegida>} />
-              <Route
-                path="/reportes/empleados"
-                element={<Protegida soloAdmin><Pendiente titulo="Reporte de empleados" /></Protegida>}
-              />
-              <Route
-                path="/cajas-bancos"
-                element={
-                  <Protegida modulo="moduloCajasBancos" moduloNombre="Cajas y bancos" soloAdmin>
-                    <CajasBancos />
-                  </Protegida>
-                }
-              />
-              <Route path="/configuracion" element={<Protegida soloAdmin><Configuracion /></Protegida>} />
-              <Route path="/configuracion/datos" element={<Protegida soloAdmin><DatosBar /></Protegida>} />
-              <Route path="/configuracion/permisos" element={<Protegida soloAdmin><Permisos /></Protegida>} />
-              <Route path="/configuracion/implementacion" element={<Protegida soloAdmin><Implementacion /></Protegida>} />
+              <Route element={<AppLayout />}>
+                <Route path="/venta" element={<Protegida><NuevaVenta /></Protegida>} />
+                <Route
+                  path="/caja"
+                  element={<Protegida roles={['ADMIN', 'CAJERO']}><Caja /></Protegida>}
+                />
+                <Route
+                  path="/caja/turnos/:id"
+                  element={<Protegida roles={['ADMIN', 'CAJERO']}><TurnoDetalle /></Protegida>}
+                />
+                <Route
+                  path="/clientes"
+                  element={<Protegida roles={['ADMIN', 'CAJERO']}><Clientes /></Protegida>}
+                />
+                <Route
+                  path="/clientes/:id"
+                  element={<Protegida roles={['ADMIN', 'CAJERO']}><ClienteDetalle /></Protegida>}
+                />
+                <Route
+                  path="/distribucion"
+                  element={<Protegida permiso="cajeroGestionaDistribucion"><Distribucion /></Protegida>}
+                />
+                <Route
+                  path="/usuarios"
+                  element={<Protegida permiso="cajeroGestionaUsuarios"><Usuarios /></Protegida>}
+                />
+                <Route
+                  path="/productos"
+                  element={<Protegida permiso="cajeroEditaCatalogo"><Productos /></Protegida>}
+                />
+                <Route
+                  path="/productos/inventario"
+                  element={<Protegida permiso="cajeroGestionaInventario"><AgregarInventario /></Protegida>}
+                />
+                <Route
+                  path="/insumos"
+                  element={<Protegida permiso="cajeroGestionaInventario"><Insumos /></Protegida>}
+                />
+                <Route
+                  path="/recetas"
+                  element={<Protegida permiso="cajeroGestionaInventario"><Recetas /></Protegida>}
+                />
+                <Route
+                  path="/compras"
+                  element={
+                    <Protegida modulo="moduloCompras" moduloNombre="Compras y proveedores" permiso="cajeroGestionaInventario">
+                      <Compras />
+                    </Protegida>
+                  }
+                />
+                <Route
+                  path="/proveedores"
+                  element={
+                    <Protegida modulo="moduloCompras" moduloNombre="Compras y proveedores" permiso="cajeroGestionaInventario">
+                      <Proveedores />
+                    </Protegida>
+                  }
+                />
+                <Route
+                  path="/proveedores/:id"
+                  element={
+                    <Protegida modulo="moduloCompras" moduloNombre="Compras y proveedores" permiso="cajeroGestionaInventario">
+                      <ProveedorDetalle />
+                    </Protegida>
+                  }
+                />
+                <Route path="/reportes" element={<Protegida soloAdmin><Reportes /></Protegida>} />
+                <Route
+                  path="/reportes/utilidad-producto"
+                  element={<Protegida soloAdmin><UtilidadProducto /></Protegida>}
+                />
+                <Route path="/reportes/ventas" element={<Protegida soloAdmin><ReporteVentas /></Protegida>} />
+                <Route
+                  path="/reportes/empleados"
+                  element={<Protegida soloAdmin><Pendiente titulo="Reporte de empleados" /></Protegida>}
+                />
+                <Route
+                  path="/cajas-bancos"
+                  element={
+                    <Protegida modulo="moduloCajasBancos" moduloNombre="Cajas y bancos" soloAdmin>
+                      <CajasBancos />
+                    </Protegida>
+                  }
+                />
+                <Route path="/configuracion" element={<Protegida soloAdmin><Configuracion /></Protegida>} />
+                <Route path="/configuracion/datos" element={<Protegida soloAdmin><DatosBar /></Protegida>} />
+                <Route path="/configuracion/permisos" element={<Protegida soloAdmin><Permisos /></Protegida>} />
+                <Route path="/configuracion/implementacion" element={<Protegida soloAdmin><Implementacion /></Protegida>} />
+              </Route>
               <Route
                 path="/plataforma/*"
                 element={

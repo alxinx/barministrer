@@ -46,6 +46,16 @@ export default {
         libre: conVariable('--color-libre'),
         ocupada: conVariable('--color-ocupada'),
         reservada: conVariable('--color-reservada'),
+        // El menu lateral (Shell.jsx) tiene su propio fondo, separado de
+        // "surface": en sepia se pide oscuro aunque el resto del tema sea
+        // claro, asi que no puede compartir el token que tambien pintan
+        // todas las demas tarjetas de la pantalla (ver index.css).
+        sidebar: conVariable('--color-sidebar'),
+        sidebarRaised: conVariable('--color-sidebar-raised'),
+        sidebarEdge: conVariable('--color-sidebar-edge'),
+        sidebarInk: conVariable('--color-sidebar-ink'),
+        sidebarMuted: conVariable('--color-sidebar-muted'),
+        sidebarOcupada: conVariable('--color-sidebar-ocupada'),
       },
       fontFamily: {
         sans: ['Archivo', 'system-ui', 'sans-serif'],
