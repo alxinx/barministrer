@@ -1,7 +1,13 @@
 # Barminister
 
-POS multitenant para bares. Esta es la base: autenticación con roles, aislamiento
-por bar, catálogo de productos y editor de distribución del local.
+POS multitenant para bares. El piloto es un bar de barrio en Medellín (15
+mesas, 3 sectores); pensado desde el modelo de datos para venderse a varios
+bares más adelante, pero sin maquinaria SaaS (registro self-service, planes,
+cobros) hasta que haya un segundo cliente real.
+
+Las reglas de dominio -- qué es negociable, qué no, y por qué -- viven en
+[`CLAUDE.md`](./CLAUDE.md). Es la fuente de verdad: léelo antes de tocar algo
+que no sea obvio desde el código.
 
 ## Arrancar
 
@@ -14,8 +20,8 @@ docker compose up --build
 - API: http://localhost:4000
 - MySQL: localhost:3307
 
-El contenedor de la API corre `prisma db push` y el seed en cada arranque, así que
-la primera vez queda con el bar de prueba listo.
+El contenedor de la API corre `prisma db push` (y el seed si el tenant de
+prueba no existe todavía) en cada arranque.
 
 ### Usuarios de prueba
 
@@ -25,52 +31,50 @@ la primera vez queda con el bar de prueba listo.
 | caja@barminister.co | caja123 | Cajero |
 | mesera@barminister.co | mesa123 | Mesero |
 
-El PIN de todos es `1234` (se usará para autorizar cortesías y anulaciones).
+PIN de todos: `12345`.
 
 ## Estructura
 
 ```
 api/
   prisma/schema.prisma   modelo de datos
-  prisma/seed.js         bar de prueba con 15 mesas y catálogo
-  src/routes/            auth, catalog, layout
-  src/middleware/auth.js JWT + aislamiento por tenant
+  prisma/seed.js         bar de prueba con mesas y catálogo
+  src/routes/             auth, catalog, layout, orders, inventory, shifts,
+                          customers, users, tenant, reports, cajasBancos,
+                          insumos, compras, platform
+  src/middleware/         auth (JWT + aislamiento por tenant), permissions,
+                          rateLimit, modules
+  src/lib/                unidades, costos, pin, realtime, r2, ticketRaster...
 web/
-  src/components/        Shell, FloorPlan, Icons
-  src/pages/             Login, NuevaVenta, Distribucion, Productos
+  src/pages/              NuevaVenta, Caja, Distribucion, Productos, Insumos,
+                          Recetas, Compras, Proveedores, CajasBancos,
+                          Clientes, Usuarios, Reportes, Configuracion,
+                          plataforma/...
+  src/components/         Shell, FloorPlan, formularios y modales de tirilla
 ```
 
-## Decisiones del modelo
+## Qué hay construido
 
-**Multitenant.** Toda tabla lleva `tenantId` y el middleware lo toma del JWT,
-nunca del cliente. Ninguna ruta acepta un `tenantId` por parámetro.
+- **Venta y plano:** mesas y zonas en cuadrícula, pre-pedido de mesera con
+  aprobación en vivo por WebSocket, fusión de mesas, descuentos escondidos.
+- **Catálogo:** categorías jerárquicas, productos con presentaciones
+  (`Variant`), recetas (`Recipe`/`RecipeItem`) para shots, cócteles y
+  sánduches.
+- **Inventario:** insumos (materia prima) con conversión de unidad, recetas
+  con costeo real y PIN para editarlas, alerta de stock bajo con lista de
+  compras (imprimir o enviar por WhatsApp), y un módulo de Compras y
+  Proveedores (activable por tenant) que cubre tanto insumos como productos
+  de consumo final -- cerveza, gaseosa, pan empacado -- en la misma orden:
+  recepción con PIN, pago en efectivo de turno / cuenta financiera / crédito,
+  factura adjunta en R2.
+- **Caja:** turnos con conteo ciego, Cajas y Bancos (cuentas, traslados,
+  activable por tenant), clientes y cuentas por cobrar (fiado).
+- **Impresión:** tirilla térmica por USB (Web Serial) con fallback a
+  `window.print()`, simulador sin hardware, comprobantes de venta, abono,
+  egreso, merma, traslado y movimiento.
+- **Plataforma:** panel aparte (`/plataforma`) para crear tenants, activar
+  módulos por bar y definir tarifas.
 
-**Categorías jerárquicas.** `parentId` permite `Licores > Aguardiente`, para
-reportar a cualquier nivel. El flag `allowsPour` vive en la categoría, no en el
-producto: así no aparece la opción de vender shots en unas papas, y una
-subcategoría nueva hereda el flag del padre en vez de quedarse por fuera en
-silencio.
-
-**Desactivar una categoría no toca los productos.** La disponibilidad se calcula
-(`producto activo && categoría activa`), así que reactivar la categoría devuelve
-cada producto a su estado individual.
-
-**Producto ≠ lo que se vende.** `Variant` son las presentaciones selladas y
-siempre se cuentan en unidades. Los shots no son presentaciones: son recetas
-(`Recipe`), igual que los cócteles y los cubetazos. Un shot es una receta de un
-solo ingrediente, así que el mismo mecanismo cubre los tres casos.
-
-**Plano del bar.** Las mesas y los elementos (pared, barra, puerta, planta,
-tarima) se posicionan en celdas de una cuadrícula. El canvas libre de la fase 2
-usa este mismo modelo cambiando la unidad a píxeles, sin migrar datos.
-
-**Interfaz oscura.** El bar opera de noche con poca luz: una pantalla clara
-encandila y se lee peor. Los colores son tokens de Tailwind, así que cambiar a
-claro es editar `tailwind.config.js`.
-
-## Lo que falta
-
-El siguiente paso son los movimientos de inventario: entradas por compra con
-`unitsPerPack`, ventas, apertura de botella (`OpenContainer` en ml), salidas no
-vendidas con motivo, y ajustes de conteo. Sobre eso se montan los turnos y los
-reportes de diferencia por botella.
+Qué falta y en qué orden: ver "Estado actual" en `CLAUDE.md` (y tenerlo
+presente: esa sección se actualiza a mano, puede ir un paso atrás de lo que
+ya hay construido).
