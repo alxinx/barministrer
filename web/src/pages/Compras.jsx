@@ -18,8 +18,8 @@ import { prepararFactura } from '../lib/image'
 import { construirTicketRaster } from '../lib/ticketRaster'
 import { imprimirSilencioso } from '../lib/printer'
 
-const ESTADO_LABEL = { BORRADOR: 'Borrador', RECIBIDA: 'Recibida', ANULADA: 'Anulada' }
-const ESTADO_PAGO_LABEL = { PENDIENTE: 'Pendiente', PARCIAL: 'Pago parcial', PAGADA: 'Pagada' }
+export const ESTADO_LABEL = { BORRADOR: 'Borrador', RECIBIDA: 'Recibida', ANULADA: 'Anulada' }
+export const ESTADO_PAGO_LABEL = { PENDIENTE: 'Pendiente', PARCIAL: 'Pago parcial', PAGADA: 'Pagada' }
 const FILTROS = [
   { key: 'todas', label: 'Todas' },
   { key: 'BORRADOR', label: 'Borrador' },
@@ -27,11 +27,11 @@ const FILTROS = [
   { key: 'CON_SALDO', label: 'Con saldo' },
 ]
 
-function formatFecha(iso) {
+export function formatFecha(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleDateString('es-CO', { dateStyle: 'medium' })
 }
-function formatFechaHora(iso) {
+export function formatFechaHora(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })
 }
@@ -50,7 +50,7 @@ function formatFechaRelativa(iso) {
   if (mismoDia(d, ayer)) return `Ayer, ${hora}`
   return formatFecha(iso)
 }
-function diasParaVencer(fechaVencimiento) {
+export function diasParaVencer(fechaVencimiento) {
   if (!fechaVencimiento) return null
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
@@ -64,11 +64,11 @@ function diasParaVencer(fechaVencimiento) {
 function claveItemCompra(it) {
   return it.insumo?.id || it.variant?.id
 }
-function nombreItemCompra(it) {
+export function nombreItemCompra(it) {
   return it.insumo ? it.insumo.name : `${it.variant.product.name} · ${it.variant.name}`
 }
 
-function resumenItems(items) {
+export function resumenItems(items) {
   if (!items || items.length === 0) return 'Sin insumos'
   if (items.length === 1) return nombreItemCompra(items[0])
   return `${nombreItemCompra(items[0])} + ${items.length - 1} más`
@@ -240,6 +240,22 @@ export default function Compras() {
       } catch {
         await cargarListaCompra()
       }
+    }
+  }
+
+  // Quitar desde el ticket de la lista de compras (ListaCompraModal): un
+  // item ahi puede ser insumo o producto (ver ListaCompraItem polimorfico en
+  // el schema), asi que a diferencia de toggleEnListaCompra -- que solo
+  // conoce insumos, para el panel de stock bajo -- esta pega al endpoint
+  // correcto segun cual de los dos id trae.
+  async function quitarDeListaCompra(it) {
+    const id = it.insumoId || it.variantId
+    const url = it.insumoId ? `/compras/lista/${id}` : `/compras/lista/producto/${id}`
+    setListaCompra((prev) => prev.filter((x) => (x.insumoId || x.variantId) !== id))
+    try {
+      await api(url, { method: 'DELETE' })
+    } catch {
+      await cargarListaCompra()
     }
   }
 
@@ -666,7 +682,7 @@ export default function Compras() {
           items={listaCompra}
           unidades={unidades}
           tenant={session?.tenant}
-          onQuitar={toggleEnListaCompra}
+          onQuitar={quitarDeListaCompra}
           onClose={() => setVerListaCompra(false)}
         />
       )}
@@ -678,6 +694,19 @@ export default function Compras() {
 // ListaStockBajo) -- imprime como tirilla (misma via que el resto del POS:
 // termica si hay, si no window.print()) o manda un resumen por WhatsApp. ---
 
+// Un item de la lista es un insumo o un producto (ver ListaCompraItem
+// polimorfico en el schema) -- este es el unico lugar de este modal que sabe
+// leer esa diferencia, para no repetirla en el ticket, el whatsapp y el
+// render. Solo el insumo trae "proveedor habitual" (un producto no lo
+// rastrea todavia), de ahi que el detalle entre parentesis sea opcional.
+function claveListaItem(it) {
+  return it.insumoId || it.variantId
+}
+function etiquetaListaItem(it) {
+  if (it.insumo) return `${it.insumo.name}${it.insumo.proveedor ? ` (${it.insumo.proveedor.name})` : ''}`
+  return `${it.variant.product.name} · ${it.variant.name}`
+}
+
 function ListaCompraModal({ items, unidades, tenant, onQuitar, onClose }) {
   const [pidiendoWhatsapp, setPidiendoWhatsapp] = useState(false)
   const [numeroWhatsapp, setNumeroWhatsapp] = useState('')
@@ -688,9 +717,7 @@ function ListaCompraModal({ items, unidades, tenant, onQuitar, onClose }) {
       { texto: 'Lista de compras', centro: true },
       { texto: new Date().toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }), centro: true },
       { raya: true },
-      ...items.map((it) => ({
-        texto: `${it.insumo.name}${it.insumo.proveedor ? ` (${it.insumo.proveedor.name})` : ''}`,
-      })),
+      ...items.map((it) => ({ texto: etiquetaListaItem(it) })),
       { raya: true },
     ]
   }
@@ -710,7 +737,7 @@ function ListaCompraModal({ items, unidades, tenant, onQuitar, onClose }) {
     const lineas = [
       `*Lista de compras · ${tenant?.legalName || tenant?.name || 'Barminister'}*`,
       '',
-      ...items.map((it) => `• ${it.insumo.name}${it.insumo.proveedor ? ` (${it.insumo.proveedor.name})` : ''}`),
+      ...items.map((it) => `• ${etiquetaListaItem(it)}`),
     ]
     const texto = encodeURIComponent(lineas.join('\n'))
     window.open(`https://wa.me/${numero}?text=${texto}`, '_blank')
@@ -736,12 +763,7 @@ function ListaCompraModal({ items, unidades, tenant, onQuitar, onClose }) {
           {items.length === 0 ? (
             <p className="text-center text-black/60">Vacía por ahora.</p>
           ) : (
-            items.map((it) => (
-              <p key={it.insumoId}>
-                {it.insumo.name}
-                {it.insumo.proveedor ? ` (${it.insumo.proveedor.name})` : ''}
-              </p>
-            ))
+            items.map((it) => <p key={claveListaItem(it)}>{etiquetaListaItem(it)}</p>)
           )}
 
           <ReciboPie tenant={tenant} />
@@ -790,11 +812,11 @@ function ListaCompraModal({ items, unidades, tenant, onQuitar, onClose }) {
         {items.length > 0 && (
           <div className="card w-[310px] p-2 space-y-1 max-h-40 overflow-y-auto">
             {items.map((it) => (
-              <div key={it.insumoId} className="flex items-center justify-between gap-2 px-1.5 py-1 text-sm">
-                <span className="truncate">{it.insumo.name}</span>
+              <div key={claveListaItem(it)} className="flex items-center justify-between gap-2 px-1.5 py-1 text-sm">
+                <span className="truncate">{etiquetaListaItem(it)}</span>
                 <button
                   type="button"
-                  onClick={() => onQuitar(it.insumoId)}
+                  onClick={() => onQuitar(it)}
                   className="text-muted hover:text-ocupada p-1 shrink-0"
                 >
                   <Icon.trash width={13} height={13} />
@@ -2291,7 +2313,7 @@ function CompraDetalle({
   )
 }
 
-function PagoModal({ compra, onCancel, onPagado }) {
+export function PagoModal({ compra, onCancel, onPagado }) {
   const { shift } = useShift()
   const [cuentasPago, setCuentasPago] = useState([])
   const [filasPago, setFilasPago] = useState([])

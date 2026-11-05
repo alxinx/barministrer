@@ -35,8 +35,9 @@ export default function ProductoForm({ categories, product, initialName, onClose
           cost: v.cost,
           volumeMl: v.volumeMl || '',
           stock: v.stock,
+          stockMinimo: v.stockMinimo ?? '',
         }))
-      : [{ name: '', price: '', cost: '', volumeMl: '', stock: '' }]
+      : [{ name: '', price: '', cost: '', volumeMl: '', stock: '', stockMinimo: '' }]
   )
   const [imageUrl, setImageUrl] = useState(product?.imageUrl || '')
   const [subiendoImagen, setSubiendoImagen] = useState(false)
@@ -164,6 +165,7 @@ export default function ProductoForm({ categories, product, initialName, onClose
               price: Number(v.price) || 0,
               cost: Number(v.cost) || 0,
               volumeMl: v.volumeMl ? Number(v.volumeMl) : null,
+              stockMinimo: v.stockMinimo ? Number(v.stockMinimo) : null,
             }
             if (v.id) await api(`/variants/${v.id}`, { method: 'PATCH', body: payload })
             else await api(`/products/${product.id}/variants`, { method: 'POST', body: payload })
@@ -178,6 +180,7 @@ export default function ProductoForm({ categories, product, initialName, onClose
             cost: Number(v.cost) || 0,
             volumeMl: v.volumeMl ? Number(v.volumeMl) : null,
             stock: Number(v.stock) || 0,
+            stockMinimo: v.stockMinimo ? Number(v.stockMinimo) : null,
           }))
         saved = await api('/products', { method: 'POST', body })
       }
@@ -415,6 +418,17 @@ export default function ProductoForm({ categories, product, initialName, onClose
                     />
                   </div>
                 )}
+                <div className="w-24">
+                  <label className="label text-xs">Stock mínimo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="field h-9"
+                    value={v.stockMinimo}
+                    onChange={(e) => setVariant(i, { stockMinimo: e.target.value })}
+                    placeholder="Sin avisar"
+                  />
+                </div>
                 {!isEdit && (
                   <div className="w-20">
                     <label className="label text-xs">Stock</label>
