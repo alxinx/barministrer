@@ -4,6 +4,8 @@ import { requireRole } from '../middleware/auth.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
+import { recalcularCostoPonderadoVariant } from '../lib/costeo.js'
+import { avisarTenant } from '../lib/realtime.js'
 
 export const inventoryRoutes = Router()
 const adminOnly = requirePermission('cajeroGestionaInventario')
@@ -38,15 +40,17 @@ inventoryRoutes.post('/inventory/movements', adminOnly, async (req, res) => {
   const unidades = Number(qty) || 0
   if (unidades <= 0) return res.status(400).json({ error: 'La cantidad que entra debe ser mayor a cero' })
 
-  const [movement] = await prisma.$transaction([
-    prisma.stockMovement.create({
+  const costoIngresado = cost !== undefined && cost !== null && cost !== '' ? Number(cost) : null
+
+  const movement = await prisma.$transaction(async (tx) => {
+    const creado = await tx.stockMovement.create({
       data: {
         tenantId: req.auth.tenantId,
         variantId: variant.id,
         qty: unidades,
         unitsPerPack: unitsPerPack ? Number(unitsPerPack) : null,
         packs: packs ? Number(packs) : null,
-        cost: cost !== undefined && cost !== null && cost !== '' ? Number(cost) : null,
+        cost: costoIngresado,
         note: note?.trim() || null,
         createdById: req.auth.userId,
       },
@@ -54,16 +58,15 @@ inventoryRoutes.post('/inventory/movements', adminOnly, async (req, res) => {
         variant: { select: { id: true, name: true, product: { select: { id: true, name: true } } } },
         createdBy: { select: { id: true, name: true } },
       },
-    }),
-    prisma.variant.update({
-      where: { id: variant.id },
-      data: {
-        stock: { increment: unidades },
-        ...(cost !== undefined && cost !== null && cost !== '' && { cost: Number(cost) }),
-      },
-    }),
-  ])
+    })
+    await tx.variant.update({ where: { id: variant.id }, data: { stock: { increment: unidades } } })
+    // Solo recalcula si esta entrada trajo costo: una entrada sin costo (ej.
+    // ajuste de conteo) no debe mover el promedio ponderado para nada.
+    if (costoIngresado !== null) await recalcularCostoPonderadoVariant(tx, variant.id)
+    return creado
+  })
 
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   res.status(201).json(movement)
 })
 
@@ -131,6 +134,7 @@ inventoryRoutes.post('/variants/:id/waste', soloAdminReal, async (req, res) => {
     }),
   ])
 
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   res.status(201).json({
     movement,
     expense,

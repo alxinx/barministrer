@@ -284,6 +284,7 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
           cost: v.cost ?? 0,
           volumeMl: v.volumeMl ?? null,
           stock: v.stock ?? 0,
+          stockMinimo: v.stockMinimo ? Number(v.stockMinimo) : null,
           sortOrder: i,
         })),
       },
@@ -397,7 +398,7 @@ catalogRoutes.post('/products/:id/variants', adminOnly, async (req, res) => {
   })
   if (!product) return res.status(404).json({ error: 'Producto no encontrado' })
 
-  const { name, price, cost, volumeMl } = req.body || {}
+  const { name, price, cost, volumeMl, stockMinimo } = req.body || {}
   if (!name?.trim()) return res.status(400).json({ error: 'La presentacion necesita un nombre' })
   if (product.category.allowsPour && !volumeMl) {
     return res.status(400).json({ error: 'Esta presentacion necesita su volumen en ml' })
@@ -410,6 +411,7 @@ catalogRoutes.post('/products/:id/variants', adminOnly, async (req, res) => {
       price: price ?? 0,
       cost: cost ?? 0,
       volumeMl: volumeMl ?? null,
+      stockMinimo: stockMinimo ? Number(stockMinimo) : null,
       sortOrder: product.variants.length,
     },
   })
@@ -422,7 +424,7 @@ catalogRoutes.patch('/variants/:id', adminOnly, async (req, res) => {
   })
   if (!variant) return res.status(404).json({ error: 'Presentacion no encontrada' })
 
-  const { name, price, cost, volumeMl, active } = req.body || {}
+  const { name, price, cost, volumeMl, stockMinimo, active } = req.body || {}
   const updated = await prisma.variant.update({
     where: { id: variant.id },
     data: {
@@ -430,6 +432,7 @@ catalogRoutes.patch('/variants/:id', adminOnly, async (req, res) => {
       ...(price !== undefined && { price }),
       ...(cost !== undefined && { cost }),
       ...(volumeMl !== undefined && { volumeMl }),
+      ...(stockMinimo !== undefined && { stockMinimo: stockMinimo ? Number(stockMinimo) : null }),
       ...(active !== undefined && { active: Boolean(active) }),
     },
   })

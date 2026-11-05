@@ -4,9 +4,10 @@ import { requirePermission } from '../middleware/permissions.js'
 import { requireModule } from '../middleware/modules.js'
 import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
-import { factorConversion, sinConversionFija } from '../lib/unidades.js'
 import { crearShiftExpense } from '../lib/shiftExpense.js'
+import { avisarTenant } from '../lib/realtime.js'
 import { subirFacturaCompra, esUrlDeFactura } from '../lib/r2.js'
+import { recalcularCostoPonderadoInsumo, recalcularCostoPonderadoVariant, cantidadConvertida } from '../lib/costeo.js'
 
 export const comprasRoutes = Router()
 
@@ -20,27 +21,6 @@ comprasRoutes.use('/proveedores/:id', ...gate)
 
 function badRequest(message) {
   return Object.assign(new Error(message), { status: 400 })
-}
-
-// Insumos (no catalogo de venta): compra en unidadCompra, redondeada al
-// entero mas cercano de unidadInventario -- mismo mecanismo que
-// api/src/lib/unidades.js ya resuelve en toda la app. Para un insumo sin
-// conversion fija (ver sinConversionFija: lechugas por unidad, pan por
-// paquete) no hay un tamano real fijo -- cada unidad o paquete trae
-// distinto -- asi que exige la cantidad REAL que se contó/pesó al recibir
-// (cantidadInventarioReal), nunca un estimado calculado.
-function cantidadConvertida({ cantidad, cantidadInventarioReal, insumo }) {
-  if (sinConversionFija(insumo.unidadCompra, insumo.unidadInventario)) {
-    const real = cantidadInventarioReal != null ? Number(cantidadInventarioReal) : null
-    if (!real || real <= 0) {
-      throw badRequest(
-        `"${insumo.name}" se compra por ${insumo.unidadCompra} pero se cuenta en ${insumo.unidadInventario}: escribe cuánto llegó en total para poder recibirlo`
-      )
-    }
-    return Math.round(real)
-  }
-  const factor = factorConversion(insumo.unidadCompra, insumo.unidadInventario) ?? 1
-  return Math.round(Number(cantidad) * factor)
 }
 
 function calcularTotalesItem({ cantidad, precioUnitario, descuento, porcentajeImpuesto, nombre }) {
@@ -290,20 +270,22 @@ async function resolverPagos(tx, { tenantId, compraId, pagos, encargadoId, saldo
 }
 
 // Por cada linea: InsumoMovement PURCHASE + sube Insumo.stock (convertido a
-// su unidadInventario) + sobrescribe Insumo.costoCompra con el precio de
-// esta compra (ultimo costo pagado, igual que hoy se edita a mano).
+// su unidadInventario) + recalcula Insumo.costoCompra como promedio
+// ponderado contra las demas compras recibidas de este insumo (ver
+// recalcularCostoPonderadoInsumo) -- nunca se sobrescribe con el precio de
+// esta sola compra, un insumo puede tener varias compras a precios
+// distintos coexistiendo con existencia.
 async function aplicarRecepcion(tx, { tenantId, items, insumosPorId, variantesPorId, encargadoId }) {
   for (const item of items) {
     if (item.insumoId) {
       const insumo = insumosPorId.get(item.insumoId)
       const qty = cantidadConvertida({ cantidad: item.cantidad, cantidadInventarioReal: item.cantidadInventarioReal, insumo })
+      await tx.compraItem.update({ where: { id: item.id }, data: { cantidadRestante: qty } })
       await tx.insumoMovement.create({
         data: { tenantId, insumoId: insumo.id, type: 'PURCHASE', qty, compraItemId: item.id, createdById: encargadoId },
       })
-      await tx.insumo.update({
-        where: { id: insumo.id },
-        data: { stock: { increment: qty }, costoCompra: item.precioUnitario },
-      })
+      await tx.insumo.update({ where: { id: insumo.id }, data: { stock: { increment: qty } } })
+      await recalcularCostoPonderadoInsumo(tx, insumo.id)
     } else {
       // Producto de consumo final: ya en unidades enteras, sin conversion.
       const variant = variantesPorId.get(item.variantId)
@@ -319,10 +301,8 @@ async function aplicarRecepcion(tx, { tenantId, items, insumosPorId, variantesPo
           createdById: encargadoId,
         },
       })
-      await tx.variant.update({
-        where: { id: variant.id },
-        data: { stock: { increment: qty }, cost: item.precioUnitario },
-      })
+      await tx.variant.update({ where: { id: variant.id }, data: { stock: { increment: qty } } })
+      await recalcularCostoPonderadoVariant(tx, variant.id)
     }
   }
 }
@@ -391,6 +371,17 @@ comprasRoutes.get('/proveedores/:id', async (req, res) => {
   const [compras, insumos] = await Promise.all([
     prisma.compra.findMany({
       where: { proveedorId: proveedor.id, tenantId: req.auth.tenantId },
+      // Solo el nombre de cada insumo/producto, para el resumen de la fila
+      // en el historial ("Café Quindío + 2 más") -- igual criterio que
+      // GET /compras (nunca precios ni cantidades en el listado).
+      include: {
+        items: {
+          select: {
+            insumo: { select: { name: true } },
+            variant: { select: { name: true, product: { select: { name: true } } } },
+          },
+        },
+      },
       orderBy: { fecha: 'desc' },
     }),
     prisma.insumo.findMany({
@@ -585,6 +576,15 @@ comprasRoutes.get('/compras/lista', async (req, res) => {
           proveedor: { select: { id: true, name: true, whatsapp: true } },
         },
       },
+      variant: {
+        select: {
+          id: true,
+          name: true,
+          stock: true,
+          stockMinimo: true,
+          product: { select: { id: true, name: true, imageUrl: true } },
+        },
+      },
     },
     orderBy: { createdAt: 'asc' },
   })
@@ -606,6 +606,26 @@ comprasRoutes.post('/compras/lista/:insumoId', async (req, res) => {
 
 comprasRoutes.delete('/compras/lista/:insumoId', async (req, res) => {
   await prisma.listaCompraItem.deleteMany({ where: { tenantId: req.auth.tenantId, insumoId: req.params.insumoId } })
+  res.status(204).end()
+})
+
+// Mismo mecanismo idempotente que la lista de insumos, pero para productos
+// de consumo final (Variant) -- rutas paralelas en vez de una sola
+// polimorfica para no tener que adivinar de que tabla es el id en la URL.
+comprasRoutes.post('/compras/lista/producto/:variantId', async (req, res) => {
+  const variant = await prisma.variant.findFirst({ where: { id: req.params.variantId, product: { tenantId: req.auth.tenantId } } })
+  if (!variant) return res.status(404).json({ error: 'Presentación no encontrada' })
+
+  const item = await prisma.listaCompraItem.upsert({
+    where: { tenantId_variantId: { tenantId: req.auth.tenantId, variantId: variant.id } },
+    update: {},
+    create: { tenantId: req.auth.tenantId, variantId: variant.id, createdById: req.auth.userId },
+  })
+  res.status(201).json(item)
+})
+
+comprasRoutes.delete('/compras/lista/producto/:variantId', async (req, res) => {
+  await prisma.listaCompraItem.deleteMany({ where: { tenantId: req.auth.tenantId, variantId: req.params.variantId } })
   res.status(204).end()
 })
 
@@ -743,6 +763,7 @@ comprasRoutes.post('/compras', async (req, res) => {
         include: { items: true, pagos: true, proveedor: { select: { id: true, name: true } } },
       })
     })
+    avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
     res.status(201).json({ ...resultado, saldoPendiente: Number(resultado.total) - Number(resultado.totalPagado) })
   } catch (err) {
     if (err.code === 'P2002') {
@@ -843,6 +864,15 @@ comprasRoutes.post('/compras/:id/recibir', async (req, res) => {
 
   try {
     const resultado = await prisma.$transaction(async (tx) => {
+      // Estado pasa a RECIBIDA antes de aplicar la recepcion: el ponderado
+      // que recalcula aplicarRecepcion filtra por compras RECIBIDAS, asi
+      // que esta misma compra necesita contar ya como tal para su propio
+      // calculo (si no, se excluiria a si misma del promedio).
+      await tx.compra.update({
+        where: { id: compra.id },
+        data: { estado: 'RECIBIDA', recibidaAt: new Date(), recibidaById: encargado.id },
+      })
+
       await aplicarRecepcion(tx, {
         tenantId: req.auth.tenantId,
         items: compra.items,
@@ -862,16 +892,11 @@ comprasRoutes.post('/compras/:id/recibir', async (req, res) => {
 
       return tx.compra.update({
         where: { id: compra.id },
-        data: {
-          estado: 'RECIBIDA',
-          recibidaAt: new Date(),
-          recibidaById: encargado.id,
-          totalPagado,
-          estadoPago: estadoPagoDe(Number(compra.total), totalPagado),
-        },
+        data: { totalPagado, estadoPago: estadoPagoDe(Number(compra.total), totalPagado) },
         include: { items: true, pagos: true, proveedor: { select: { id: true, name: true } } },
       })
     })
+    avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
     res.json({ ...resultado, saldoPendiente: Number(resultado.total) - Number(resultado.totalPagado) })
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message })
@@ -951,6 +976,19 @@ comprasRoutes.post('/compras/:id/anular', async (req, res) => {
   const { insumosPorId, variantesPorId } = await catalogosDeItems(req.auth.tenantId, compra.items)
 
   const anulada = await prisma.$transaction(async (tx) => {
+    // Estado pasa a ANULADA antes de reversar: asi el recalculo de costo
+    // ponderado de cada linea (filtra por compras RECIBIDAS) ya excluye
+    // esta compra de su propio promedio.
+    const actualizada = await tx.compra.update({
+      where: { id: compra.id },
+      data: {
+        estado: 'ANULADA',
+        anuladaAt: new Date(),
+        anuladaById: encargado.id,
+        motivoAnulacion: motivo?.trim() || null,
+      },
+    })
+
     for (const item of compra.items) {
       if (item.insumoId) {
         const insumo = insumosPorId.get(item.insumoId)
@@ -969,6 +1007,10 @@ comprasRoutes.post('/compras/:id/anular', async (req, res) => {
           },
         })
         await tx.insumo.update({ where: { id: insumo.id }, data: { stock: { decrement: qty } } })
+        // El lote deja de existir: sin importar cuanto se hubiera consumido
+        // de el, ya no pesa en el costo ponderado (ver recalcularCostoPonderadoInsumo).
+        await tx.compraItem.update({ where: { id: item.id }, data: { cantidadRestante: 0 } })
+        await recalcularCostoPonderadoInsumo(tx, insumo.id)
       } else {
         const variant = variantesPorId.get(item.variantId)
         const qty = Math.round(Number(item.cantidad))
@@ -983,17 +1025,11 @@ comprasRoutes.post('/compras/:id/anular', async (req, res) => {
           },
         })
         await tx.variant.update({ where: { id: variant.id }, data: { stock: { decrement: qty } } })
+        await recalcularCostoPonderadoVariant(tx, variant.id)
       }
     }
-    return tx.compra.update({
-      where: { id: compra.id },
-      data: {
-        estado: 'ANULADA',
-        anuladaAt: new Date(),
-        anuladaById: encargado.id,
-        motivoAnulacion: motivo?.trim() || null,
-      },
-    })
+    return actualizada
   })
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   res.json(anulada)
 })

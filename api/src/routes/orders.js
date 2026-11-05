@@ -7,6 +7,7 @@ import { verificarPin } from '../lib/pin.js'
 import { avisarEncargados, avisarTenant } from '../lib/realtime.js'
 import { calcularCostos } from '../lib/costos.js'
 import { resolverCuentaPago } from '../lib/cuentaPago.js'
+import { consumirInsumoFIFO, restaurarInsumoFIFO } from '../lib/consumoInsumo.js'
 
 export const orderRoutes = Router()
 const puedeCerrar = requireRole('ADMIN', 'CAJERO') // cobrar/cerrar cuenta no es cosa de mesera
@@ -48,14 +49,16 @@ function total(order) {
 // Movimientos de stock por venta (SALE, resta) o devolucion (VOID_RESTORE,
 // suma), agrupados por variante para no crear un movimiento por cada linea
 // repetida. Nunca valida que el stock no quede negativo: el stock es un
-// aviso para el operador, no un bloqueo de venta.
-function stockOpsPorVariante(tenantId, userId, porVariante, type, note) {
+// aviso para el operador, no un bloqueo de venta. Recibe tx porque corre
+// siempre dentro de la misma transaccion que el consumo de insumos (ver
+// aplicarConsumoInsumos) y la mutacion del OrderItem.
+function stockOpsPorVariante(tx, tenantId, userId, porVariante, type, note) {
   const signo = type === 'SALE' ? -1 : 1
   const ops = []
   for (const [variantId, qty] of porVariante) {
     ops.push(
-      prisma.variant.update({ where: { id: variantId }, data: { stock: { [signo < 0 ? 'decrement' : 'increment']: qty } } }),
-      prisma.stockMovement.create({
+      tx.variant.update({ where: { id: variantId }, data: { stock: { [signo < 0 ? 'decrement' : 'increment']: qty } } }),
+      tx.stockMovement.create({
         data: { tenantId, variantId, type, qty: signo * qty, note, createdById: userId },
       })
     )
@@ -63,28 +66,23 @@ function stockOpsPorVariante(tenantId, userId, porVariante, type, note) {
   return ops
 }
 
-// Movimientos de stock de insumos por venta (SALE, resta) o devolucion
-// (SALE_VOID, suma), agrupados por insumo igual que stockOpsPorVariante.
-// Nunca valida que el stock no quede negativo: es un aviso, no un bloqueo.
-function insumoOpsPorInsumo(tenantId, userId, porInsumo, type, note) {
-  const signo = type === 'SALE' ? -1 : 1
-  const ops = []
+// Consumo/reposicion de insumos por venta o devolucion, agrupado por insumo
+// igual que stockOpsPorVariante -- pero a diferencia de ese caso, un insumo
+// SI necesita saber de que lote sale o a cual vuelve (ver consumoInsumo.js:
+// FIFO al vender, orden inverso aproximado al devolver), asi que no es un
+// par de operaciones planas sino una funcion que lee antes de escribir.
+async function aplicarConsumoInsumos(tx, { tenantId, porInsumo, tipo, note, createdById }) {
+  const fn = tipo === 'SALE' ? consumirInsumoFIFO : restaurarInsumoFIFO
   for (const [insumoId, qty] of porInsumo) {
-    ops.push(
-      prisma.insumo.update({ where: { id: insumoId }, data: { stock: { [signo < 0 ? 'decrement' : 'increment']: qty } } }),
-      prisma.insumoMovement.create({
-        data: { tenantId, insumoId, type, qty: signo * qty, note, createdById: userId },
-      })
-    )
+    await fn(tx, { tenantId, insumoId, qty, note, createdById })
   }
-  return ops
 }
 
 // Un producto PREPARED puede tener ingredientes por unidades (variantId+qty,
 // ej. 2 lonjas de jamon) o por insumo (insumoId+qty, ej. cebolla/queso en su
 // unidadInventario): ambos tienen stock real y se descuentan igual que una
 // presentacion vendida directa, sumando a los mapas que stockOpsPorVariante/
-// insumoOpsPorInsumo ya saben mover. Los ingredientes por ml (sourceProductId)
+// aplicarConsumoInsumos ya saben mover. Los ingredientes por ml (sourceProductId)
 // no descuentan nada todavia: el OpenContainer que los respalda no existe
 // (ver CLAUDE.md).
 async function sumarIngredientesPorUnidad(porVariante, porInsumo, productId, cantidadVendida) {
@@ -382,11 +380,18 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
   // Llega a la barra ACTIVE solo si lo crea el admin directo; el pre-pedido
   // (PENDING) no descuenta nada todavia, eso pasa recien en /send. Nunca se
   // bloquea por falta de stock -- si queda en negativo, queda en negativo.
-  await prisma.$transaction([
-    prisma.orderItem.createMany({ data }),
-    ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Venta directa (admin)'),
-    ...insumoOpsPorInsumo(req.auth.tenantId, req.auth.userId, porInsumo, 'SALE', 'Venta directa (admin)'),
-  ])
+  await prisma.$transaction(async (tx) => {
+    await tx.orderItem.createMany({ data })
+    await Promise.all(stockOpsPorVariante(tx, req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Venta directa (admin)'))
+    await aplicarConsumoInsumos(tx, {
+      tenantId: req.auth.tenantId,
+      porInsumo,
+      tipo: 'SALE',
+      note: 'Venta directa (admin)',
+      createdById: req.auth.userId,
+    })
+  })
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
 
   if (status === 'PENDING') {
@@ -431,14 +436,21 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
 
   // Recien aqui el pre-pedido llega de verdad a la barra: aqui se descuenta,
   // no al crearlo (eso solo es borrador de la mesera).
-  await prisma.$transaction([
-    prisma.orderItem.updateMany({
+  await prisma.$transaction(async (tx) => {
+    await tx.orderItem.updateMany({
       where: { orderId: order.id, tenantId: req.auth.tenantId, status: 'PENDING' },
       data: { status: 'ACTIVE' },
-    }),
-    ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Pre-pedido enviado a la barra'),
-    ...insumoOpsPorInsumo(req.auth.tenantId, req.auth.userId, porInsumo, 'SALE', 'Pre-pedido enviado a la barra'),
-  ])
+    })
+    await Promise.all(stockOpsPorVariante(tx, req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Pre-pedido enviado a la barra'))
+    await aplicarConsumoInsumos(tx, {
+      tenantId: req.auth.tenantId,
+      porInsumo,
+      tipo: 'SALE',
+      note: 'Pre-pedido enviado a la barra',
+      createdById: req.auth.userId,
+    })
+  })
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
 
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   avisarEncargados(req.auth.tenantId, 'pre-pedido:enviado', { orderId: order.id })
@@ -513,28 +525,20 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
     if (item.variantId) porVariante.set(item.variantId, qtyDevuelta)
     else if (item.productId) await sumarIngredientesPorUnidad(porVariante, porInsumo, item.productId, qtyDevuelta)
   }
-  const stockOps = [
-    ...stockOpsPorVariante(req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`),
-    ...insumoOpsPorInsumo(req.auth.tenantId, encargado.id, porInsumo, 'SALE_VOID', `Devuelto: ${reason.trim()}`),
-  ]
-
   let updated
-  if (qtyDevuelta === item.qty) {
-    ;[updated] = await prisma.$transaction([
-      prisma.orderItem.update({
+  await prisma.$transaction(async (tx) => {
+    if (qtyDevuelta === item.qty) {
+      updated = await tx.orderItem.update({
         where: { id: item.id },
         data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason.trim(), voidedById: encargado.id },
         include: ITEM_INCLUDE,
-      }),
-      ...stockOps,
-    ])
-  } else {
-    // Se devuelve solo una parte: la linea original se queda con lo que no
-    // se devolvio y la porcion devuelta queda aparte, como una linea VOIDED
-    // propia -- asi no se pierde el rastro de cuanto y por que se devolvio.
-    const [, creada] = await prisma.$transaction([
-      prisma.orderItem.update({ where: { id: item.id }, data: { qty: item.qty - qtyDevuelta } }),
-      prisma.orderItem.create({
+      })
+    } else {
+      // Se devuelve solo una parte: la linea original se queda con lo que no
+      // se devolvio y la porcion devuelta queda aparte, como una linea VOIDED
+      // propia -- asi no se pierde el rastro de cuanto y por que se devolvio.
+      await tx.orderItem.update({ where: { id: item.id }, data: { qty: item.qty - qtyDevuelta } })
+      updated = await tx.orderItem.create({
         data: {
           tenantId: req.auth.tenantId,
           orderId: item.orderId,
@@ -552,11 +556,18 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
           voidedById: encargado.id,
         },
         include: ITEM_INCLUDE,
-      }),
-      ...stockOps,
-    ])
-    updated = creada
-  }
+      })
+    }
+    await Promise.all(stockOpsPorVariante(tx, req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`))
+    await aplicarConsumoInsumos(tx, {
+      tenantId: req.auth.tenantId,
+      porInsumo,
+      tipo: 'SALE_VOID',
+      note: `Devuelto: ${reason.trim()}`,
+      createdById: encargado.id,
+    })
+  })
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   res.json(updated)
 })
 
