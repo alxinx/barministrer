@@ -102,6 +102,7 @@ catalogRoutes.get('/products', async (req, res) => {
   const products = await prisma.product.findMany({
     where: {
       tenantId: req.auth.tenantId,
+      deletedAt: null,
       ...(categoryId && { categoryId: String(categoryId) }),
       ...(search && { name: { contains: String(search) } }),
     },
@@ -168,7 +169,7 @@ async function validarIngredientes(tenantId, items) {
       if (!variant) return 'Una presentacion de la receta ya no existe'
     } else if (item.sourceProductId && item.ml) {
       const source = await prisma.product.findFirst({
-        where: { id: item.sourceProductId, tenantId },
+        where: { id: item.sourceProductId, tenantId, deletedAt: null },
         include: { category: true },
       })
       if (!source) return 'El producto de origen del ingrediente no existe'
@@ -387,6 +388,41 @@ catalogRoutes.patch('/products/:id/suspend', soloAdminReal, async (req, res) => 
     },
   })
   res.json({ ...product, ...(product.kind === 'PREPARED' && { costoReceta: costoDeReceta(product.recipe?.items) }) })
+})
+
+// Eliminar es mas drastico que suspender: desaparece del todo de /productos,
+// no solo de la venta (ver deletedAt en schema.prisma) -- por eso exige
+// ademas que la plataforma le haya prendido permiteEliminarProductos a este
+// tenant, encima del rol ADMIN real + PIN que ya pide suspender. Nunca es un
+// DELETE de verdad (ver comentario en el modelo); solo plataforma puede
+// restaurarlo despues (POST /tenants/:id/productos-eliminados/:productId/restaurar
+// en platform.js).
+catalogRoutes.delete('/products/:id', soloAdminReal, async (req, res) => {
+  const { pin } = req.body || {}
+  if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN' })
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: req.auth.tenantId },
+    select: { permiteEliminarProductos: true },
+  })
+  if (!tenant?.permiteEliminarProductos) {
+    return res.status(403).json({ error: 'Este bar no tiene habilitado eliminar productos. Solo puedes suspenderlo.' })
+  }
+
+  const existing = await prisma.product.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId, deletedAt: null },
+  })
+  if (!existing) return res.status(404).json({ error: 'Producto no encontrado' })
+
+  if (await pinLimitExcedido(req, res)) return
+  const encargado = await verificarPin(req.auth.tenantId, pin)
+  if (!encargado) return pinIncorrecto(req, res)
+
+  await prisma.product.update({
+    where: { id: existing.id },
+    data: { deletedAt: new Date(), deletedById: encargado.id, active: false },
+  })
+  res.status(204).end()
 })
 
 // --- Presentaciones --------------------------------------------------------

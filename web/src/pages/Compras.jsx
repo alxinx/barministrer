@@ -881,7 +881,11 @@ const ICONO_CUENTA = { CAJA: 'cash', BANCO: 'bank', BILLETERA: 'phone' }
 
 function tarjetasPago(shift, cuentasPago) {
   const tarjetas = []
-  if (shift?.id) tarjetas.push({ key: 'EFECTIVO_TURNO', metodo: 'EFECTIVO_TURNO', label: 'Efectivo del turno', icon: 'cash' })
+  // Efectivo del turno y "Otro" no tienen un saldo propio que mostrar (el
+  // primero es la caja del turno en curso, no una CuentaFinanciera; el
+  // segundo ni siquiera mueve plata de una cuenta real) -- `saldo: null`
+  // es justo eso: "no aplica", no "cero disponible".
+  if (shift?.id) tarjetas.push({ key: 'EFECTIVO_TURNO', metodo: 'EFECTIVO_TURNO', label: 'Efectivo del turno', icon: 'cash', saldo: null })
   for (const c of cuentasPago) {
     tarjetas.push({
       key: `CUENTA:${c.id}`,
@@ -889,14 +893,18 @@ function tarjetasPago(shift, cuentasPago) {
       cuentaFinancieraId: c.id,
       label: c.nombre,
       icon: ICONO_CUENTA[c.tipo] || 'bank',
+      saldo: c.saldo != null ? Number(c.saldo) : null,
     })
   }
-  tarjetas.push({ key: 'OTRO', metodo: 'OTRO', label: 'Otro', icon: 'tag' })
+  tarjetas.push({ key: 'OTRO', metodo: 'OTRO', label: 'Otro', icon: 'tag', saldo: null })
   return tarjetas
 }
 
 function errorFilasPago(filas, total) {
-  if (filas.length === 0) return ''
+  // Antes nunca llegaba vacio aqui: el selector siempre prendia el primer
+  // medio solo. Ahora que nadie queda seleccionado por defecto (el operador
+  // elige), esto si es un caso real que hay que frenar.
+  if (filas.length === 0) return 'Elige al menos un medio de pago'
   for (const f of filas) {
     if (!Number(f.monto) || Number(f.monto) <= 0) return 'Cada medio de pago necesita un monto mayor a cero'
     if (f.metodo === 'OTRO' && !f.nota?.trim()) return 'Escribe de qué se trata el pago "Otro"'
@@ -916,33 +924,22 @@ function filasParaBody(filas) {
   }))
 }
 
+// Nadie queda seleccionado al entrar: el operador prende a mano el medio
+// que de verdad va a usar (antes el primero se prendia solo con todo el
+// total adentro, facil de dejar pasar sin fijarse). Cada tarjeta se expande
+// inline al activarla, con su propio monto y los atajos "Cubrir resto" /
+// "Saldo total" -- ese ultimo solo existe si la tarjeta trae un saldo real
+// (CuentaFinanciera; "Efectivo del turno" y "Otro" no tienen uno).
 function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
   const tarjetas = useMemo(() => tarjetasPago(shift, cuentasPago), [shift, cuentasPago])
   const suma = filas.reduce((s, f) => s + (Number(f.monto) || 0), 0)
-  const restante = total - suma
-
-  // Arranca cubriendo todo con el primer medio disponible, igual que el POS
-  // cuando solo hay un medio -- el monto nunca empieza vacío.
-  useEffect(() => {
-    if (filas.length === 0 && tarjetas.length > 0) {
-      const primera = tarjetas[0]
-      onChange([
-        {
-          key: primera.key,
-          metodo: primera.metodo,
-          cuentaFinancieraId: primera.cuentaFinancieraId,
-          shiftId: shift?.id,
-          monto: String(total),
-          nota: '',
-        },
-      ])
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tarjetas.length])
+  const restante = Math.max(total - suma, 0)
+  const sobra = Math.max(suma - total, 0)
 
   // Con un solo medio activo (el caso mas comun) se mantiene igualado al
   // total: asi cambiar items o el peso real no deja el monto desactualizado.
-  // Con varios, el encargado los reparte el mismo a mano.
+  // Con varios, el encargado los reparte el mismo a mano. Con ninguno
+  // activo esto no hace nada -- no hay fila que sincronizar.
   useEffect(() => {
     if (filas.length === 1 && Number(filas[0].monto) !== total) onChange([{ ...filas[0], monto: String(total) }])
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -951,10 +948,8 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
   function alternar(card) {
     const idx = filas.findIndex((f) => f.key === card.key)
     if (idx >= 0) {
-      if (filas.length === 1) return
       onChange(filas.filter((_, i) => i !== idx))
     } else {
-      if (restante <= 0) return
       onChange([
         ...filas,
         {
@@ -962,7 +957,7 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
           metodo: card.metodo,
           cuentaFinancieraId: card.cuentaFinancieraId,
           shiftId: shift?.id,
-          monto: String(Math.max(restante, 0)),
+          monto: String(restante),
           nota: '',
         },
       ])
@@ -974,78 +969,110 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="bg-canvas border border-edge rounded-xl p-3 grid grid-cols-3 gap-3">
+        <div>
+          <p className="text-[10px] font-bold tracking-wide text-muted uppercase">Total a pagar</p>
+          <p className="text-base font-bold mt-0.5">{money(total)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold tracking-wide text-muted uppercase">Asignado</p>
+          <p className="text-base font-bold mt-0.5">{money(suma)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold tracking-wide text-muted uppercase">{sobra > 0.01 ? 'De más' : 'Pendiente'}</p>
+          <p
+            className={`text-base font-bold mt-0.5 ${
+              sobra > 0.01 ? 'text-ocupada' : restante > 0.01 ? 'text-amberText' : 'text-libre'
+            }`}
+          >
+            {money(sobra > 0.01 ? sobra : restante)}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {tarjetas.map((card) => {
           const CardIcon = Icon[card.icon]
-          const activa = filas.some((f) => f.key === card.key)
-          const deshabilitada = !activa && restante <= 0
+          const fila = filas.find((f) => f.key === card.key)
+          const activa = Boolean(fila)
+          const quedara = activa && card.saldo != null ? card.saldo - (Number(fila.monto) || 0) : null
           return (
-            <button
+            <div
               key={card.key}
-              type="button"
-              onClick={() => alternar(card)}
-              disabled={deshabilitada}
-              className={`flex items-center gap-2.5 p-2.5 rounded-xl border-2 text-left transition-colors ${
-                activa ? 'border-amber bg-amber/10' : 'border-edge bg-raised hover:border-muted'
-              } ${deshabilitada ? 'opacity-40 cursor-not-allowed' : ''}`}
+              className={`rounded-xl border-2 transition-colors ${activa ? 'border-amber bg-amber/5' : 'border-edge bg-raised'}`}
             >
-              <span
-                className={`w-8 h-8 rounded-lg grid place-items-center shrink-0 ${
-                  activa ? 'bg-amber text-night' : 'bg-canvas text-muted'
-                }`}
-              >
-                <CardIcon width={16} height={16} />
-              </span>
-              <span className="text-sm font-semibold truncate">{card.label}</span>
-            </button>
+              <button type="button" onClick={() => alternar(card)} className="w-full flex items-center gap-2.5 p-2.5 text-left">
+                <span
+                  className={`w-8 h-8 rounded-lg grid place-items-center shrink-0 ${
+                    activa ? 'bg-amber text-night' : 'bg-canvas text-muted'
+                  }`}
+                >
+                  <CardIcon width={16} height={16} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold truncate">{card.label}</span>
+                  {card.saldo != null && <span className="block text-xs text-muted">{money(card.saldo)} disponible</span>}
+                </span>
+                <span
+                  className={`w-5 h-5 rounded-full border-2 grid place-items-center shrink-0 ${
+                    activa ? 'bg-amber border-amber text-night' : 'border-edge'
+                  }`}
+                >
+                  {activa && <Icon.check width={11} height={11} strokeWidth={3} />}
+                </span>
+              </button>
+
+              {activa && (
+                <div className="px-2.5 pb-2.5 pt-2 border-t border-edge/60 space-y-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-1.5">
+                    <MoneyInput
+                      className="field h-9 flex-1 min-w-0"
+                      value={fila.monto}
+                      onChange={(v) => actualizarFila(card.key, { monto: v })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => actualizarFila(card.key, { monto: String((Number(fila.monto) || 0) + restante) })}
+                      disabled={restante <= 0}
+                      className="text-[11px] font-semibold px-2 py-1.5 rounded-lg border border-edge text-muted hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
+                    >
+                      Cubrir resto
+                    </button>
+                    {card.saldo != null && (
+                      <button
+                        type="button"
+                        onClick={() => actualizarFila(card.key, { monto: String(Math.max(card.saldo, 0)) })}
+                        className="text-[11px] font-semibold px-2 py-1.5 rounded-lg border border-edge text-muted hover:text-ink whitespace-nowrap shrink-0"
+                      >
+                        Saldo total
+                      </button>
+                    )}
+                  </div>
+                  {card.metodo === 'OTRO' && (
+                    <input
+                      className="field h-9"
+                      value={fila.nota}
+                      onChange={(e) => actualizarFila(card.key, { nota: e.target.value })}
+                      placeholder="Ej: canje de mercancía, caja de eventos"
+                    />
+                  )}
+                  {quedara != null && (
+                    <p className={`text-xs ${quedara < 0 ? 'text-ocupada' : 'text-muted'}`}>
+                      {quedara < 0 ? `Supera el disponible por ${money(-quedara)}` : `Quedará: ${money(quedara)}`}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           )
         })}
       </div>
 
-      {filas.map((f) => {
-        const card = tarjetas.find((c) => c.key === f.key)
-        return (
-          <div key={f.key} className="bg-raised border border-edge rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-muted">{card?.label}</p>
-              {filas.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => onChange(filas.filter((x) => x.key !== f.key))}
-                  className="text-muted hover:text-ocupada"
-                >
-                  <Icon.trash width={14} height={14} />
-                </button>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <label className="label text-xs">Monto</label>
-                <MoneyInput className="field h-9" value={f.monto} onChange={(v) => actualizarFila(f.key, { monto: v })} />
-              </div>
-              {f.metodo === 'OTRO' && (
-                <div className="flex-1">
-                  <label className="label text-xs">¿De qué se trata?</label>
-                  <input
-                    className="field h-9"
-                    value={f.nota}
-                    onChange={(e) => actualizarFila(f.key, { nota: e.target.value })}
-                    placeholder="Ej: canje de mercancía, caja de eventos"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        )
-      })}
-
-      <p className={`text-sm font-semibold ${suma > total + 0.01 ? 'text-ocupada' : restante > 0.01 ? 'text-amberText' : 'text-libre'}`}>
-        {suma > total + 0.01
-          ? `Sobran ${money(suma - total)} asignados`
-          : restante > 0.01
-            ? `Quedan ${money(restante)} a crédito`
-            : 'Cubre el total'}
-      </p>
+      {filas.length > 0 && (
+        <p className={`text-sm font-semibold ${sobra > 0.01 ? 'text-ocupada' : restante > 0.01 ? 'text-amberText' : 'text-libre'}`}>
+          {sobra > 0.01 ? `Sobran ${money(sobra)} asignados` : restante > 0.01 ? `Quedan ${money(restante)} a crédito` : 'Cubre el total'}
+        </p>
+      )}
     </div>
   )
 }
@@ -1090,6 +1117,12 @@ function CompraForm({
       variant: it.variant || null,
       cantidad: String(it.cantidad),
       precioUnitario: String(it.precioUnitario),
+      // El backend solo guarda el costo por unidad (precioUnitario); "costo
+      // global" es un modo de ENTRADA nada mas -- una compra ya guardada
+      // siempre se vuelve a abrir en modo unitario, con costoGlobal vacio
+      // hasta que alguien cambie el switch (ver cambiarModoCosto).
+      costoModo: 'unitario',
+      costoGlobal: '',
       descuento: it.descuento && Number(it.descuento) > 0 ? String(it.descuento) : '',
       porcentajeImpuesto: it.porcentajeImpuesto && Number(it.porcentajeImpuesto) > 0 ? String(it.porcentajeImpuesto) : '',
       cantidadInventarioReal: it.cantidadInventarioReal != null ? String(it.cantidadInventarioReal) : '',
@@ -1106,11 +1139,11 @@ function CompraForm({
   const [matriculandoProducto, setMatriculandoProducto] = useState(null)
   const [insumosProveedor, setInsumosProveedor] = useState([])
 
-  // Recibir mercancia sube stock de una (ver api/src/routes/compras.js); este
-  // checkbox decide entre esa accion ('recibir') o dejarla en BORRADOR
-  // ('guardar', no mueve nada todavia) -- mismo par de acciones que ya existia,
-  // ahora expuesto como un solo control en vez de dos botones separados.
-  const [aumentarStock, setAumentarStock] = useState(true)
+  // Recibir mercancia sube stock de una (ver api/src/routes/compras.js); dos
+  // botones al final del formulario deciden entre esa accion ('recibir') o
+  // dejarla en BORRADOR ('guardar', no mueve nada todavia). "Recibir" ademas
+  // pide confirmar con PIN en un modal aparte (ver confirmandoRecibir), nunca
+  // inline -- autorizar algo que ya mueve stock/plata merece su propio paso.
   // Pagar ahora es el default: la mayoria de compras se liquidan al
   // recibirlas, no al credito. filasPago soporta varios medios a la vez
   // (ver SelectorMediosPago), cada uno con su propio monto -- lo que no se
@@ -1121,6 +1154,13 @@ function CompraForm({
 
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  // "Guardar y recibir mercancía" no pide el PIN ahí mismo: primero valida
+  // que proveedor/items/pago esten completos (ver erroresParaRecibir) y solo
+  // si eso pasa abre este modal, que es el UNICO lugar donde se escribe el
+  // PIN -- separar el paso de "configurar la compra" del paso de
+  // "autorizarla" evita que alguien lo escriba de afan antes de revisar lo
+  // que esta a punto de confirmar.
+  const [confirmandoRecibir, setConfirmandoRecibir] = useState(false)
   const {
     pin,
     setPin,
@@ -1211,6 +1251,8 @@ function CompraForm({
         variant: null,
         cantidad: cantidadInicial,
         precioUnitario: String(insumo.costoCompra || ''),
+        costoModo: 'unitario',
+        costoGlobal: '',
         descuento: '',
         porcentajeImpuesto: '',
         cantidadInventarioReal: estimarCantidadInventarioReal(insumo, cantidadInicial),
@@ -1227,6 +1269,8 @@ function CompraForm({
         variant,
         cantidad: '1',
         precioUnitario: String(variant.cost || ''),
+        costoModo: 'unitario',
+        costoGlobal: '',
         descuento: '',
         porcentajeImpuesto: '',
         cantidadInventarioReal: '',
@@ -1235,6 +1279,43 @@ function CompraForm({
     ])
     setBuscarInsumo('')
   }
+  // Deriva el costo por unidad a partir del costo global tecleado (lo que
+  // de verdad se pago por toda la linea) y la cantidad -- el unico valor
+  // que el backend guarda y que mueve el costo ponderado (ver costeo.js) es
+  // precioUnitario, asi que "costo global" nunca deja de ser una forma de
+  // escribirlo, no un campo aparte en la compra. Redondeado a pesos enteros
+  // porque MoneyInput no admite decimales (el peso colombiano no los usa en
+  // el dia a dia de un bar).
+  function precioUnitarioDesdeGlobal(costoGlobal, cantidad, anterior) {
+    const cant = Number(cantidad) || 0
+    if (cant <= 0) return anterior
+    return String(Math.round((Number(costoGlobal) || 0) / cant))
+  }
+  function actualizarCostoGlobal(clave, valor) {
+    setItems((prev) =>
+      prev.map((it) =>
+        claveItemCompra(it) === clave
+          ? { ...it, costoGlobal: valor, precioUnitario: precioUnitarioDesdeGlobal(valor, it.cantidad, it.precioUnitario) }
+          : it
+      )
+    )
+  }
+  // Cambiar de modo no debe mover el numero que ya se ve: al pasar a global
+  // se precarga con cantidad x precioUnitario (el mismo total de hoy); al
+  // volver a unitario, precioUnitario ya quedo sincronizado por el modo
+  // global, no hay que tocarlo.
+  function cambiarModoCosto(clave, modo) {
+    setItems((prev) =>
+      prev.map((it) => {
+        if (claveItemCompra(it) !== clave || it.costoModo === modo) return it
+        if (modo === 'global') {
+          const total = (Number(it.cantidad) || 0) * (Number(it.precioUnitario) || 0)
+          return { ...it, costoModo: modo, costoGlobal: total ? String(Math.round(total)) : '' }
+        }
+        return { ...it, costoModo: modo }
+      })
+    )
+  }
   function actualizarItem(clave, campo, valor) {
     setItems((prev) =>
       prev.map((it) => {
@@ -1242,8 +1323,18 @@ function CompraForm({
         if (campo === 'cantidadInventarioReal') {
           return { ...it, cantidadInventarioReal: valor, cantidadInventarioRealManual: true }
         }
-        if (campo === 'cantidad' && it.insumo && !it.cantidadInventarioRealManual) {
-          return { ...it, cantidad: valor, cantidadInventarioReal: estimarCantidadInventarioReal(it.insumo, valor) }
+        if (campo === 'cantidad') {
+          const next = { ...it, cantidad: valor }
+          if (it.insumo && !it.cantidadInventarioRealManual) {
+            next.cantidadInventarioReal = estimarCantidadInventarioReal(it.insumo, valor)
+          }
+          // En modo global lo que no cambia es el total pagado por la
+          // linea: si la cantidad se corrige, el costo por unidad es el que
+          // se recalcula, no al reves.
+          if (it.costoModo === 'global') {
+            next.precioUnitario = precioUnitarioDesdeGlobal(it.costoGlobal, valor, it.precioUnitario)
+          }
+          return next
         }
         return { ...it, [campo]: valor }
       })
@@ -1254,7 +1345,7 @@ function CompraForm({
       prev.map((it) => {
         if (claveItemCompra(it) !== clave) return it
         const cantidad = String(Math.max(0, (Number(it.cantidad) || 0) + delta))
-        return {
+        const next = {
           ...it,
           cantidad,
           cantidadInventarioReal:
@@ -1262,6 +1353,10 @@ function CompraForm({
               ? estimarCantidadInventarioReal(it.insumo, cantidad)
               : it.cantidadInventarioReal,
         }
+        if (it.costoModo === 'global') {
+          next.precioUnitario = precioUnitarioDesdeGlobal(it.costoGlobal, cantidad, it.precioUnitario)
+        }
+        return next
       })
     )
   }
@@ -1348,6 +1443,21 @@ function CompraForm({
     }
     return ''
   }
+  // Todo lo que "Guardar y recibir mercancía" necesita tener en orden ANTES
+  // de dejar abrir el modal de confirmación -- el PIN se revisa aparte, ya
+  // adentro del modal (ver confirmarRecibir), porque hasta ese punto no hace
+  // falta haberlo escrito todavia.
+  function erroresParaRecibir() {
+    const errInfo = errorInfoGeneral()
+    if (errInfo) return errInfo
+    const errI = errorItemsParaRecibir()
+    if (errI) return errI
+    if (pagarAhora) {
+      const errPago = errorFilasPago(filasPago, totales.total)
+      if (errPago) return errPago
+    }
+    return ''
+  }
 
   function construirBody(accion) {
     const body = {
@@ -1409,18 +1519,11 @@ function CompraForm({
     }
   }
 
+  // Llamada desde el modal de confirmacion: todo lo demas (proveedor, items,
+  // medios de pago) ya paso por erroresParaRecibir antes de que el modal
+  // pudiera abrirse -- lo unico que falta resolver aqui es el PIN.
   async function recibirCompra() {
-    const errInfo = errorInfoGeneral()
-    if (errInfo) return setError(errInfo)
-    const errI = errorItemsParaRecibir()
-    if (errI) return setError(errI)
-    if (pagarAhora) {
-      const errPago = errorFilasPago(filasPago, totales.total)
-      if (errPago) return setError(errPago)
-      if (!pinValido) return setError('Escribe el PIN del encargado')
-    } else if (!pinValido) {
-      return setError('Escribe el PIN del encargado')
-    }
+    if (!pinValido) return setError('Escribe el PIN del encargado')
     setError('')
     setSaving(true)
     try {
@@ -1430,6 +1533,7 @@ function CompraForm({
             method: 'POST',
             body: { pin, pagos: construirBody('recibir').pagos },
           })
+      setConfirmandoRecibir(false)
       ;(onCreated || onSaved)(recibida)
     } catch (err) {
       setError(err.message)
@@ -1438,8 +1542,16 @@ function CompraForm({
     }
   }
 
-  function guardar() {
-    return aumentarStock ? recibirCompra() : guardarBorrador()
+  function abrirConfirmarRecibir() {
+    const err = erroresParaRecibir()
+    if (err) return setError(err)
+    setError('')
+    setConfirmandoRecibir(true)
+  }
+  function cancelarConfirmarRecibir() {
+    setConfirmandoRecibir(false)
+    setError('')
+    resetPin()
   }
 
   function limpiarCampos() {
@@ -1634,12 +1746,8 @@ function CompraForm({
             <span className="w-1.5 h-1.5 rounded-full bg-amber inline-block" />
             2. Insumos y productos
           </h3>
-          <span
-            className={`text-[10px] font-semibold px-2 py-1 rounded-pill border ${
-              aumentarStock ? 'text-libre border-libre/40 bg-libre/10' : 'text-muted border-edge bg-raised'
-            }`}
-          >
-            {aumentarStock ? 'Stock auto-incrementable' : 'No mueve stock (borrador)'}
+          <span className="text-[10px] font-semibold px-2 py-1 rounded-pill border text-muted border-edge bg-raised">
+            El stock sube al recibir, no al guardar borrador
           </span>
         </div>
 
@@ -1774,7 +1882,7 @@ function CompraForm({
                   <th className="py-2.5 px-3 font-semibold">Insumo o producto</th>
                   <th className="py-2.5 px-3 font-semibold">Unidad</th>
                   <th className="py-2.5 px-3 font-semibold">Cantidad</th>
-                  <th className="py-2.5 px-3 font-semibold">Costo unitario</th>
+                  <th className="py-2.5 px-3 font-semibold">Costo</th>
                   <th className="py-2.5 px-3 font-semibold">Descuento</th>
                   <th className="py-2.5 px-3 font-semibold">IVA</th>
                   <th className="py-2.5 px-3 font-semibold">Subtotal</th>
@@ -1824,11 +1932,34 @@ function CompraForm({
                       </div>
                     </td>
                     <td className="py-2 px-3">
+                      <div className="flex rounded-lg border border-edge overflow-hidden text-[10px] font-semibold mb-1 w-28">
+                        <button
+                          type="button"
+                          onClick={() => cambiarModoCosto(clave, 'unitario')}
+                          title="El valor que escribas es el costo de 1 unidad"
+                          className={`flex-1 py-0.5 ${it.costoModo === 'global' ? 'text-muted hover:text-ink' : 'bg-amber text-night'}`}
+                        >
+                          Unidad
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cambiarModoCosto(clave, 'global')}
+                          title="El valor que escribas es el total de toda la línea; el costo por unidad se calcula solo"
+                          className={`flex-1 py-0.5 border-l border-edge ${it.costoModo === 'global' ? 'bg-amber text-night' : 'text-muted hover:text-ink'}`}
+                        >
+                          Total
+                        </button>
+                      </div>
                       <MoneyInput
                         className="field h-8 w-28"
-                        value={it.precioUnitario}
-                        onChange={(v) => actualizarItem(clave, 'precioUnitario', v)}
+                        value={it.costoModo === 'global' ? it.costoGlobal : it.precioUnitario}
+                        onChange={(v) =>
+                          it.costoModo === 'global' ? actualizarCostoGlobal(clave, v) : actualizarItem(clave, 'precioUnitario', v)
+                        }
                       />
+                      {it.costoModo === 'global' && (
+                        <p className="text-[10px] text-muted mt-0.5">{money(Number(it.precioUnitario) || 0)} c/u</p>
+                      )}
                     </td>
                     <td className="py-2 px-3">
                       <MoneyInput
@@ -1902,91 +2033,99 @@ function CompraForm({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-start mt-4">
-          <div>
-            <label className="label">Notas u observaciones del despacho</label>
-            <textarea
-              className="field resize-none"
-              rows={2}
-              value={observaciones}
-              onChange={(e) => setObservaciones(e.target.value)}
+        <div className="mt-4">
+          <label className="label">Notas u observaciones del despacho</label>
+          <textarea
+            className="field resize-none"
+            rows={2}
+            value={observaciones}
+            onChange={(e) => setObservaciones(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="pt-6 border-t border-edge space-y-4">
+        <h3 className="text-sm font-bold tracking-wide uppercase flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber inline-block" />
+          3. Pago y confirmación
+        </h3>
+        <p className="text-xs text-muted -mt-2">Solo aplica si le das a "Guardar y recibir mercancía" — un borrador no necesita nada de esto.</p>
+
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setPagarAhora(false)} className={!pagarAhora ? 'btn-primary flex-1' : 'btn-ghost flex-1'}>
+            Dejar a crédito
+          </button>
+          <button type="button" onClick={() => setPagarAhora(true)} className={pagarAhora ? 'btn-primary flex-1' : 'btn-ghost flex-1'}>
+            Pagar ahora
+          </button>
+        </div>
+
+        {pagarAhora && (
+          <div className="space-y-3 bg-raised border border-edge rounded-xl p-3">
+            <label className="label">¿De dónde sale la plata?</label>
+            <SelectorMediosPago
+              total={totales.total}
+              shift={shift}
+              cuentasPago={cuentasPago}
+              filas={filasPago}
+              onChange={setFilasPago}
             />
           </div>
-          <label className="flex items-center gap-2 text-sm pt-6 whitespace-nowrap">
-            <input type="checkbox" checked={aumentarStock} onChange={(e) => setAumentarStock(e.target.checked)} />
-            Aumentar stock automáticamente al guardar
-          </label>
-        </div>
+        )}
+
+        {!pagarAhora && (
+          <div className="bg-raised border border-edge rounded-xl p-3">
+            <p className="text-sm text-muted">
+              Esta compra queda como cuenta por pagar
+              {fechaVencimiento ? ` con vencimiento el ${formatFecha(fechaVencimiento)}` : ''}.
+            </p>
+          </div>
+        )}
       </div>
 
-      {aumentarStock && (
-        <div className="pt-6 border-t border-edge space-y-4">
-          <h3 className="text-sm font-bold tracking-wide uppercase flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber inline-block" />
-            3. Pago y confirmación
-          </h3>
-
-          <div className="flex gap-2">
-            <button type="button" onClick={() => setPagarAhora(false)} className={!pagarAhora ? 'btn-primary flex-1' : 'btn-ghost flex-1'}>
-              Dejar a crédito
-            </button>
-            <button type="button" onClick={() => setPagarAhora(true)} className={pagarAhora ? 'btn-primary flex-1' : 'btn-ghost flex-1'}>
-              Pagar ahora
-            </button>
-          </div>
-
-          {pagarAhora && (
-            <div className="space-y-3 bg-raised border border-edge rounded-xl p-3">
-              <label className="label">¿De dónde sale la plata?</label>
-              <SelectorMediosPago
-                total={totales.total}
-                shift={shift}
-                cuentasPago={cuentasPago}
-                filas={filasPago}
-                onChange={setFilasPago}
-              />
-
-              <PinField
-                pin={pin}
-                onChange={setPin}
-                verificando={verificandoPin}
-                error={pinError}
-                bloqueado={pinBloqueado}
-                segundosRestantes={pinSegundosRestantes}
-                label="PIN del encargado"
-              />
-            </div>
-          )}
-
-          {!pagarAhora && (
-            <div className="bg-raised border border-edge rounded-xl p-3">
-              <p className="text-sm text-muted">
-                Esta compra queda como cuenta por pagar
-                {fechaVencimiento ? ` con vencimiento el ${formatFecha(fechaVencimiento)}` : ''}. Pídele el PIN al
-                encargado para confirmar que la mercancía llegó.
-              </p>
-              <div className="mt-3">
-                <PinField
-                  pin={pin}
-                  onChange={setPin}
-                  verificando={verificandoPin}
-                  error={pinError}
-                  bloqueado={pinBloqueado}
-                  segundosRestantes={pinSegundosRestantes}
-                  label="PIN del encargado"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="flex justify-end pt-2">
-        <button type="button" onClick={guardar} disabled={saving} className="btn-primary">
+      <div className="flex justify-end gap-3 pt-2">
+        <button type="button" onClick={guardarBorrador} disabled={saving} className="btn-ghost">
+          {saving ? 'Guardando…' : 'Guardar borrador'}
+        </button>
+        <button type="button" onClick={abrirConfirmarRecibir} disabled={saving} className="btn-primary">
           <Icon.check width={16} height={16} />
-          {saving ? 'Guardando…' : aumentarStock ? 'Guardar y recibir mercancía' : 'Guardar como borrador'}
+          Guardar y recibir mercancía
         </button>
       </div>
+
+      {confirmandoRecibir && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={cancelarConfirmarRecibir}>
+          <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
+            <h2 className="text-lg font-bold">Confirmar recepción</h2>
+            <p className="text-sm text-muted">
+              Vas a subir el stock de {items.length} ítem{items.length === 1 ? '' : 's'} por {money(totales.total)}
+              {pagarAhora ? '.' : ', y dejarla como cuenta por pagar.'}
+            </p>
+
+            <PinField
+              pin={pin}
+              onChange={setPin}
+              verificando={verificandoPin}
+              error={pinError}
+              bloqueado={pinBloqueado}
+              segundosRestantes={pinSegundosRestantes}
+              label="PIN del encargado"
+              autoFocus
+            />
+
+            {error && <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">{error}</p>}
+
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={cancelarConfirmarRecibir} className="btn-ghost flex-1">
+                Cancelar
+              </button>
+              <button type="button" onClick={recibirCompra} disabled={!pinValido || saving} className="btn-primary flex-1">
+                {saving ? 'Recibiendo…' : 'Recibir mercancía'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

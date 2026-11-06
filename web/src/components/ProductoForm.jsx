@@ -44,6 +44,8 @@ export default function ProductoForm({ categories, product, initialName, onClose
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmandoSuspender, setConfirmandoSuspender] = useState(false)
+  const [confirmandoEliminar, setConfirmandoEliminar] = useState(false)
+  const permiteEliminar = Boolean(session?.tenant.permiteEliminarProductos)
   const {
     pin,
     setPin,
@@ -64,10 +66,9 @@ export default function ProductoForm({ categories, product, initialName, onClose
   const mermaExcedeStock = Boolean(mermaVariant && mermaQty && Number(mermaQty) > mermaVariant.stock)
 
   // Suspender es el PATCH active=false que ya filtra disponibilidad en
-  // ventas (producto.active && categoria.active); no hay ni va a haber un
-  // DELETE de producto, porque borrarlo de verdad rompe el rastro de pedidos
-  // que ya lo referencian. Sale de todos los pedidos de inmediato, por eso es
-  // solo del ADMIN real (no delegable) y pide PIN como anular un item.
+  // ventas (producto.active && categoria.active). Sale de todos los pedidos
+  // de inmediato, por eso es solo del ADMIN real (no delegable) y pide PIN
+  // como anular un item.
   async function suspender() {
     if (!pinValido) return
     setError('')
@@ -78,6 +79,25 @@ export default function ProductoForm({ categories, product, initialName, onClose
         body: { active: !product.active, pin },
       })
       onSaved(saved)
+    } catch (err) {
+      setError(err.message)
+      setSaving(false)
+    }
+  }
+
+  // Eliminar nunca es un DELETE de verdad (rompería el rastro de pedidos que
+  // ya referencian este producto): es Product.deletedAt, que lo saca del
+  // todo de /productos -- a diferencia de suspender, que lo deja ahi marcado
+  // como suspendido. Solo existe si la plataforma le prendió
+  // permiteEliminarProductos a este tenant, y solo plataforma lo puede
+  // restaurar despues (ver /plataforma/tenants/:id).
+  async function eliminar() {
+    if (!pinValido) return
+    setError('')
+    setSaving(true)
+    try {
+      await api(`/products/${product.id}`, { method: 'DELETE', body: { pin } })
+      onSaved()
     } catch (err) {
       setError(err.message)
       setSaving(false)
@@ -242,6 +262,38 @@ export default function ProductoForm({ categories, product, initialName, onClose
               </button>
               <button type="button" onClick={suspender} disabled={saving || !pinValido} className="btn-danger flex-1">
                 {saving ? 'Guardando…' : product.active ? 'Suspender' : 'Reactivar'}
+              </button>
+            </div>
+          </div>
+        ) : confirmandoEliminar ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              ¿Eliminar "{product.name}"? Desaparece por completo de /productos, no solo de la venta. Esto no lo
+              puedes deshacer tú mismo: solo plataforma puede restaurarlo. Necesita el PIN del encargado.
+            </p>
+            <PinField
+              pin={pin}
+              onChange={setPin}
+              verificando={verificandoPin}
+              error={pinError}
+              bloqueado={pinBloqueado}
+              segundosRestantes={pinSegundosRestantes}
+              autoFocus
+            />
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmandoEliminar(false)
+                  resetPin()
+                  setError('')
+                }}
+                className="btn-ghost flex-1"
+              >
+                Cancelar
+              </button>
+              <button type="button" onClick={eliminar} disabled={saving || !pinValido} className="btn-danger flex-1">
+                {saving ? 'Eliminando…' : 'Eliminar producto'}
               </button>
             </div>
           </div>
@@ -471,6 +523,26 @@ export default function ProductoForm({ categories, product, initialName, onClose
               className={`btn-ghost shrink-0 ${product.active ? 'text-ocupada' : 'text-libre'}`}
             >
               {product.active ? 'Suspender producto' : 'Reactivar producto'}
+            </button>
+          </div>
+        )}
+
+        {isEdit && esAdminReal && permiteEliminar && (
+          <div className="flex items-center justify-between bg-raised border border-edge rounded-xl p-3">
+            <div>
+              <p className="text-sm font-medium">Eliminar</p>
+              <p className="text-xs text-muted">
+                Desaparece por completo de /productos, a diferencia de suspender. Solo plataforma puede
+                recuperarlo después.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfirmandoEliminar(true)}
+              disabled={saving}
+              className="btn-ghost shrink-0 text-ocupada"
+            >
+              Eliminar producto
             </button>
           </div>
         )}

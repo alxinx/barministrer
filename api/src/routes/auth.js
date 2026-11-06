@@ -33,6 +33,7 @@ function tenantPublic(tenant) {
     autoEnviarPedido: tenant.autoEnviarPedido,
     moduloCajasBancos: tenant.moduloCajasBancos,
     moduloCompras: tenant.moduloCompras,
+    permiteEliminarProductos: tenant.permiteEliminarProductos,
   }
 }
 

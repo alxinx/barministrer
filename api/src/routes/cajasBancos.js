@@ -5,6 +5,7 @@ import { requireModule } from '../middleware/modules.js'
 import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
 import { ENTIDADES_FINANCIERAS, buscarEntidadFinanciera } from '../lib/catalogoFinanciero.js'
+import { saldoPorCuenta } from '../lib/saldoCuenta.js'
 
 export const cajasBancosRoutes = Router()
 
@@ -36,21 +37,6 @@ cajasBancosRoutes.get('/cajas-bancos/cuentas-pago', requireModule('moduloCajasBa
 cajasBancosRoutes.use('/cajas-bancos', requireModule('moduloCajasBancos'), requireRole('ADMIN'))
 
 const TIPOS_CUENTA = ['CAJA', 'BANCO', 'BILLETERA']
-
-async function saldoPorCuenta(tenantId, cuentaIds) {
-  const agregados = await prisma.movimientoFinanciero.groupBy({
-    by: ['cuentaId', 'tipo'],
-    where: { tenantId, cuentaId: { in: cuentaIds } },
-    _sum: { valor: true },
-  })
-  const saldos = {}
-  for (const id of cuentaIds) saldos[id] = 0
-  for (const a of agregados) {
-    const monto = Number(a._sum.valor) || 0
-    saldos[a.cuentaId] = (saldos[a.cuentaId] || 0) + (a.tipo === 'INGRESO' ? monto : -monto)
-  }
-  return saldos
-}
 
 cajasBancosRoutes.get('/cajas-bancos/catalogo-entidades', (_req, res) => {
   res.json(ENTIDADES_FINANCIERAS)

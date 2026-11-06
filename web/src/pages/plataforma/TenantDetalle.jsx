@@ -104,16 +104,42 @@ export default function TenantDetalle() {
   const [prodModo, setProdModo] = useState('conservar')
   const [cargandoPreview, setCargandoPreview] = useState(false)
   const [errorPreview, setErrorPreview] = useState('')
+  // Papelera de productos (ver Product.deletedAt): solo plataforma la ve y
+  // puede restaurar de ahi -- ni siquiera el ADMIN del propio bar llega a
+  // esto desde /productos, a proposito (ver permiteEliminarProductos arriba).
+  const [productosEliminados, setProductosEliminados] = useState([])
+  const [restaurandoId, setRestaurandoId] = useState(null)
+  const [restaurado, setRestaurado] = useState('')
 
   async function cargar() {
     try {
-      const [t, p] = await Promise.all([platformApi(`/tenants/${id}`), platformApi('/rental-plans')])
+      const [t, p, pe] = await Promise.all([
+        platformApi(`/tenants/${id}`),
+        platformApi('/rental-plans'),
+        platformApi(`/tenants/${id}/productos-eliminados`),
+      ])
       setTenant(t)
       setPlans(p)
       setName(t.name)
       setRentalPlanId(t.rentalPlan?.id || '')
+      setProductosEliminados(pe)
     } catch (err) {
       setError(err.message)
+    }
+  }
+
+  async function restaurarProducto(productId) {
+    setRestaurandoId(productId)
+    setError('')
+    try {
+      await platformApi(`/tenants/${id}/productos-eliminados/${productId}/restaurar`, { method: 'POST' })
+      setProductosEliminados((prev) => prev.filter((p) => p.id !== productId))
+      setRestaurado('Restaurado como suspendido: el admin del bar lo reactiva cuando quiera desde /productos.')
+      setTimeout(() => setRestaurado(''), 5000)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setRestaurandoId(null)
     }
   }
 
@@ -483,7 +509,62 @@ export default function TenantDetalle() {
               {tenant.moduloCompras ? 'Activado' : 'Desactivado'}
             </button>
           </div>
+          <div className="flex items-center justify-between py-2 border-t border-edge mt-2 pt-4">
+            <div>
+              <p className="text-sm font-medium">Eliminar productos</p>
+              <p className="text-xs text-muted mt-0.5">
+                Deja que el ADMIN del bar elimine un producto del todo (no solo suspenderlo). Solo plataforma
+                puede restaurarlo después.
+              </p>
+            </div>
+            <button
+              type="button"
+              className={tenant.permiteEliminarProductos ? 'btn-primary' : 'btn-ghost'}
+              onClick={() => toggleModulo('permiteEliminarProductos')}
+              disabled={togglingModulo}
+            >
+              {tenant.permiteEliminarProductos ? 'Activado' : 'Desactivado'}
+            </button>
+          </div>
         </div>
+
+        {productosEliminados.length > 0 && (
+          <div className="card p-5 mt-8">
+            <h2 className="font-semibold mb-1">Productos eliminados</h2>
+            <p className="text-sm text-muted mb-4">
+              El ADMIN del bar ya no los ve en /productos. Restaurarlos los devuelve suspendidos, no activos: el
+              bar decide reactivarlos cuando quiera.
+            </p>
+
+            {restaurado && (
+              <p className="text-sm text-libre border border-libre/30 bg-libre/10 rounded-xl px-3 py-2.5 mb-4">
+                {restaurado}
+              </p>
+            )}
+
+            <div className="space-y-1">
+              {productosEliminados.map((p) => (
+                <div key={p.id} className="flex items-center gap-3 py-2.5 border-b border-edge/60 last:border-0">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{p.name}</p>
+                    <p className="text-xs text-muted mt-0.5">
+                      {p.category} · eliminado {formatFecha(p.deletedAt)}
+                      {p.deletedBy ? ` por ${p.deletedBy}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost shrink-0"
+                    onClick={() => restaurarProducto(p.id)}
+                    disabled={restaurandoId === p.id}
+                  >
+                    {restaurandoId === p.id ? 'Restaurando…' : 'Restaurar'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="card p-5 mt-8 border-amber/30">
           <h2 className="font-semibold">Formatear datos</h2>

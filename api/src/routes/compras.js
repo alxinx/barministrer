@@ -8,6 +8,7 @@ import { crearShiftExpense } from '../lib/shiftExpense.js'
 import { avisarTenant } from '../lib/realtime.js'
 import { subirFacturaCompra, esUrlDeFactura } from '../lib/r2.js'
 import { recalcularCostoPonderadoInsumo, recalcularCostoPonderadoVariant, cantidadConvertida } from '../lib/costeo.js'
+import { saldoPorCuenta } from '../lib/saldoCuenta.js'
 
 export const comprasRoutes = Router()
 
@@ -555,7 +556,12 @@ comprasRoutes.get('/compras/cuentas-pago', async (req, res) => {
     select: { id: true, nombre: true, tipo: true },
     orderBy: { createdAt: 'asc' },
   })
-  res.json(cuentas)
+  // El selector de pago (SelectorMediosPago.jsx) muestra cuanto hay
+  // disponible en cada cuenta antes de asignarle un pago -- sin esto, el
+  // operador asignaria a ciegas sin saber si la cuenta de verdad tiene con
+  // que cubrirlo.
+  const saldos = await saldoPorCuenta(req.auth.tenantId, cuentas.map((c) => c.id))
+  res.json(cuentas.map((c) => ({ ...c, saldo: saldos[c.id] || 0 })))
 })
 
 // --- Lista de compras (recordatorio de insumos a pedir, sin cantidad ni

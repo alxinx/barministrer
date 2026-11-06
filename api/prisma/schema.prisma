@@ -112,6 +112,14 @@ model Tenant {
   moduloCajasBancos Boolean @default(false)
   moduloCompras     Boolean @default(false)
 
+  /// Mismo criterio que los modulos de arriba (solo plataforma lo prende,
+  /// nunca el ADMIN del bar): si este tenant puede eliminar un producto del
+  /// todo (ver Product.deletedAt) en vez de solo suspenderlo. Apagado por
+  /// defecto -- eliminar es mas dificil de deshacer que suspender (solo
+  /// plataforma puede restaurarlo, ver /plataforma/tenants/:id), asi que no
+  /// todos los bares lo necesitan prendido de entrada.
+  permiteEliminarProductos Boolean @default(false)
+
   /// Si al agregar el ultimo producto de un pedido directo (admin) pasan 5s
   /// sin que de clic en "Enviar pedido a la barra", se envia solo. No aplica
   /// al pre-pedido de mesera/cajero, que siempre necesita aprobacion de otro.
@@ -184,6 +192,7 @@ model User {
   compraPagosCreados            CompraPago[]
   insumoMovementsCreados        InsumoMovement[]
   listaCompraCreada             ListaCompraItem[]
+  productsDeleted                Product[]        @relation("ProductDeletedBy")
 
   @@index([tenantId])
 }
@@ -230,8 +239,21 @@ model Product {
   active      Boolean     @default(true)
   createdAt   DateTime    @default(now())
 
+  // Eliminar (no confundir con active=false, "suspender"): desaparece del
+  // todo de /productos del tenant, incluso de la lista -- a diferencia de
+  // suspender, que solo lo saca de la venta pero lo sigue mostrando como
+  // suspendido. Nunca es un DELETE de verdad (rompería pedidos ya
+  // facturados que lo referencian, ver OrderItem): queda la fila, con quien
+  // y cuando. Solo plataforma lo ve y lo puede restaurar (ver
+  // /plataforma/tenants/:id) -- por eso no hay ruta propia del tenant para
+  // leer productos eliminados, ni siquiera ADMIN. Requiere
+  // Tenant.permiteEliminarProductos encendido.
+  deletedAt   DateTime?
+  deletedById String?
+
   tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   category  Category   @relation(fields: [categoryId], references: [id])
+  deletedBy User?      @relation("ProductDeletedBy", fields: [deletedById], references: [id])
   variants  Variant[]
   recipe    Recipe?
   asIngredientOf RecipeItem[] @relation("IngredientProduct")

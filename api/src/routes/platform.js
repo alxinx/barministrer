@@ -162,6 +162,7 @@ platformRoutes.get('/tenants/:id', requirePlatformAuth, async (req, res) => {
     rentalPlan: tenant.rentalPlan,
     moduloCajasBancos: tenant.moduloCajasBancos,
     moduloCompras: tenant.moduloCompras,
+    permiteEliminarProductos: tenant.permiteEliminarProductos,
     userCount,
     diasActivosSemana,
     users: usersConPin,
@@ -178,7 +179,7 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
   if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
 
-  const { name, rentalPlanId, active, moduloCajasBancos, moduloCompras } = req.body || {}
+  const { name, rentalPlanId, active, moduloCajasBancos, moduloCompras, permiteEliminarProductos } = req.body || {}
   const data = {}
 
   if (name !== undefined) {
@@ -197,6 +198,7 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
   // bar (ver Tenant.moduloCajasBancos en schema.prisma).
   if (moduloCajasBancos !== undefined) data.moduloCajasBancos = Boolean(moduloCajasBancos)
   if (moduloCompras !== undefined) data.moduloCompras = Boolean(moduloCompras)
+  if (permiteEliminarProductos !== undefined) data.permiteEliminarProductos = Boolean(permiteEliminarProductos)
 
   const updated = await prisma.tenant.update({ where: { id: tenant.id }, data, include: { rentalPlan: true } })
 
@@ -215,7 +217,52 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
     rentalPlan: updated.rentalPlan,
     moduloCajasBancos: updated.moduloCajasBancos,
     moduloCompras: updated.moduloCompras,
+    permiteEliminarProductos: updated.permiteEliminarProductos,
   })
+})
+
+// Papelera de productos: solo plataforma la ve, ni siquiera el ADMIN del
+// propio bar (ver Product.deletedAt en schema.prisma -- eliminar un producto
+// nunca es un DELETE real, por eso esto sigue existiendo para recuperarlo).
+platformRoutes.get('/tenants/:id/productos-eliminados', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+
+  const productos = await prisma.product.findMany({
+    where: { tenantId: tenant.id, deletedAt: { not: null } },
+    include: { category: { select: { name: true } }, deletedBy: { select: { name: true } } },
+    orderBy: { deletedAt: 'desc' },
+  })
+  res.json(
+    productos.map((p) => ({
+      id: p.id,
+      name: p.name,
+      category: p.category.name,
+      deletedAt: p.deletedAt,
+      deletedBy: p.deletedBy?.name || null,
+    }))
+  )
+})
+
+platformRoutes.post('/tenants/:id/productos-eliminados/:productId/restaurar', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+
+  const producto = await prisma.product.findFirst({
+    where: { id: req.params.productId, tenantId: tenant.id, deletedAt: { not: null } },
+  })
+  if (!producto) return res.status(404).json({ error: 'Ese producto no está eliminado o no existe' })
+
+  // Vuelve suspendido (active=false), no activo de una: quien restaura desde
+  // plataforma no sabe si ese bar todavia lo quiere a la venta tal cual
+  // estaba, asi que el ADMIN del bar decide reactivarlo desde /productos
+  // igual que con cualquier otra suspension.
+  const restaurado = await prisma.product.update({
+    where: { id: producto.id },
+    data: { deletedAt: null, deletedById: null },
+  })
+  avisarTenant(tenant.id, 'tenant:actualizado', {})
+  res.json({ id: restaurado.id, name: restaurado.name })
 })
 
 // Borra el bar de verdad: catalogo, plano, turnos, pedidos, todo (cascada
