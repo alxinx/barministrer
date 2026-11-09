@@ -6,4 +6,5 @@ dist/
 .env.prod
 backups/
 taller/
+api/test/
 CONTEXTO-PROYECTO.md
