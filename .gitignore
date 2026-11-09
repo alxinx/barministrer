@@ -2,5 +2,11 @@ node_modules/
 dist/
 .env
 *.log
+*.md
 .DS_Store
 .env.prod
+backups/
+taller/
+design-profile/
+api/test/
+CONTEXTO-PROYECTO.md
