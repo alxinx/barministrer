@@ -168,6 +168,11 @@ export const Icon = {
       <path d="M15 5l-7 7 7 7" />
     </svg>
   ),
+  chevronRight: (p) => (
+    <svg {...base} {...p}>
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  ),
   chevronDown: (p) => (
     <svg {...base} {...p}>
       <path d="M5 9l7 7 7-7" />
@@ -271,6 +276,40 @@ export const Icon = {
     <svg {...base} {...p}>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 7.5V12l3.2 2" />
+    </svg>
+  ),
+  swap: (p) => (
+    <svg {...base} {...p}>
+      <path d="M4 7h14m0 0-4-4m4 4-4 4M20 17H6m0 0 4 4m-4-4 4-4" />
+    </svg>
+  ),
+  eye: (p) => (
+    <svg {...base} {...p}>
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+  building: (p) => (
+    <svg {...base} {...p}>
+      <path d="M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M19 21v-9a1 1 0 0 0-1-1h-4M9 7h.01M9 11h.01M9 15h.01M3 21h18" />
+    </svg>
+  ),
+  grid: (p) => (
+    <svg {...base} {...p}>
+      <rect x="3" y="3" width="8" height="8" rx="1.5" />
+      <rect x="13" y="3" width="8" height="8" rx="1.5" />
+      <rect x="3" y="13" width="8" height="8" rx="1.5" />
+      <rect x="13" y="13" width="8" height="8" rx="1.5" />
+    </svg>
+  ),
+  list: (p) => (
+    <svg {...base} {...p}>
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </svg>
+  ),
+  menu: (p) => (
+    <svg {...base} {...p}>
+      <path d="M3 6h18M3 12h18M3 18h18" />
     </svg>
   ),
 }

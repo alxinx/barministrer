@@ -1,11 +1,13 @@
 import { Router } from 'express'
-import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { tienePermiso } from '../middleware/permissions.js'
-import { pinLimiter, pinLimitExcedido } from '../middleware/rateLimit.js'
+import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
+import { verificarPin, verificarPinPropio } from '../lib/pin.js'
 import { avisarEncargados, avisarTenant } from '../lib/realtime.js'
 import { calcularCostos } from '../lib/costos.js'
+import { resolverCuentaPago } from '../lib/cuentaPago.js'
+import { consumirInsumoFIFO, restaurarInsumoFIFO } from '../lib/consumoInsumo.js'
 
 export const orderRoutes = Router()
 const puedeCerrar = requireRole('ADMIN', 'CAJERO') // cobrar/cerrar cuenta no es cosa de mesera
@@ -18,7 +20,9 @@ const ITEM_INCLUDE = {
 }
 const ORDER_INCLUDE = {
   items: { include: ITEM_INCLUDE, orderBy: { orderedAt: 'asc' } },
-  payments: { orderBy: { createdAt: 'asc' } },
+  // cuentaFinanciera: para que la factura muestre a cual banco/billetera
+  // real entro cada pago (ver ReciboModal.jsx), no solo el metodo generico.
+  payments: { orderBy: { createdAt: 'asc' }, include: { cuentaFinanciera: { select: { nombre: true } } } },
   openedBy: { select: { id: true, name: true } },
   closedBy: { select: { id: true, name: true } },
   table: { select: { id: true, number: true, zoneId: true } },
@@ -42,32 +46,57 @@ function total(order) {
     .reduce((sum, i) => sum + Number(i.price) * i.qty, 0)
 }
 
-async function verificarPin(tenantId, pin) {
-  const encargados = await prisma.user.findMany({
-    where: { tenantId, active: true, role: { in: ['ADMIN', 'CAJERO'] }, pinHash: { not: null } },
-  })
-  for (const u of encargados) {
-    if (await bcrypt.compare(String(pin), u.pinHash)) return u
-  }
-  return null
-}
-
 // Movimientos de stock por venta (SALE, resta) o devolucion (VOID_RESTORE,
 // suma), agrupados por variante para no crear un movimiento por cada linea
 // repetida. Nunca valida que el stock no quede negativo: el stock es un
-// aviso para el operador, no un bloqueo de venta.
-function stockOpsPorVariante(tenantId, userId, porVariante, type, note) {
+// aviso para el operador, no un bloqueo de venta. Recibe tx porque corre
+// siempre dentro de la misma transaccion que el consumo de insumos (ver
+// aplicarConsumoInsumos) y la mutacion del OrderItem.
+function stockOpsPorVariante(tx, tenantId, userId, porVariante, type, note) {
   const signo = type === 'SALE' ? -1 : 1
   const ops = []
   for (const [variantId, qty] of porVariante) {
     ops.push(
-      prisma.variant.update({ where: { id: variantId }, data: { stock: { [signo < 0 ? 'decrement' : 'increment']: qty } } }),
-      prisma.stockMovement.create({
+      tx.variant.update({ where: { id: variantId }, data: { stock: { [signo < 0 ? 'decrement' : 'increment']: qty } } }),
+      tx.stockMovement.create({
         data: { tenantId, variantId, type, qty: signo * qty, note, createdById: userId },
       })
     )
   }
   return ops
+}
+
+// Consumo/reposicion de insumos por venta o devolucion, agrupado por insumo
+// igual que stockOpsPorVariante -- pero a diferencia de ese caso, un insumo
+// SI necesita saber de que lote sale o a cual vuelve (ver consumoInsumo.js:
+// FIFO al vender, orden inverso aproximado al devolver), asi que no es un
+// par de operaciones planas sino una funcion que lee antes de escribir.
+async function aplicarConsumoInsumos(tx, { tenantId, porInsumo, tipo, note, createdById }) {
+  const fn = tipo === 'SALE' ? consumirInsumoFIFO : restaurarInsumoFIFO
+  for (const [insumoId, qty] of porInsumo) {
+    await fn(tx, { tenantId, insumoId, qty, note, createdById })
+  }
+}
+
+// Un producto PREPARED puede tener ingredientes por unidades (variantId+qty,
+// ej. 2 lonjas de jamon) o por insumo (insumoId+qty, ej. cebolla/queso en su
+// unidadInventario): ambos tienen stock real y se descuentan igual que una
+// presentacion vendida directa, sumando a los mapas que stockOpsPorVariante/
+// aplicarConsumoInsumos ya saben mover. Los ingredientes por ml (sourceProductId)
+// no descuentan nada todavia: el OpenContainer que los respalda no existe
+// (ver CLAUDE.md).
+async function sumarIngredientesPorUnidad(porVariante, porInsumo, productId, cantidadVendida) {
+  const recipe = await prisma.recipe.findUnique({
+    where: { productId },
+    include: { items: { where: { OR: [{ variantId: { not: null } }, { insumoId: { not: null } }] } } },
+  })
+  for (const item of recipe?.items || []) {
+    if (item.variantId) {
+      porVariante.set(item.variantId, (porVariante.get(item.variantId) || 0) + item.qty * cantidadVendida)
+    } else if (item.insumoId) {
+      porInsumo.set(item.insumoId, (porInsumo.get(item.insumoId) || 0) + item.qty * cantidadVendida)
+    }
+  }
 }
 
 // --- Mas pedidos por zona ----------------------------------------------------
@@ -299,6 +328,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
   const status = req.auth.role === 'ADMIN' ? 'ACTIVE' : 'PENDING'
   const data = []
   const porVariante = new Map() // solo se llena si queda ACTIVE: un pre-pedido todavia no llego a la barra
+  const porInsumo = new Map()
   for (const it of items) {
     const qty = Number(it.qty) || 1
     if (it.variantId) {
@@ -327,7 +357,7 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         where: { id: it.productId, tenantId: req.auth.tenantId },
         include: { recipe: true },
       })
-      if (!product?.recipe) return res.status(400).json({ error: 'Ese shot ya no existe' })
+      if (!product?.recipe) return res.status(400).json({ error: 'Ese producto ya no existe' })
       data.push({
         tenantId: req.auth.tenantId,
         orderId: order.id,
@@ -339,6 +369,9 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         status,
         createdById: req.auth.userId,
       })
+      if (status === 'ACTIVE') {
+        await sumarIngredientesPorUnidad(porVariante, porInsumo, product.id, qty)
+      }
     } else {
       return res.status(400).json({ error: 'Cada producto necesita una presentacion o un shot' })
     }
@@ -347,10 +380,18 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
   // Llega a la barra ACTIVE solo si lo crea el admin directo; el pre-pedido
   // (PENDING) no descuenta nada todavia, eso pasa recien en /send. Nunca se
   // bloquea por falta de stock -- si queda en negativo, queda en negativo.
-  await prisma.$transaction([
-    prisma.orderItem.createMany({ data }),
-    ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Venta directa (admin)'),
-  ])
+  await prisma.$transaction(async (tx) => {
+    await tx.orderItem.createMany({ data })
+    await Promise.all(stockOpsPorVariante(tx, req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Venta directa (admin)'))
+    await aplicarConsumoInsumos(tx, {
+      tenantId: req.auth.tenantId,
+      porInsumo,
+      tipo: 'SALE',
+      note: 'Venta directa (admin)',
+      createdById: req.auth.userId,
+    })
+  })
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
 
   if (status === 'PENDING') {
@@ -383,19 +424,37 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
   if (!pendientes.length) return res.status(400).json({ error: 'Esta mesa no tiene un pre-pedido esperando envio' })
 
   const porVariante = new Map()
+  const porInsumo = new Map()
+  const porProductoPreparado = new Map()
   for (const it of pendientes) {
     if (it.variantId) porVariante.set(it.variantId, (porVariante.get(it.variantId) || 0) + it.qty)
+    else if (it.productId) porProductoPreparado.set(it.productId, (porProductoPreparado.get(it.productId) || 0) + it.qty)
+  }
+  for (const [productId, qty] of porProductoPreparado) {
+    await sumarIngredientesPorUnidad(porVariante, porInsumo, productId, qty)
   }
 
   // Recien aqui el pre-pedido llega de verdad a la barra: aqui se descuenta,
   // no al crearlo (eso solo es borrador de la mesera).
-  await prisma.$transaction([
-    prisma.orderItem.updateMany({
+  await prisma.$transaction(async (tx) => {
+    await tx.orderItem.updateMany({
       where: { orderId: order.id, tenantId: req.auth.tenantId, status: 'PENDING' },
-      data: { status: 'ACTIVE' },
-    }),
-    ...stockOpsPorVariante(req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Pre-pedido enviado a la barra'),
-  ])
+      // orderedAt se reescribe aqui a proposito: el minuto de gracia para
+      // devolver sin justificar (ver /void) debe contar desde que el pedido
+      // de verdad llega a la barra, no desde que la mesera lo toco -- pudo
+      // haber quedado esperando aprobacion varios minutos.
+      data: { status: 'ACTIVE', orderedAt: new Date() },
+    })
+    await Promise.all(stockOpsPorVariante(tx, req.auth.tenantId, req.auth.userId, porVariante, 'SALE', 'Pre-pedido enviado a la barra'))
+    await aplicarConsumoInsumos(tx, {
+      tenantId: req.auth.tenantId,
+      porInsumo,
+      tipo: 'SALE',
+      note: 'Pre-pedido enviado a la barra',
+      createdById: req.auth.userId,
+    })
+  })
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
 
   const updated = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   avisarEncargados(req.auth.tenantId, 'pre-pedido:enviado', { orderId: order.id })
@@ -432,9 +491,19 @@ orderRoutes.delete('/orders/:id/items/:itemId', async (req, res) => {
   res.json({ ...updated, total: total(updated) })
 })
 
-// Devolver un producto: necesita el PIN de un encargado (ADMIN o CAJERO) y un
-// motivo. No se borra, queda marcado como devuelto con quien lo autorizo.
-orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res) => {
+// Minuto de gracia: deshacer un toque reciente es corregir un error al
+// toque, no devolver algo que ya se sirvio -- no pide motivo ni PIN, sin
+// importar el rol. orderedAt es el ancla (para un pre-pedido aprobado, POST
+// /orders/:id/send lo reescribe al momento de la aprobacion, no se queda en
+// cuando la mesera lo toco).
+const GRACIA_DEVOLUCION_MS = 60_000
+
+// Devolver un producto. Pasado el minuto de gracia hace falta justificar:
+// el admin nunca necesita PIN (ya tiene autoridad plena), pero cajero y
+// mesero si, con su PROPIO PIN -- no el de un encargado -- para que quede
+// registrado quien lo autorizo sin depender de que haya un admin presente.
+// No se borra, queda marcado como devuelto con quien lo autorizo.
+orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
   const order = await prisma.order.findFirst({ where: { id: req.params.id, tenantId: req.auth.tenantId } })
   if (!order) return res.status(404).json({ error: 'Cuenta no encontrada' })
   if (order.status !== 'OPEN') return res.status(400).json({ error: 'Esta cuenta ya esta cerrada' })
@@ -444,7 +513,6 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res)
   if (item.status === 'VOIDED') return res.status(400).json({ error: 'Ese producto ya estaba devuelto' })
 
   const { pin, reason, qty: qtyBody } = req.body || {}
-  if (!reason?.trim()) return res.status(400).json({ error: 'Explica por que se devuelve' })
 
   // Si no mandan cantidad, se devuelve la linea completa (comportamiento de
   // siempre). Si mandan menos que el total, es una correccion de envio: "se
@@ -455,32 +523,48 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res)
     return res.status(400).json({ error: `La cantidad a devolver debe ser un numero entre 1 y ${item.qty}` })
   }
 
-  const encargado = await verificarPin(req.auth.tenantId, pin)
-  if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
+  const dentroDeGracia = Date.now() - new Date(item.orderedAt).getTime() < GRACIA_DEVOLUCION_MS
+
+  let autorId
+  if (dentroDeGracia) {
+    autorId = req.auth.userId
+  } else if (req.auth.role === 'ADMIN') {
+    if (!reason?.trim()) return res.status(400).json({ error: 'Explica por que se devuelve' })
+    autorId = req.auth.userId
+  } else {
+    if (!reason?.trim()) return res.status(400).json({ error: 'Explica por que se devuelve' })
+    // Solo se limita aqui, no toda la ruta: cuenta no encontrada o item ya
+    // devuelto no tiene nada que ver con un PIN mal escrito y no tiene por
+    // que competir por la misma cuota (ver pinLimiter en middleware/rateLimit.js).
+    if (await pinLimitExcedido(req, res)) return
+    const propio = await verificarPinPropio(req.auth.tenantId, req.auth.userId, pin)
+    if (!propio) return pinIncorrecto(req, res)
+    autorId = propio.id
+  }
+  const motivo = reason?.trim() || 'Sin justificar (dentro del minuto de gracia)'
 
   // Solo repone stock si ya estaba ACTIVE: si seguia PENDING nunca se le
   // habia restado nada (eso pasa al enviar, no al crear el pre-pedido).
   const porVariante = new Map()
-  if (item.status === 'ACTIVE' && item.variantId) porVariante.set(item.variantId, qtyDevuelta)
-  const stockOps = stockOpsPorVariante(req.auth.tenantId, encargado.id, porVariante, 'VOID_RESTORE', `Devuelto: ${reason.trim()}`)
-
+  const porInsumo = new Map()
+  if (item.status === 'ACTIVE') {
+    if (item.variantId) porVariante.set(item.variantId, qtyDevuelta)
+    else if (item.productId) await sumarIngredientesPorUnidad(porVariante, porInsumo, item.productId, qtyDevuelta)
+  }
   let updated
-  if (qtyDevuelta === item.qty) {
-    ;[updated] = await prisma.$transaction([
-      prisma.orderItem.update({
+  await prisma.$transaction(async (tx) => {
+    if (qtyDevuelta === item.qty) {
+      updated = await tx.orderItem.update({
         where: { id: item.id },
-        data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason.trim(), voidedById: encargado.id },
+        data: { status: 'VOIDED', voidedAt: new Date(), voidReason: motivo, voidedById: autorId },
         include: ITEM_INCLUDE,
-      }),
-      ...stockOps,
-    ])
-  } else {
-    // Se devuelve solo una parte: la linea original se queda con lo que no
-    // se devolvio y la porcion devuelta queda aparte, como una linea VOIDED
-    // propia -- asi no se pierde el rastro de cuanto y por que se devolvio.
-    const [, creada] = await prisma.$transaction([
-      prisma.orderItem.update({ where: { id: item.id }, data: { qty: item.qty - qtyDevuelta } }),
-      prisma.orderItem.create({
+      })
+    } else {
+      // Se devuelve solo una parte: la linea original se queda con lo que no
+      // se devolvio y la porcion devuelta queda aparte, como una linea VOIDED
+      // propia -- asi no se pierde el rastro de cuanto y por que se devolvio.
+      await tx.orderItem.update({ where: { id: item.id }, data: { qty: item.qty - qtyDevuelta } })
+      updated = await tx.orderItem.create({
         data: {
           tenantId: req.auth.tenantId,
           orderId: item.orderId,
@@ -494,15 +578,23 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', pinLimiter, async (req, res)
           orderedAt: item.orderedAt,
           createdById: item.createdById,
           voidedAt: new Date(),
-          voidReason: reason.trim(),
-          voidedById: encargado.id,
+          voidReason: motivo,
+          voidedById: autorId,
         },
         include: ITEM_INCLUDE,
-      }),
-      ...stockOps,
-    ])
-    updated = creada
-  }
+      })
+    }
+    await Promise.all(stockOpsPorVariante(tx, req.auth.tenantId, autorId, porVariante, 'VOID_RESTORE', `Devuelto: ${motivo}`))
+    await aplicarConsumoInsumos(tx, {
+      tenantId: req.auth.tenantId,
+      porInsumo,
+      tipo: 'SALE_VOID',
+      note: `Devuelto: ${motivo}`,
+      createdById: autorId,
+    })
+  })
+  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
+  if (order.shiftId) avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId: order.shiftId })
   res.json(updated)
 })
 
@@ -529,11 +621,31 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
   }
 
   const cuenta = total(order)
-  const { courtesy, payments } = req.body || {}
+  const { courtesy, payments, pin } = req.body || {}
   const discountAmount = Number(req.body?.discountAmount) || 0
+  // Propina: nunca en una cortesia (no se cobra nada), solo en el cobro
+  // normal. No es una accion sensible (ver CerrarCuentaModal) -- no exige PIN
+  // fresco, por eso no se valida aqui arriba junto al descuento/fiado.
+  const tipAmount = courtesy ? 0 : Math.max(0, Number(req.body?.tip) || 0)
+
+  if (courtesy && !shiftId) return res.status(400).json({ error: 'Esta cuenta no tiene un turno asociado' })
+
+  // Codigo de empleado: se pide siempre para cerrar una cuenta -- cobro o
+  // cortesia -- no solo cuando hay descuento o fiado fuera de cupo como
+  // antes. Identifica a quien de verdad esta parado cerrando, sin depender
+  // de la cuenta con la que haya quedado logueado el dispositivo (puede
+  // seguir logueado todo el dia, ver nota de apertura de turno). Se valida
+  // aqui arriba, antes de las reglas de descuento/pagos que siguen abajo,
+  // para no gastar un intento de PIN por un error que no tiene nada que ver
+  // con el PIN (monto mal armado, medio invalido, etc. se revisan primero
+  // en cada rama).
+  if (!pin) return res.status(400).json({ error: 'Escribe el código de empleado para cerrar la cuenta' })
 
   if (courtesy) {
-    if (!shiftId) return res.status(400).json({ error: 'Esta cuenta no tiene un turno asociado' })
+    if (await pinLimitExcedido(req, res)) return
+    const encargado = await verificarPin(req.auth.tenantId, pin)
+    if (!encargado) return pinIncorrecto(req, res)
+
     await prisma.$transaction(async (tx) => {
       // El consecutivo se asigna aqui, no antes: mientras la cuenta sigue
       // abierta no es una factura todavia. El increment es atomico (una fila
@@ -547,7 +659,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
         data: {
           status: 'CLOSED',
           closedAt: new Date(),
-          closedById: req.auth.userId,
+          closedById: encargado.id,
           isCourtesy: true,
           invoiceNumber: tenant.lastInvoiceNumber,
           shiftId,
@@ -560,7 +672,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
           type: 'GASTO',
           amount: cuenta,
           reason: 'Pago a proveedor oficial',
-          authorizedById: req.auth.userId,
+          authorizedById: encargado.id,
         },
       })
       await tx.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } })
@@ -579,7 +691,6 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
     // real de lo que se pidio).
     let montoFinal = cuenta
     let costos = null
-    let discountEncargadoId = null
     if (discountAmount > 0) {
       if (discountAmount > cuenta) {
         return res.status(400).json({ error: 'El descuento no puede ser mayor al valor de la cuenta' })
@@ -587,23 +698,13 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       if (!(await tienePermiso(req.auth, 'cajeroAplicaDescuentos'))) {
         return res.status(403).json({ error: 'Tu rol no puede aplicar descuentos' })
       }
-      // Igual que las devoluciones: el usuario logueado dice quien cobra, el
-      // PIN del encargado es lo que de verdad autoriza el descuento.
-      const { pin } = req.body || {}
-      if (!pin) return res.status(400).json({ error: 'El descuento necesita el PIN del encargado' })
-      // Solo se limita aqui, no toda la ruta: cerrar sin descuento no toca
-      // PIN y no tiene por que competir por la misma cuota.
-      if (await pinLimitExcedido(req, res)) return
-      const encargado = await verificarPin(req.auth.tenantId, pin)
-      if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
-      discountEncargadoId = encargado.id
-
       costos = await calcularCostos(order.items, req.auth.tenantId)
       montoFinal = cuenta - discountAmount
       if (montoFinal < costos.total) {
         return res.status(400).json({ error: 'Ese descuento deja la cuenta en pérdida' })
       }
     }
+    montoFinal += tipAmount
 
     const sumaPagos = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
     if (sumaPagos !== montoFinal) {
@@ -618,15 +719,31 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       }
     }
 
+    // Si el operador eligio un banco/billetera real (modulo de Cajas y
+    // bancos), cada pago se resuelve contra su cuenta antes de la
+    // transaccion: nunca confiar en que el id que llego del cliente es
+    // valido. El metodo que se cuenta en el cuadre sigue siendo el generico
+    // (ver resolverCuentaPago) -- esto solo liga el pago a la cuenta real.
+    const cuentasPorPago = await Promise.all(
+      payments.map((p) => resolverCuentaPago(req.auth.tenantId, p.method, p.cuentaFinancieraId))
+    )
+    for (let i = 0; i < payments.length; i++) {
+      if (payments[i].cuentaFinancieraId && !cuentasPorPago[i]) {
+        return res.status(400).json({ error: 'Esa cuenta de pago no es válida' })
+      }
+    }
+
     // Credito: no entra a caja, se carga como deuda al cliente vinculado a la
     // cuenta. Sin credito habilitado, o si este fiado deja el saldo por
     // encima del cupo, no se bloquea del todo -es decision del encargado, no
-    // del codigo- pero igual que el descuento, necesita su PIN para que quede
-    // quien autorizo cuando se audite.
+    // del codigo- pero el cierre ya pide el codigo de empleado de todos
+    // modos (ver arriba): sinCreditoHabilitado/excedeLimite solo deciden si
+    // ese mismo codigo tambien queda anotado como quien autorizo el fiado.
     const montoCredito = payments
       .filter((p) => p.method === 'CREDITO')
       .reduce((s, p) => s + (Number(p.amount) || 0), 0)
-    let creditoEncargadoId = null
+    let sinCreditoHabilitado = false
+    let excedeLimite = false
     if (montoCredito > 0) {
       if (!order.customer) return res.status(400).json({ error: 'Esta cuenta necesita un cliente vinculado para fiar' })
 
@@ -636,24 +753,18 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
       ])
       const saldoActual = Number(cargos._sum.amount || 0) - Number(abonos._sum.amount || 0)
       const limite = order.customer.creditLimit !== null ? Number(order.customer.creditLimit) : null
-      const sinCreditoHabilitado = !order.customer.creditEnabled
-      const excedeLimite = limite !== null && saldoActual + montoCredito > limite
-
-      if (sinCreditoHabilitado || excedeLimite) {
-        const { pin } = req.body || {}
-        if (!pin) {
-          return res.status(400).json({
-            error: sinCreditoHabilitado
-              ? `${order.customer.firstName} no tiene crédito habilitado. Necesita el PIN de un encargado para fiar de todos modos.`
-              : `${order.customer.firstName} ya superó su límite de crédito (debe ${saldoActual} de ${limite}). Necesita el PIN de un encargado para fiar de todos modos.`,
-          })
-        }
-        if (await pinLimitExcedido(req, res)) return
-        const encargado = await verificarPin(req.auth.tenantId, pin)
-        if (!encargado) return res.status(401).json({ error: 'PIN incorrecto' })
-        creditoEncargadoId = encargado.id
-      }
+      sinCreditoHabilitado = !order.customer.creditEnabled
+      excedeLimite = limite !== null && saldoActual + montoCredito > limite
     }
+
+    // Codigo de empleado, una sola vez para todo el cierre (descuento, fiado
+    // fuera de cupo, o un cobro normal): ya se exigio que viniera en el
+    // body arriba, aqui se verifica de verdad contra el PIN real.
+    if (await pinLimitExcedido(req, res)) return
+    const encargado = await verificarPin(req.auth.tenantId, pin)
+    if (!encargado) return pinIncorrecto(req, res)
+    const discountEncargadoId = discountAmount > 0 ? encargado.id : null
+    const creditoEncargadoId = sinCreditoHabilitado || excedeLimite ? encargado.id : null
 
     await prisma.$transaction(async (tx) => {
       const tenant = await tx.tenant.update({
@@ -665,9 +776,10 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
         data: {
           status: 'CLOSED',
           closedAt: new Date(),
-          closedById: req.auth.userId,
+          closedById: encargado.id,
           invoiceNumber: tenant.lastInvoiceNumber,
           discountAmount,
+          tipAmount,
           shiftId,
           ...(discountAmount > 0 && { discountAppliedById: discountEncargadoId }),
         },
@@ -689,20 +801,46 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
           await tx.orderItem.update({ where: { id: u.id }, data: { discountAmount: parte } })
         }
       }
-      await tx.orderPayment.createMany({
-        data: payments.map((p) => {
-          const amount = Number(p.amount)
-          const tendered = p.method === 'EFECTIVO' ? Number(p.tendered ?? amount) : null
-          return {
+      // Create (no createMany): createMany no devuelve las filas creadas en
+      // MySQL, y aqui si hace falta el id de vuelta -- el movimiento
+      // financiero que puede colgar de este pago lo necesita para poder
+      // reimprimir despues la factura real desde Cajas y bancos (ver
+      // orderPaymentId en MovimientoFinanciero). Son como mucho un par de
+      // pagos partidos, no hay costo real en hacerlo uno por uno.
+      for (let i = 0; i < payments.length; i++) {
+        const p = payments[i]
+        const amount = Number(p.amount)
+        const tendered = p.method === 'EFECTIVO' ? Number(p.tendered ?? amount) : null
+        const cuenta = cuentasPorPago[i]
+        const referencia = p.referencia?.toString().trim() || null
+        const orderPayment = await tx.orderPayment.create({
+          data: {
             tenantId: req.auth.tenantId,
             orderId: order.id,
             method: p.method,
             amount,
             tendered,
             change: tendered !== null ? tendered - amount : null,
-          }
-        }),
-      })
+            cuentaFinancieraId: cuenta?.id,
+            referencia,
+          },
+        })
+        if (cuenta) {
+          await tx.movimientoFinanciero.create({
+            data: {
+              tenantId: req.auth.tenantId,
+              cuentaId: cuenta.id,
+              tipo: 'INGRESO',
+              valor: amount,
+              concepto: referencia
+                ? `Venta mesa ${order.table.number} · Comprobante ${referencia}`
+                : `Venta mesa ${order.table.number}`,
+              createdById: req.auth.userId,
+              orderPaymentId: orderPayment.id,
+            },
+          })
+        }
+      }
       await tx.barTable.update({ where: { id: order.tableId }, data: { status: 'AVAILABLE' } })
       // Si esta cuenta tenia mesas fusionadas temporalmente, se sueltan solas
       // aqui: la fusion dura lo que dura la cuenta, nunca mas.
@@ -724,6 +862,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
   }
 
   avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
+  avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId })
 
   const cerrada = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   res.json({ ...cerrada, total: total(cerrada) })

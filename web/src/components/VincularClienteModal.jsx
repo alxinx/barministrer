@@ -121,7 +121,7 @@ export default function VincularClienteModal({ order, onClose, onVinculado }) {
                         <p className="text-xs text-muted">{c.idNumber || 'Sin cédula'}</p>
                       </div>
                       {c.creditEnabled && (
-                        <span className="text-[10px] font-bold text-amber border border-amber/40 rounded-pill px-2 py-0.5 shrink-0">
+                        <span className="text-[10px] font-bold text-amberText border border-amber/40 rounded-pill px-2 py-0.5 shrink-0">
                           Crédito
                         </span>
                       )}

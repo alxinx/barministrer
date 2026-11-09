@@ -687,7 +687,7 @@ export default function Distribucion() {
               Deshacer
             </button>
           )}
-          <span className={`text-xs ${saving ? 'text-amber' : 'text-muted'}`}>
+          <span className={`text-xs ${saving ? 'text-amberText' : 'text-muted'}`}>
             {saving ? 'Guardando…' : 'Guardado'}
           </span>
         </div>
@@ -699,7 +699,7 @@ export default function Distribucion() {
         </p>
       )}
       {notice && (
-        <p className="mb-4 text-sm text-amber border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
+        <p className="mb-4 text-sm text-amberText border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
           {notice}
         </p>
       )}
@@ -728,8 +728,10 @@ export default function Distribucion() {
               {z.name}
               <span className="opacity-60 font-normal">{z.tables.length}</span>
               {abiertas > 0 && (
+                // text-white fijo, no text-ink: en el tema sepia ink es casi
+                // negro y se pierde contra el rojo de fondo.
                 <span
-                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ocupada text-ink
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ocupada text-white
                              text-[10px] font-bold grid place-items-center border-2 border-night"
                 >
                   {abiertas}
@@ -751,21 +753,26 @@ export default function Distribucion() {
       </div>
 
       <div className="grid lg:grid-cols-[1fr_320px] gap-5 items-start">
-        <FloorPlan
-          zone={zone}
-          editable
-          blockMode={blockMode}
-          selectedId={selected?.item.id}
-          onSelect={(kind, item) => setSelected({ kind, item })}
-          onMove={move}
-          onResize={resize}
-          onRotate={rotateElemento}
-          onBlockCell={setBlockedCell}
-          onGestureStart={iniciarGesto}
-          onGestureEnd={terminarGesto}
-          onElementContextMenu={fusionarElemento}
-          onTableContextMenu={fusionarMesa}
-        />
+        {/* min-w-0: mismo fix que NuevaVenta.jsx -- sin esto el plano (con su
+            aspect-ratio) no encoge y empuja el panel de la derecha fuera de
+            la pantalla en vez de achicarse. */}
+        <div className="min-w-0">
+          <FloorPlan
+            zone={zone}
+            editable
+            blockMode={blockMode}
+            selectedId={selected?.item.id}
+            onSelect={(kind, item) => setSelected({ kind, item })}
+            onMove={move}
+            onResize={resize}
+            onRotate={rotateElemento}
+            onBlockCell={setBlockedCell}
+            onGestureStart={iniciarGesto}
+            onGestureEnd={terminarGesto}
+            onElementContextMenu={fusionarElemento}
+            onTableContextMenu={fusionarMesa}
+          />
+        </div>
 
         <div className="space-y-5">
           <section className="card p-4">
@@ -800,7 +807,7 @@ export default function Distribucion() {
                   : 'Pieza seleccionada'}
               </h2>
               {selected && (
-                <button onClick={copiar} className="text-xs font-semibold text-amber flex items-center gap-1">
+                <button onClick={copiar} className="text-xs font-semibold text-amberText flex items-center gap-1">
                   <Icon.copy width={14} height={14} />
                   Copiar
                 </button>

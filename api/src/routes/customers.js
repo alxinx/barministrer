@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
+import { resolverCuentaPago } from '../lib/cuentaPago.js'
+import { avisarTenant } from '../lib/realtime.js'
 
 export const customerRoutes = Router()
 const puedeGestionar = requireRole('ADMIN', 'CAJERO')
@@ -161,7 +163,7 @@ customerRoutes.post('/customers/:id/payments', puedeGestionar, async (req, res) 
   })
   if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' })
 
-  const { amount, method, note } = req.body || {}
+  const { amount, method, note, cuentaFinancieraId } = req.body || {}
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'El pago necesita un monto mayor a cero' })
   if (!METODOS_ABONO.includes(method)) return res.status(400).json({ error: 'Elige el medio de pago del abono' })
 
@@ -170,17 +172,42 @@ customerRoutes.post('/customers/:id/payments', puedeGestionar, async (req, res) 
     return res.status(400).json({ error: 'No hay un turno de caja abierto. Abre turno antes de registrar el abono.' })
   }
 
-  const payment = await prisma.customerPayment.create({
-    data: {
-      tenantId: req.auth.tenantId,
-      customerId: customer.id,
-      shiftId: shift.id,
-      amount,
-      method,
-      note: note?.trim() || null,
-      createdById: req.auth.userId,
-    },
-    include: { createdBy: { select: { id: true, name: true } } },
+  // Igual que al cerrar una venta: si eligieron un banco/billetera real del
+  // modulo de Cajas y bancos, el abono tambien queda como ingreso en esa
+  // cuenta (ver resolverCuentaPago). El metodo que cuenta en el cuadre sigue
+  // siendo el generico de siempre.
+  const cuenta = await resolverCuentaPago(req.auth.tenantId, method, cuentaFinancieraId)
+  if (cuentaFinancieraId && !cuenta) return res.status(400).json({ error: 'Esa cuenta de pago no es válida' })
+
+  const payment = await prisma.$transaction(async (tx) => {
+    const payment = await tx.customerPayment.create({
+      data: {
+        tenantId: req.auth.tenantId,
+        customerId: customer.id,
+        shiftId: shift.id,
+        amount,
+        method,
+        note: note?.trim() || null,
+        createdById: req.auth.userId,
+        cuentaFinancieraId: cuenta?.id,
+      },
+      include: { createdBy: { select: { id: true, name: true } } },
+    })
+    if (cuenta) {
+      await tx.movimientoFinanciero.create({
+        data: {
+          tenantId: req.auth.tenantId,
+          cuentaId: cuenta.id,
+          tipo: 'INGRESO',
+          valor: Number(amount),
+          concepto: `Abono de ${customer.firstName}`,
+          createdById: req.auth.userId,
+          customerPaymentId: payment.id,
+        },
+      })
+    }
+    return payment
   })
+  avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId: shift.id })
   res.status(201).json(payment)
 })

@@ -1,15 +1,31 @@
 import { prisma } from './prisma.js'
+import { factorConversion, sinConversionFija } from './unidades.js'
 
-// Costo de una receta (shot/coctel) a partir de sus ingredientes: ml de un
-// producto que se vende por botella (promedio de costo-por-ml entre sus
-// presentaciones, porque la receta no amarra a una presentacion puntual) o
+// Costo de una receta a partir de sus ingredientes: unidades-de-inventario
+// de un Insumo (el mecanismo actual, ver Inventario > Recetas y
+// preparaciones), o los dos mecanismos legado -- ml de un producto que se
+// vende por botella (promedio de costo-por-ml entre sus presentaciones) o
 // unidades de una presentacion sellada. Se usa tanto para costear una venta
 // ya hecha como para mostrar el costo actual del catalogo en el reporte de
 // utilidad por producto, aunque nunca se haya vendido.
 export function costoDeReceta(recipeItems) {
   let costo = 0
   for (const ing of recipeItems || []) {
-    if (ing.variantId) {
+    if (ing.insumoId) {
+      // costoCompra es el costo de 1 unidadCompra; factorConversion dice
+      // cuantas unidadInventario hay en esa unidadCompra, asi que dividir da
+      // el costo por unidadInventario (lo que de verdad pide la receta).
+      // Insumos sin conversion fija (ver sinConversionFija: lechugas por
+      // unidad, pan por paquete) no tienen esa conversion -- cada unidad o
+      // paquete trae una cantidad distinta -- asi que el estimado declarado
+      // a mano (cantidadPromedioPorUnidad) hace de factor aqui.
+      let factor = ing.insumo ? factorConversion(ing.insumo.unidadCompra, ing.insumo.unidadInventario) : null
+      if (factor === null && ing.insumo?.cantidadPromedioPorUnidad && sinConversionFija(ing.insumo.unidadCompra, ing.insumo.unidadInventario)) {
+        factor = Number(ing.insumo.cantidadPromedioPorUnidad)
+      }
+      const costoPorUnidad = factor ? Number(ing.insumo.costoCompra) / factor : 0
+      costo += costoPorUnidad * (ing.qty || 0)
+    } else if (ing.variantId) {
       costo += Number(ing.variant?.cost || 0) * (ing.qty || 1)
     } else if (ing.sourceProductId && ing.ml) {
       const candidatas = (ing.sourceProduct?.variants || []).filter((v) => v.volumeMl && Number(v.cost) > 0)
@@ -48,7 +64,7 @@ export async function calcularCostos(items, tenantId) {
       include: {
         recipe: {
           include: {
-            items: { include: { sourceProduct: { include: { variants: true } }, variant: true } },
+            items: { include: { sourceProduct: { include: { variants: true } }, variant: true, insumo: true } },
           },
         },
       },

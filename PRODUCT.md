@@ -86,7 +86,7 @@ Lo que un POS genérico no modela:
 
 ## Brand Commitments
 
-- Nombre del producto: **LicorPlus**.
+- Nombre del producto: **Barminister**.
 - Acento ámbar `#E8A33D`, único lugar donde ser audaz.
 - Estados de mesa semáforo convencional: libre verde, reservada ámbar,
   ocupada roja.
@@ -95,12 +95,12 @@ Lo que un POS genérico no modela:
 - Imágenes de producto: nunca generadas por IA (deforma etiquetas de marca);
   recorte y fondo, opcional, comprimidas en navegador (máx 800px, ~200KB).
 - *Abierto:* el bar piloto (el cliente real en Medellín) no tiene nombre o
-  marca propia confirmada en el repo más allá de ser "el piloto" de LicorPlus.
+  marca propia confirmada en el repo más allá de ser "el piloto" de Barminister.
 
 ## Evidence on Hand
 
-- Usuarios de prueba reales: `admin@licorplus.co`/`admin123`,
-  `caja@licorplus.co`/`caja123`, `mesera@licorplus.co`/`mesa123`, PIN `1234`
+- Usuarios de prueba reales: `admin@barminister.co`/`admin123`,
+  `caja@barminister.co`/`caja123`, `mesera@barminister.co`/`mesa123`, PIN `1234`
   para todos.
 - Seed con bar de prueba: 15 mesas, 3 sectores, catálogo base.
 - Sin testimonios, casos de estudio, prensa, ni assets de marca del bar real

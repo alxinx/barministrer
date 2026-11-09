@@ -12,7 +12,12 @@ import { inventoryRoutes } from './routes/inventory.js'
 import { userRoutes } from './routes/users.js'
 import { tenantRoutes } from './routes/tenant.js'
 import { reportRoutes } from './routes/reports.js'
-import { requireAuth } from './middleware/auth.js'
+import { cajasBancosRoutes } from './routes/cajasBancos.js'
+import { insumoRoutes } from './routes/insumos.js'
+import { comprasRoutes } from './routes/compras.js'
+import { importacionRoutes } from './routes/importacion.js'
+import { platformAuthRoutes, platformRoutes } from './routes/platform.js'
+import { requireAuth, requirePlatformAuth } from './middleware/auth.js'
 import { apiLimiter } from './middleware/rateLimit.js'
 import { initRealtime } from './lib/realtime.js'
 import { expirarPrePedidosVencidos } from './lib/prePedidos.js'
@@ -31,6 +36,15 @@ app.use(express.json({ limit: '2mb' }))
 app.get('/health', (_req, res) => res.json({ ok: true }))
 
 app.use('/api', apiLimiter)
+
+// Plataforma primero: /api/platform/* tiene que resolverse antes de que
+// cualquier app.use('/api', requireAuth, ...) de abajo lo intercepte (esos
+// corren para TODO lo que empiece en /api, sin importar que su router no
+// tenga la ruta — Express ejecuta el middleware antes de intentar matchear).
+// Lleva su propio auth porque PlatformAdmin vive fuera del grafo de tenant.
+app.use('/api/platform/auth', platformAuthRoutes)
+app.use('/api/platform', requirePlatformAuth, platformRoutes)
+
 app.use('/api/auth', authRoutes)
 app.use('/api', requireAuth, catalogRoutes)
 app.use('/api', requireAuth, layoutRoutes)
@@ -41,6 +55,10 @@ app.use('/api', requireAuth, inventoryRoutes)
 app.use('/api', requireAuth, userRoutes)
 app.use('/api', requireAuth, tenantRoutes)
 app.use('/api', requireAuth, reportRoutes)
+app.use('/api', requireAuth, cajasBancosRoutes)
+app.use('/api', requireAuth, insumoRoutes)
+app.use('/api', requireAuth, comprasRoutes)
+app.use('/api', requireAuth, importacionRoutes)
 
 app.use((_req, res) => res.status(404).json({ error: 'Ruta no encontrada' }))
 

@@ -43,3 +43,30 @@ export async function subirLogo(tenantId, buffer, contentType = 'image/webp') {
 export async function subirImagenProducto(buffer, contentType = 'image/webp') {
   return subirArchivo(`productos/${randomUUID()}.webp`, buffer, contentType)
 }
+
+// Fotos de insumo: misma logica que la de producto, carpeta propia
+// "insumos/" para no mezclar las dos carpetas en R2.
+export async function subirImagenInsumo(buffer, contentType = 'image/webp') {
+  return subirArchivo(`insumos/${randomUUID()}.webp`, buffer, contentType)
+}
+
+// Factura de una compra (foto o PDF escaneado del documento del proveedor):
+// carpeta por tenant, a diferencia de las fotos de producto/insumo que son
+// globales -- esto es un soporte contable privado del bar, no una imagen
+// comercial compartida. Tampoco se recomprime a webp como esas: un PDF no se
+// puede, y una foto de factura pierde legibilidad de los numeros si se
+// aprieta demasiado (ver resizeFacturaImage en web/src/lib/image.js, que ya
+// la deja liviana sin pasarla por webp).
+export async function subirFacturaCompra(tenantId, buffer, contentType, extension) {
+  return subirArchivo(`facturas/${tenantId}/${randomUUID()}.${extension}`, buffer, contentType)
+}
+
+// facturaUrl viaja de vuelta al cliente y luego el cliente la manda de
+// vuelta al guardar la compra (igual que imageUrl en productos/insumos):
+// sin esto, cualquiera podria mandar "javascript:..." como facturaUrl y
+// que se ejecute cuando otro usuario del mismo tenant le de clic al botón
+// de factura. Solo se acepta lo que de verdad salio de subirFacturaCompra.
+export function esUrlDeFactura(url) {
+  if (!url) return true // null/"" es "sin factura", valido
+  return typeof url === 'string' && url.startsWith(`${process.env.R2_PUBLIC_URL}/facturas/`)
+}

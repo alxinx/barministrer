@@ -1,133 +1,334 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { getCategories } from '../lib/categoriesStore'
 import { useAuth } from '../context/AuthContext'
+import { getSocket } from '../lib/socket'
 import { Icon } from '../components/Icons'
-import MoneyInput from '../components/MoneyInput'
 import ProductoForm from '../components/ProductoForm'
+
+const CLAVE_VISTA = 'licorplus:inventarioVista'
 
 export default function AgregarInventario() {
   const { session } = useAuth()
+  const navigate = useNavigate()
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
+  const [ultimaCompra, setUltimaCompra] = useState(null)
+  const [listaCompra, setListaCompra] = useState([])
+  const [categoriaActiva, setCategoriaActiva] = useState('todas') // 'todas' | 'criticos' | nombre de categoria
   const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState(null) // { product, variant }
   const [movements, setMovements] = useState([])
   const [creando, setCreando] = useState(false)
-  const [error, setError] = useState('')
+  // Preferencia del operador, no un dato del negocio -- se guarda local nada
+  // mas, igual que el colapso del menu (ver Shell.jsx).
+  const [vista, setVista] = useState(() => {
+    try {
+      return localStorage.getItem(CLAVE_VISTA) === 'list' ? 'list' : 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
+  function cambiarVista(v) {
+    setVista(v)
+    try {
+      localStorage.setItem(CLAVE_VISTA, v)
+    } catch {
+      // Sin localStorage (modo privado, etc.) simplemente no persiste.
+    }
+  }
 
   useEffect(() => {
     load()
   }, [])
 
+  // El stock cambia desde sitios que no son esta pantalla (una venta, una
+  // compra recibida desde /compras, una merma) -- sin esto, las tarjetas de
+  // stock bajo/critico quedarian desactualizadas hasta que el operador
+  // refresque a mano. Mismo patron que NuevaVenta.jsx ya usa para
+  // 'mesas:actualizadas'.
+  useEffect(() => {
+    const socket = getSocket()
+    const onInventarioActualizado = () => load()
+    socket.on('inventario:actualizado', onInventarioActualizado)
+    return () => socket.off('inventario:actualizado', onInventarioActualizado)
+  }, [])
+
   async function load() {
-    const [p, c, m] = await Promise.all([
-      api('/products'),
-      getCategories(session?.tenant.id),
-      api('/inventory/movements'),
-    ])
+    const [p, c, m] = await Promise.all([api('/products'), getCategories(session?.tenant.id), api('/inventory/movements')])
     setProducts(p)
     setCategories(c)
     setMovements(m)
-  }
 
-  function productoCreado(nuevo) {
-    setCreando(false)
-    load()
-    if (nuevo?.variants?.length) {
-      setSelected({ product: nuevo, variant: nuevo.variants[0] })
-      setSearch('')
-    }
-  }
-
-  function show(err) {
-    setError(err.message)
-    setTimeout(() => setError(''), 4000)
-  }
-
-  const opciones = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    return products
-      .filter((p) => p.kind === 'STOCK')
-      .flatMap((p) => p.variants.map((v) => ({ product: p, variant: v })))
-      .filter((o) => !term || o.product.name.toLowerCase().includes(term) || o.variant.name.toLowerCase().includes(term))
-  }, [products, search])
-
-  async function registrar(payload) {
+    // El modulo de Compras puede estar apagado para este tenant (no todos lo
+    // tienen activado) -- a diferencia de lo de arriba, que siempre existe,
+    // esto se pide aparte y se degrada en silencio si no esta disponible, en
+    // vez de romper toda la pagina de inventario por algo opcional.
     try {
-      await api('/inventory/movements', { method: 'POST', body: { ...payload, variantId: selected.variant.id } })
-      setSelected(null)
-      setSearch('')
-      load()
-    } catch (err) {
-      show(err)
+      const [compras, lista] = await Promise.all([api('/compras?filtro=RECIBIDA'), api('/compras/lista')])
+      setUltimaCompra(compras.items?.[0] || null)
+      setListaCompra(lista)
+    } catch {
+      setUltimaCompra(null)
+      setListaCompra([])
     }
   }
+
+  function productoCreado() {
+    setCreando(false)
+    setSearch('')
+    load()
+  }
+
+  // Cada presentacion (Variant) es su propia fila -- Media, Botella y
+  // Garrafa del mismo licor tienen stock propio, no son el mismo renglon.
+  const presentaciones = useMemo(
+    () =>
+      products
+        .filter((p) => p.kind === 'STOCK')
+        .flatMap((p) => p.variants.filter((v) => v.active).map((v) => ({ product: p, variant: v }))),
+    [products]
+  )
+
+  // "Critico" es 0 o menos, siempre -- un producto agotado lo esta sin
+  // importar si alguien configuro un minimo o no, por eso no depende de
+  // stockMinimo. "Stock bajo" es el resto de la regla que ya usa
+  // Insumo.stockMinimo (null = nunca se configuro, no avisa) MAS los
+  // agotados: un agotado es "bajo" por definicion, aunque nadie le haya
+  // puesto mínimo todavía.
+  const criticos = useMemo(() => presentaciones.filter(({ variant }) => variant.stock <= 0), [presentaciones])
+  const stockBajo = useMemo(() => {
+    const bajoConfigurado = presentaciones.filter(
+      ({ variant }) => variant.stock > 0 && variant.stockMinimo != null && variant.stock <= variant.stockMinimo
+    )
+    return [...criticos, ...bajoConfigurado]
+  }, [presentaciones, criticos])
+  const criticosSet = useMemo(() => new Set(criticos.map(({ variant }) => variant.id)), [criticos])
+  const stockBajoSet = useMemo(() => new Set(stockBajo.map(({ variant }) => variant.id)), [stockBajo])
+
+  const categoriasConConteo = useMemo(() => {
+    const porCategoria = new Map()
+    for (const { product } of presentaciones) {
+      const nombre = product.category?.name || 'Sin categoría'
+      porCategoria.set(nombre, (porCategoria.get(nombre) || 0) + 1)
+    }
+    return [...porCategoria.entries()].sort((a, b) => b[1] - a[1])
+  }, [presentaciones])
+
+  const enListaVariantSet = useMemo(
+    () => new Set(listaCompra.filter((it) => it.variantId).map((it) => it.variantId)),
+    [listaCompra]
+  )
+
+  async function toggleListaProducto(variantId) {
+    const yaEstaba = enListaVariantSet.has(variantId)
+    if (yaEstaba) {
+      setListaCompra((prev) => prev.filter((it) => it.variantId !== variantId))
+      try {
+        await api(`/compras/lista/producto/${variantId}`, { method: 'DELETE' })
+      } catch {
+        await load()
+      }
+    } else {
+      setListaCompra((prev) => [...prev, { variantId }])
+      try {
+        await api(`/compras/lista/producto/${variantId}`, { method: 'POST' })
+      } catch {
+        await load()
+      }
+    }
+  }
+
+  // Un solo grid para todo el catalogo -- la tab de categoria y el filtro de
+  // "Criticos" son excluyentes entre si (elegir uno limpia el otro), mismo
+  // criterio que cualquier fila de pills de un solo filtro activo.
+  const visibles = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    let base = presentaciones
+    if (categoriaActiva === 'criticos') base = criticos
+    else if (categoriaActiva !== 'todas') base = presentaciones.filter((o) => (o.product.category?.name || 'Sin categoría') === categoriaActiva)
+    return base.filter(
+      (o) =>
+        !term ||
+        o.product.name.toLowerCase().includes(term) ||
+        o.variant.name.toLowerCase().includes(term) ||
+        o.product.category?.name.toLowerCase().includes(term)
+    )
+  }, [presentaciones, criticos, search, categoriaActiva])
 
   return (
-    <div className="p-5 md:p-7 max-w-[900px] mx-auto space-y-5">
-      <header>
-        <h1 className="text-2xl font-bold">Agregar inventario</h1>
-        <p className="text-muted text-sm mt-1">
-          Registra lo que entra por compra. Si llegó por caja o canasta, resuélvelo aquí con el
-          empaque: el producto solo guarda unidades.
-        </p>
+    <div className="p-5 md:p-7 max-w-[1200px] mx-auto space-y-6">
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold">Inventario de productos</h1>
+          <p className="text-muted text-sm mt-1">
+            Stock de lo que se vende tal cual (cervezas, gaseosas, empacados) y lo que está por agotarse.
+          </p>
+        </div>
+        <button type="button" onClick={() => navigate('/compras')} className="btn-primary shrink-0">
+          <Icon.truck width={16} height={16} />
+          Registrar compra
+        </button>
       </header>
 
-      {error && (
-        <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
-          {error}
-        </p>
-      )}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Tarjeta icon={<Icon.cart width={15} height={15} />} label="Productos con stock bajo">
+          <p className="text-xl font-bold mt-1">{stockBajo.length}</p>
+          <p className="text-xs text-muted mt-1">{stockBajo.length > 0 ? 'Requieren pedido pronto' : 'Todo por encima del mínimo'}</p>
+        </Tarjeta>
 
-      {!selected ? (
-        <section className="card p-5 space-y-4">
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">
-              <Icon.search />
-            </span>
-            <input
-              className="field pl-10"
-              placeholder="Buscar producto o presentación"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
-          </div>
+        <Tarjeta icon={<Icon.alert width={15} height={15} />} label="Críticos / agotados">
+          <p className={`text-xl font-bold mt-1 ${criticos.length > 0 ? 'text-ocupada' : ''}`}>{criticos.length}</p>
+          <p className="text-xs text-muted mt-1">{criticos.length > 0 ? 'Atención inmediata' : 'Nada agotado ahora mismo'}</p>
+        </Tarjeta>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[420px] overflow-y-auto">
-            {opciones.map((o) => (
+        <Tarjeta icon={<Icon.truck width={15} height={15} />} label="Fecha última compra">
+          <p className="text-xl font-bold mt-1">{ultimaCompra ? formatFecha(ultimaCompra.fecha) : '—'}</p>
+          <p className="text-xs text-muted mt-1">
+            {ultimaCompra ? `Recibida · ${ultimaCompra.proveedor.name}` : 'Todavía no hay compras registradas'}
+          </p>
+        </Tarjeta>
+      </div>
+
+      <div className="flex gap-1.5 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setCategoriaActiva('todas')}
+          className={`h-8 px-2.5 rounded-lg text-xs font-semibold border transition-colors ${
+            categoriaActiva === 'todas' ? 'bg-amber text-night border-amber' : 'bg-raised text-muted border-edge hover:text-ink'
+          }`}
+        >
+          Todos <span className="opacity-70">({presentaciones.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setCategoriaActiva('criticos')}
+          className={`h-8 px-2.5 rounded-lg text-xs font-semibold border transition-colors inline-flex items-center gap-1 ${
+            categoriaActiva === 'criticos'
+              ? 'bg-ocupada text-ink border-ocupada'
+              : 'bg-ocupada/10 text-ocupada border-ocupada/30 hover:bg-ocupada/20'
+          }`}
+        >
+          <Icon.alert width={12} height={12} />
+          Críticos <span className="opacity-80">({criticos.length})</span>
+        </button>
+        {categoriasConConteo.map(([nombre, n]) => (
+          <button
+            key={nombre}
+            type="button"
+            onClick={() => setCategoriaActiva(nombre)}
+            className={`h-8 px-2.5 rounded-lg text-xs font-semibold border transition-colors ${
+              categoriaActiva === nombre ? 'bg-amber text-night border-amber' : 'bg-raised text-muted border-edge hover:text-ink'
+            }`}
+          >
+            {nombre} <span className="opacity-70">({n})</span>
+          </button>
+        ))}
+      </div>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="text-sm font-semibold">
+            {categoriaActiva === 'criticos' ? 'Críticos y agotados' : categoriaActiva === 'todas' ? 'Catálogo' : categoriaActiva}
+          </h2>
+          <div className="flex items-center gap-2 flex-1 sm:flex-initial justify-end">
+            <div className="relative w-full sm:w-64">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+                <Icon.search width={15} height={15} />
+              </span>
+              <input
+                className="field pl-9 h-9 text-sm"
+                placeholder="Buscar producto o presentación"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-0.5 bg-raised border border-edge rounded-lg p-0.5 shrink-0">
               <button
-                key={o.variant.id}
                 type="button"
-                onClick={() => setSelected(o)}
-                className="text-left p-3 rounded-xl bg-raised border border-edge hover:border-amber transition-colors"
+                onClick={() => cambiarVista('grid')}
+                title="Ver en cuadros"
+                className={`w-8 h-8 rounded-md grid place-items-center transition-colors ${
+                  vista === 'grid' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+                }`}
               >
-                <span className="block w-full h-1 rounded-pill mb-2.5" style={{ background: o.product.category.color }} />
-                <p className="text-sm font-semibold leading-tight truncate">{o.product.name}</p>
-                <p className="text-xs text-muted mt-0.5">{o.variant.name}</p>
-                <p className="text-xs text-muted mt-1.5">
-                  Stock: <span className="text-ink font-semibold">{o.variant.stock}</span>
-                </p>
+                <Icon.grid width={15} height={15} />
               </button>
-            ))}
+              <button
+                type="button"
+                onClick={() => cambiarVista('list')}
+                title="Ver en lista"
+                className={`w-8 h-8 rounded-md grid place-items-center transition-colors ${
+                  vista === 'list' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+                }`}
+              >
+                <Icon.list width={15} height={15} />
+              </button>
+            </div>
+          </div>
+        </div>
 
-            {opciones.length === 0 && (
-              <div className="col-span-full text-center py-6 space-y-3">
-                <p className="text-sm text-muted">
-                  {search.trim() ? <>No encontré “{search.trim()}” en el catálogo.</> : 'No hay presentaciones todavía.'}
-                </p>
-                <button type="button" onClick={() => setCreando(true)} className="btn-primary">
-                  <Icon.plus width={16} height={16} />
-                  Agregar {search.trim() ? `"${search.trim()}"` : ''} como producto nuevo
-                </button>
-              </div>
+        {vista === 'grid' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {visibles.map(({ product, variant }) => (
+              <TarjetaProducto
+                key={variant.id}
+                product={product}
+                variant={variant}
+                estado={criticosSet.has(variant.id) ? 'critico' : stockBajoSet.has(variant.id) ? 'bajo' : null}
+                enLista={enListaVariantSet.has(variant.id)}
+                onToggleLista={() => toggleListaProducto(variant.id)}
+              />
+            ))}
+          </div>
+        ) : (
+          visibles.length > 0 && (
+            <div className="rounded-xl border border-edge overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-left text-xs text-muted uppercase tracking-wide bg-raised">
+                    <th className="py-2.5 px-3 font-semibold">Producto</th>
+                    <th className="py-2.5 px-3 font-semibold">Estado</th>
+                    <th className="py-2.5 px-3 font-semibold">Stock actual</th>
+                    <th className="py-2.5 px-3 font-semibold">Mínimo</th>
+                    <th className="py-2.5 px-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibles.map(({ product, variant }) => (
+                    <FilaProducto
+                      key={variant.id}
+                      product={product}
+                      variant={variant}
+                      estado={criticosSet.has(variant.id) ? 'critico' : stockBajoSet.has(variant.id) ? 'bajo' : null}
+                      enLista={enListaVariantSet.has(variant.id)}
+                      onToggleLista={() => toggleListaProducto(variant.id)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+
+        {visibles.length === 0 && (
+          <div className="card text-center py-10 space-y-3">
+            <p className="text-sm text-muted">
+              {categoriaActiva === 'criticos'
+                ? 'Nada crítico ahora mismo.'
+                : search.trim()
+                  ? <>No encontré “{search.trim()}” en el catálogo.</>
+                  : 'No hay presentaciones todavía.'}
+            </p>
+            {categoriaActiva !== 'criticos' && (
+              <button type="button" onClick={() => setCreando(true)} className="btn-primary">
+                <Icon.plus width={16} height={16} />
+                Agregar {search.trim() ? `"${search.trim()}"` : ''} como producto nuevo
+              </button>
             )}
           </div>
-        </section>
-      ) : (
-        <EntradaForm selected={selected} onCancelar={() => setSelected(null)} onRegistrar={registrar} />
-      )}
+        )}
+      </section>
 
       <section className="card p-5">
         <h2 className="font-semibold mb-3">Entradas recientes</h2>
@@ -146,7 +347,7 @@ export default function AgregarInventario() {
                     {m.packs && m.unitsPerPack ? ` (${m.packs} × ${m.unitsPerPack})` : ''}
                   </p>
                   <p className="text-xs text-muted">
-                    {m.createdBy?.name} · {formatFecha(m.createdAt)}
+                    {m.createdBy?.name} · {formatFechaHora(m.createdAt)}
                     {m.note ? ` · ${m.note}` : ''}
                   </p>
                 </div>
@@ -160,7 +361,6 @@ export default function AgregarInventario() {
       {creando && (
         <ProductoForm
           categories={categories}
-          products={products}
           product={null}
           initialName={search.trim()}
           onClose={() => setCreando(false)}
@@ -171,133 +371,132 @@ export default function AgregarInventario() {
   )
 }
 
-function EntradaForm({ selected, onCancelar, onRegistrar }) {
-  const { product, variant } = selected
-  const [modo, setModo] = useState('unidad')
-  const [qty, setQty] = useState('')
-  const [packs, setPacks] = useState('')
-  const [unitsPerPack, setUnitsPerPack] = useState('')
-  const [cost, setCost] = useState('')
-  const [note, setNote] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const total = modo === 'paquete' ? (Number(packs) || 0) * (Number(unitsPerPack) || 0) : Number(qty) || 0
-
-  async function submit() {
-    if (total <= 0) return
-    setSaving(true)
-    try {
-      await onRegistrar({
-        qty: total,
-        ...(modo === 'paquete' && { packs: Number(packs), unitsPerPack: Number(unitsPerPack) }),
-        ...(cost !== '' && { cost: Number(cost) }),
-        note: note.trim() || undefined,
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
+function Tarjeta({ icon, label, children }) {
   return (
-    <section className="card p-5 space-y-4">
+    <div className="card p-4">
       <div className="flex items-center justify-between">
-        <div>
-          <p className="font-semibold">
-            {product.name} · {variant.name}
-          </p>
-          <p className="text-sm text-muted">
-            Stock actual: <span className="text-ink font-semibold">{variant.stock}</span>
-          </p>
-        </div>
-        <button type="button" onClick={onCancelar} className="text-muted hover:text-ink">
-          <Icon.x />
-        </button>
+        <p className="text-[10px] font-bold tracking-wide text-muted uppercase">{label}</p>
+        <span className="text-muted">{icon}</span>
       </div>
-
-      <div className="flex gap-2">
-        <button type="button" onClick={() => setModo('unidad')} className={tipoClass(modo === 'unidad')}>
-          Por unidad
-        </button>
-        <button type="button" onClick={() => setModo('paquete')} className={tipoClass(modo === 'paquete')}>
-          Por empaque
-        </button>
-      </div>
-
-      {modo === 'unidad' ? (
-        <div>
-          <label className="label">Unidades que entran</label>
-          <input
-            type="number"
-            min="1"
-            className="field"
-            value={qty}
-            onChange={(e) => setQty(e.target.value)}
-            autoFocus
-          />
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="label">Empaques (cajas, canastas…)</label>
-            <input
-              type="number"
-              min="1"
-              className="field"
-              value={packs}
-              onChange={(e) => setPacks(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="label">Unidades por empaque</label>
-            <input
-              type="number"
-              min="1"
-              className="field"
-              value={unitsPerPack}
-              onChange={(e) => setUnitsPerPack(e.target.value)}
-            />
-          </div>
-        </div>
-      )}
-
-      {total > 0 && (
-        <p className="text-sm text-muted">
-          Entran <span className="text-ink font-semibold">{total}</span> unidades · queda en{' '}
-          <span className="text-ink font-semibold">{variant.stock + total}</span>
-        </p>
-      )}
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Costo unitario (opcional)</label>
-          <MoneyInput className="field" value={cost} onChange={setCost} placeholder="Sin cambios" />
-        </div>
-        <div>
-          <label className="label">Nota (opcional)</label>
-          <input className="field" placeholder="Proveedor, factura…" value={note} onChange={(e) => setNote(e.target.value)} />
-        </div>
-      </div>
-
-      <div className="flex gap-3 pt-1">
-        <button type="button" onClick={onCancelar} className="btn-ghost flex-1">
-          Cancelar
-        </button>
-        <button type="button" onClick={submit} disabled={total <= 0 || saving} className="btn-primary flex-1">
-          {saving ? 'Guardando…' : 'Agregar al inventario'}
-        </button>
-      </div>
-    </section>
+      {children}
+    </div>
   )
 }
 
-function tipoClass(active) {
-  return `h-10 px-3 rounded-xl text-xs font-semibold border transition-colors ${
-    active ? 'bg-amber text-night border-amber' : 'bg-surface text-muted border-edge hover:text-ink'
-  }`
+// La insignia es lo unico que rompe la paleta ambar/oscuro de proposito --
+// rojo solido para critico, ambar para bajo, igual que el semaforo de mesas
+// ya usa colores puntuales solo para el estado. Sin insignia si el stock
+// esta sano: no hay nada que resaltar.
+function TarjetaProducto({ product, variant, estado, enLista, onToggleLista }) {
+  const nombre = variant.name && variant.name !== 'Unidad' ? `${product.name} · ${variant.name}` : product.name
+  return (
+    <div className="card overflow-hidden flex flex-col">
+      <div className="relative h-28 shrink-0" style={{ background: product.category?.color || 'rgb(var(--color-raised))' }}>
+        {product.imageUrl ? (
+          <img src={product.imageUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full grid place-items-center text-night font-bold text-lg">
+            {product.name.slice(0, 2).toUpperCase()}
+          </div>
+        )}
+        {estado === 'critico' && (
+          <span className="absolute top-2 left-2 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-pill bg-ocupada text-ink">
+            <Icon.alert width={11} height={11} />
+            Crítico · {variant.stock} un.
+          </span>
+        )}
+        {estado === 'bajo' && (
+          <span className="absolute top-2 left-2 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-pill bg-amber text-night">
+            Stock bajo · {variant.stock} un.
+          </span>
+        )}
+      </div>
+      <div className="p-3 space-y-2.5 flex-1 flex flex-col">
+        <div>
+          <p className="text-[10px] text-muted uppercase tracking-wide">{product.category?.name}</p>
+          <p className="text-sm font-semibold leading-tight truncate">{nombre}</p>
+        </div>
+        <div className="flex items-center justify-between text-xs">
+          <div>
+            <p className="text-muted">Stock actual</p>
+            <p className={`font-semibold ${estado === 'critico' ? 'text-ocupada' : estado === 'bajo' ? 'text-amberText' : ''}`}>
+              {variant.stock} un.
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-muted">Mínimo sugerido</p>
+            <p className="font-semibold">{variant.stockMinimo != null ? `${variant.stockMinimo} un.` : 'Sin configurar'}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onToggleLista}
+          className={`h-9 text-xs justify-center mt-auto ${enLista ? 'btn-ghost border-amber/40 text-amberText' : 'btn-primary'}`}
+        >
+          <Icon.clipboard width={14} height={14} />
+          {enLista ? 'En la lista de compras' : 'Agregar a lista de compras'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function FilaProducto({ product, variant, estado, enLista, onToggleLista }) {
+  const nombre = variant.name && variant.name !== 'Unidad' ? `${product.name} · ${variant.name}` : product.name
+  return (
+    <tr className="border-t border-edge first:border-t-0 hover:bg-raised/60 transition-colors">
+      <td className="py-2 px-3">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="w-9 h-9 rounded-lg overflow-hidden shrink-0 grid place-items-center text-[10px] font-bold text-night"
+            style={{ background: product.category?.color || 'rgb(var(--color-raised))' }}
+          >
+            {product.imageUrl ? (
+              <img src={product.imageUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              product.name.slice(0, 2).toUpperCase()
+            )}
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium truncate">{nombre}</p>
+            <p className="text-xs text-muted truncate">{product.category?.name}</p>
+          </div>
+        </div>
+      </td>
+      <td className="py-2 px-3">
+        {estado === 'critico' && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-pill bg-ocupada text-ink">
+            <Icon.alert width={10} height={10} /> Crítico
+          </span>
+        )}
+        {estado === 'bajo' && (
+          <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-pill bg-amber text-night">Bajo</span>
+        )}
+        {!estado && <span className="text-xs text-muted">—</span>}
+      </td>
+      <td className={`py-2 px-3 font-semibold ${estado === 'critico' ? 'text-ocupada' : estado === 'bajo' ? 'text-amberText' : ''}`}>
+        {variant.stock} un.
+      </td>
+      <td className="py-2 px-3 text-muted">{variant.stockMinimo != null ? `${variant.stockMinimo} un.` : 'Sin configurar'}</td>
+      <td className="py-2 px-3 text-right">
+        <button
+          type="button"
+          onClick={onToggleLista}
+          className={`h-8 px-3 text-xs whitespace-nowrap ${enLista ? 'btn-ghost border-amber/40 text-amberText' : 'btn-primary'}`}
+        >
+          <Icon.clipboard width={13} height={13} />
+          {enLista ? 'En la lista' : 'Agregar'}
+        </button>
+      </td>
+    </tr>
+  )
 }
 
 function formatFecha(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('es-CO', { dateStyle: 'medium' })
+}
+function formatFechaHora(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })
 }

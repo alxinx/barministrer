@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import ReciboModal from '../components/ReciboModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
+import TirillaTurnoModal from '../components/TirillaTurnoModal'
 import FacturasDelDia from '../components/FacturasDelDia'
 import { METHODS, METHOD_LABEL } from '../lib/paymentMethods'
 
@@ -187,7 +188,7 @@ export default function TurnoDetalle() {
         <ReciboModal
           order={factura}
           splitCount={1}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setFactura(null)}
         />
@@ -196,7 +197,7 @@ export default function TurnoDetalle() {
       {egresoTicket && (
         <TicketEgresoModal
           egreso={egresoTicket}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setEgresoTicket(null)}
         />
@@ -209,7 +210,7 @@ export default function TurnoDetalle() {
           counts={counts}
           egresos={egresos}
           totalEgresos={totalEgresos}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           onClose={() => setMostrarTirilla(false)}
         />
       )}
@@ -220,7 +221,7 @@ export default function TurnoDetalle() {
 function EstadoPill({ tono, label }) {
   const tonos = {
     libre: 'text-libre border-libre/30 bg-libre/10',
-    amber: 'text-amber border-amber/30 bg-amber/10',
+    amber: 'text-amberText border-amber/30 bg-amber/10',
   }
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-pill px-2.5 py-1 border ${tonos[tono]}`}>
@@ -232,7 +233,7 @@ function EstadoPill({ tono, label }) {
 
 const STAT_TONOS = {
   default: { badge: 'bg-raised border-edge text-muted', texto: '', card: '' },
-  amber: { badge: 'bg-amber/10 border-amber/40 text-amber', texto: 'text-amber', card: '' },
+  amber: { badge: 'bg-amber/10 border-amber/40 text-amberText', texto: 'text-amberText', card: '' },
   libre: { badge: 'bg-libre/10 border-libre/40 text-libre', texto: 'text-libre', card: '' },
   ocupada: { badge: 'bg-ocupada/10 border-ocupada/40 text-ocupada', texto: 'text-ocupada', card: 'border-ocupada/40 bg-ocupada/5' },
 }
@@ -282,11 +283,11 @@ function VentasPorMedioCard({ sales }) {
           return (
             <div key={m.key} className="bg-raised border border-edge rounded-xl p-3 space-y-2.5">
               <div className="flex items-center justify-between">
-                <span className="w-8 h-8 rounded-full bg-night border border-edge grid place-items-center text-muted shrink-0">
+                <span className="w-8 h-8 rounded-full bg-surface border border-edge grid place-items-center text-muted shrink-0">
                   <MethodIcon width={15} height={15} />
                 </span>
                 {pct > 0 && (
-                  <span className="text-[10px] font-bold text-amber bg-amber/10 border border-amber/30 rounded-pill px-1.5 py-0.5">
+                  <span className="text-[10px] font-bold text-amberText bg-amber/10 border border-amber/30 rounded-pill px-1.5 py-0.5">
                     {pct}%
                   </span>
                 )}
@@ -303,7 +304,7 @@ function VentasPorMedioCard({ sales }) {
         <div className="flex flex-wrap gap-2.5 pt-1">
           {sales.abonos?.total > 0 && (
             <div className="flex items-center gap-2.5 bg-raised border border-edge rounded-xl pl-2.5 pr-3.5 py-2">
-              <span className="w-9 h-9 rounded-full bg-night border border-edge grid place-items-center text-muted shrink-0">
+              <span className="w-9 h-9 rounded-full bg-surface border border-edge grid place-items-center text-muted shrink-0">
                 <Icon.receipt width={16} height={16} />
               </span>
               <div>
@@ -314,11 +315,11 @@ function VentasPorMedioCard({ sales }) {
           )}
           {sales.cortesias > 0 && (
             <div className="flex items-center gap-2.5 bg-amber/10 border border-amber/30 rounded-xl pl-2.5 pr-3.5 py-2">
-              <span className="w-9 h-9 rounded-full bg-amber/15 border border-amber/40 grid place-items-center text-amber shrink-0">
+              <span className="w-9 h-9 rounded-full bg-amber/15 border border-amber/40 grid place-items-center text-amberText shrink-0">
                 <Icon.gift width={16} height={16} />
               </span>
               <div>
-                <p className="text-[11px] text-amber/80 leading-none">{sales.cortesias === 1 ? 'Cortesía' : 'Cortesías'}</p>
+                <p className="text-[11px] text-amberText/80 leading-none">{sales.cortesias === 1 ? 'Cortesía' : 'Cortesías'}</p>
                 <p className="text-sm font-semibold leading-tight">{sales.cortesias}</p>
               </div>
             </div>
@@ -365,6 +366,9 @@ function ConciliacionCard({ counts, baseCash }) {
                   </span>
                   {c.method === 'EFECTIVO' && (
                     <p className="text-[11px] text-muted ml-3.5">Incluye base de apertura ({money(baseCash)})</p>
+                  )}
+                  {c.method === 'EGRESOS' && (
+                    <p className="text-[11px] text-muted ml-3.5">Recibos de gastos y retiros, no es un medio de pago</p>
                   )}
                 </td>
                 <td className="px-3 py-3 text-right align-top">{money(c.expected)}</td>
@@ -439,7 +443,7 @@ function EgresosCard({ egresos, totalEgresos, shiftId, onVerTicket }) {
                   type="button"
                   onClick={() => onVerTicket(e)}
                   aria-label="Reimprimir comprobante"
-                  className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amber hover:bg-raised transition-colors"
+                  className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amberText hover:bg-raised transition-colors"
                 >
                   <Icon.receipt width={16} height={16} />
                 </button>
@@ -457,110 +461,6 @@ function EgresosCard({ egresos, totalEgresos, shiftId, onVerTicket }) {
         </span>
       </div>
     </section>
-  )
-}
-
-// Ticket termico con el cierre del turno, para que el cajero se lo lleve
-// impreso en la entrega de caja -- mismo patron que la tirilla de venta
-// (ReciboModal) y el comprobante de egreso (TicketEgresoModal): id fijo
-// "receipt-print-root" que el CSS de impresion ya sabe mostrar solo.
-function TirillaTurnoModal({ shift, sales, counts, egresos, totalEgresos, tenantName, onClose }) {
-  const mismaPersona = shift.closedBy && shift.closedBy.id === shift.openedBy.id
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="flex flex-col items-center gap-3 my-auto">
-        <div
-          id="receipt-print-root"
-          className="bg-white text-[#111] w-[310px] p-4 font-mono text-xs rounded shadow-xl max-h-[70vh] overflow-y-auto"
-        >
-          <div className="text-center space-y-0.5">
-            <p className="font-bold text-sm uppercase">{tenantName || 'LicorPlus'}</p>
-            <p>Resumen de turno #{String(shift.numero).padStart(4, '0')}</p>
-            <p>{formatFechaCorta(shift.openedAt)}</p>
-          </div>
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-
-          <p>{mismaPersona ? `Responsable: ${shift.openedBy.name}` : `Abrió: ${shift.openedBy.name}`}</p>
-          {!mismaPersona && shift.closedBy && <p>Cerró: {shift.closedBy.name}</p>}
-          <p>Apertura: {formatHora(shift.openedAt)}</p>
-          <p>{shift.closedAt ? `Cierre: ${formatHora(shift.closedAt)}` : 'Turno todavía abierto'}</p>
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-
-          <p className="font-bold">Ventas por medio de pago</p>
-          <div className="space-y-0.5 mt-1">
-            {METHODS.map((m) => (
-              <div key={m.key} className="flex justify-between">
-                <span>{m.label}</span>
-                <span>{money(sales.byMethod[m.key] || 0)}</span>
-              </div>
-            ))}
-            <div className="flex justify-between">
-              <span>Fiado</span>
-              <span>{money(sales.fiado || 0)}</span>
-            </div>
-          </div>
-          <div className="flex justify-between font-bold text-sm mt-1.5">
-            <span>TOTAL VENDIDO</span>
-            <span>{money(sales.totalVentas)}</span>
-          </div>
-
-          {counts.length > 0 && (
-            <>
-              <div className="my-2 border-t border-dashed border-black/40" />
-              <p className="font-bold">Cuadre de caja</p>
-              <div className="space-y-1 mt-1">
-                {counts.map((c) => (
-                  <div key={c.method}>
-                    <div className="flex justify-between">
-                      <span>{METHOD_LABEL[c.method] || c.method}</span>
-                      <span>{money(c.counted)}</span>
-                    </div>
-                    <div className="flex justify-between text-black/60">
-                      <span>Esperado {money(c.expected)}</span>
-                      <span>{c.difference === 0 ? 'Sin dif.' : `${c.difference > 0 ? '+' : ''}${money(c.difference)}`}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-          <div className="flex justify-between font-bold">
-            <span>Egresos y retiros</span>
-            <span>-{money(totalEgresos)}</span>
-          </div>
-          {egresos.length > 0 && (
-            <div className="mt-1 space-y-0.5">
-              {egresos.map((e) => (
-                <div key={e.id} className="flex justify-between text-black/70">
-                  <span className="truncate pr-2">{e.reason}</span>
-                  <span className="shrink-0">-{money(e.amount)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-          <p className="text-center">
-            {sales.tickets} {sales.tickets === 1 ? 'cuenta cerrada' : 'cuentas cerradas'}
-          </p>
-        </div>
-
-        <div className="flex gap-2 shrink-0 flex-wrap justify-center">
-          <button type="button" onClick={onClose} className="btn-ghost">
-            Cerrar
-          </button>
-          <button type="button" onClick={() => window.print()} className="btn-primary flex items-center gap-2">
-            <Icon.printer width={16} height={16} />
-            Imprimir
-          </button>
-        </div>
-      </div>
-    </div>
   )
 }
 

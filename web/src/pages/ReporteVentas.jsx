@@ -6,7 +6,7 @@ import { Icon } from '../components/Icons'
 import TarjetaStat from '../components/TarjetaStat'
 import RangoFechas from '../components/RangoFechas'
 import { useAuth } from '../context/AuthContext'
-import { calcularRangoDias, formatCorto, parseISOLocal } from '../lib/fechas'
+import { calcularRangoDias, fechaAyerEnZona, formatCorto, parseISOLocal } from '../lib/fechas'
 import { METHODS } from '../lib/paymentMethods'
 import {
   nuevoLibro,
@@ -19,9 +19,17 @@ import {
 } from '../lib/excel'
 
 const RANGOS = [7, 15, 30, 60, 90]
-const COLOR_RECAUDADO = '#4C9BD6'
-const COLOR_UTILIDAD = '#5FD18C'
-const COLOR_COSTO = '#E05252'
+
+// Recharts pinta SVG con props, no con clases de Tailwind: no lee las CSS
+// vars del tema solo, asi que cada serie necesita su par oscuro/sepia a
+// mano. Mismos tonos que libre/ocupada en ambos temas para que la grafica
+// combine con el resto de la app; el azul de "recaudado" es independiente
+// del acento y tambien se oscurece en sepia, si no pierde contraste contra
+// el fondo claro de la tarjeta.
+const COLORES_SERIE = {
+  dark: { recaudado: '#4C9BD6', utilidad: '#5FD18C', costo: '#E05252', grid: '#2E2939', eje: '#9A93A8' },
+  sepia: { recaudado: '#1A5E8A', utilidad: '#1F5C31', costo: '#A6321F', grid: '#B9A378', eje: '#6B5A42' },
+}
 
 const ETIQUETAS_SERIE = { recaudado: 'Recaudado', utilidad: 'Utilidad', costo: 'Costo' }
 
@@ -47,30 +55,44 @@ function ChartTooltip({ active, payload, label }) {
 export default function ReporteVentas() {
   const navigate = useNavigate()
   const { session } = useAuth()
+  const colores = COLORES_SERIE[session?.tenant?.theme === 'SEPIA' ? 'sepia' : 'dark']
   const [days, setDays] = useState(30)
   const [rangoCustom, setRangoCustom] = useState(null) // { desde, hasta } (YYYY-MM-DD) | null = usar days
+  const [modoAyer, setModoAyer] = useState(false)
+  const fechaAyer = useMemo(
+    () => fechaAyerEnZona(session?.tenant?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone),
+    [session?.tenant?.timezone]
+  )
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  const rango = useMemo(
-    () =>
-      rangoCustom
-        ? { from: parseISOLocal(rangoCustom.desde), to: parseISOLocal(rangoCustom.hasta) }
-        : calcularRangoDias(days),
-    [days, rangoCustom]
-  )
+  const rango = useMemo(() => {
+    if (modoAyer) return { from: parseISOLocal(fechaAyer), to: parseISOLocal(fechaAyer) }
+    if (rangoCustom) return { from: parseISOLocal(rangoCustom.desde), to: parseISOLocal(rangoCustom.hasta) }
+    return calcularRangoDias(days)
+  }, [days, rangoCustom, modoAyer, fechaAyer])
 
   useEffect(() => {
     setLoading(true)
-    const query = rangoCustom ? `desde=${rangoCustom.desde}&hasta=${rangoCustom.hasta}` : `days=${days}`
+    const query = modoAyer
+      ? 'modo=ayer'
+      : rangoCustom
+        ? `desde=${rangoCustom.desde}&hasta=${rangoCustom.hasta}`
+        : `days=${days}`
     api(`/reports/ventas?${query}`)
       .then(setData)
       .finally(() => setLoading(false))
-  }, [days, rangoCustom])
+  }, [days, rangoCustom, modoAyer])
 
   function elegirDias(r) {
+    setModoAyer(false)
     setRangoCustom(null)
     setDays(r)
+  }
+
+  function elegirRango(r) {
+    setModoAyer(false)
+    setRangoCustom(r)
   }
 
   async function exportarExcel() {
@@ -84,13 +106,13 @@ export default function ReporteVentas() {
     const sheet = workbook.addWorksheet('Reporte de ventas')
 
     const etiquetaPeriodo = `${formatCorto(rango.from)} – ${formatCorto(rango.to)}${
-      rangoCustom ? '' : ` (últimos ${days} días)`
+      rangoCustom ? '' : modoAyer ? ' (ayer)' : ` (últimos ${days} días)`
     }`
 
     escribirTitulo(
       sheet,
       {
-        titulo: `Reporte de ventas · ${session?.tenant?.name || 'LicorPlus'}`,
+        titulo: `Reporte de ventas · ${session?.tenant?.name || 'Barminister'}`,
         subtitulo: `Periodo: ${etiquetaPeriodo} · Generado el ${new Date().toLocaleDateString('es-CO', {
           day: '2-digit',
           month: 'long',
@@ -145,7 +167,7 @@ export default function ReporteVentas() {
     for (let c = 2; c <= TOTAL_COLUMNAS; c++) filaTotales.getCell(c).numFmt = FORMATO_MONEDA
 
     autoAjustarColumnas(sheet, { desde: 3 })
-    const sufijoArchivo = rangoCustom ? `${rangoCustom.desde}_a_${rangoCustom.hasta}` : `${days}-dias`
+    const sufijoArchivo = rangoCustom ? `${rangoCustom.desde}_a_${rangoCustom.hasta}` : modoAyer ? 'ayer' : `${days}-dias`
     await descargarLibro(workbook, `reporte-ventas-${sufijoArchivo}.xlsx`)
   }
 
@@ -165,12 +187,25 @@ export default function ReporteVentas() {
           <p className="text-muted text-sm mt-1">Recaudado contra utilidad, día por día.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => {
+              setModoAyer(true)
+              setRangoCustom(null)
+            }}
+            className={`h-9 px-3.5 rounded-xl text-sm font-semibold border transition-colors ${
+              modoAyer
+                ? 'bg-amber text-night border-amber'
+                : 'bg-surface text-muted border-edge hover:text-ink'
+            }`}
+          >
+            Ayer
+          </button>
           {RANGOS.map((r) => (
             <button
               key={r}
               onClick={() => elegirDias(r)}
               className={`h-9 px-3.5 rounded-xl text-sm font-semibold border transition-colors ${
-                !rangoCustom && days === r
+                !modoAyer && !rangoCustom && days === r
                   ? 'bg-amber text-night border-amber'
                   : 'bg-surface text-muted border-edge hover:text-ink'
               }`}
@@ -186,22 +221,22 @@ export default function ReporteVentas() {
             onChange={(e) => elegirDias(Math.min(365, Math.max(1, Number(e.target.value) || 1)))}
             className="field h-9 w-20 text-center"
           />
-          <RangoFechas rango={rango} onElegir={setRangoCustom} activo={Boolean(rangoCustom)} />
+          <RangoFechas rango={rango} onElegir={elegirRango} activo={Boolean(rangoCustom)} />
         </div>
       </header>
 
       <section className="card p-5">
         <div className="flex items-center gap-4 text-xs text-muted mb-3 flex-wrap">
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLOR_RECAUDADO }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: colores.recaudado }} />
             Recaudado
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLOR_UTILIDAD }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: colores.utilidad }} />
             Utilidad
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLOR_COSTO }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: colores.costo }} />
             Costo
           </span>
           <button onClick={exportarExcel} className="btn-ghost ml-auto" disabled={!data || data.serie.length === 0}>
@@ -217,30 +252,30 @@ export default function ReporteVentas() {
             <AreaChart data={data.serie} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="gradRecaudado" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={COLOR_RECAUDADO} stopOpacity={0.35} />
-                  <stop offset="95%" stopColor={COLOR_RECAUDADO} stopOpacity={0} />
+                  <stop offset="5%" stopColor={colores.recaudado} stopOpacity={0.35} />
+                  <stop offset="95%" stopColor={colores.recaudado} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradUtilidad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={COLOR_UTILIDAD} stopOpacity={0.35} />
-                  <stop offset="95%" stopColor={COLOR_UTILIDAD} stopOpacity={0} />
+                  <stop offset="5%" stopColor={colores.utilidad} stopOpacity={0.35} />
+                  <stop offset="95%" stopColor={colores.utilidad} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradCosto" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={COLOR_COSTO} stopOpacity={0.35} />
-                  <stop offset="95%" stopColor={COLOR_COSTO} stopOpacity={0} />
+                  <stop offset="5%" stopColor={colores.costo} stopOpacity={0.35} />
+                  <stop offset="95%" stopColor={colores.costo} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2E2939" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={colores.grid} vertical={false} />
               <XAxis
                 dataKey="date"
                 tickFormatter={formatFechaCorta}
-                stroke="#9A93A8"
+                stroke={colores.eje}
                 fontSize={11}
                 tickLine={false}
-                axisLine={{ stroke: '#2E2939' }}
+                axisLine={{ stroke: colores.grid }}
                 minTickGap={20}
               />
               <YAxis
-                stroke="#9A93A8"
+                stroke={colores.eje}
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
@@ -251,18 +286,18 @@ export default function ReporteVentas() {
               <Area
                 type="monotone"
                 dataKey="recaudado"
-                stroke={COLOR_RECAUDADO}
+                stroke={colores.recaudado}
                 fill="url(#gradRecaudado)"
                 strokeWidth={2}
               />
               <Area
                 type="monotone"
                 dataKey="utilidad"
-                stroke={COLOR_UTILIDAD}
+                stroke={colores.utilidad}
                 fill="url(#gradUtilidad)"
                 strokeWidth={2}
               />
-              <Area type="monotone" dataKey="costo" stroke={COLOR_COSTO} fill="url(#gradCosto)" strokeWidth={2} />
+              <Area type="monotone" dataKey="costo" stroke={colores.costo} fill="url(#gradCosto)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         )}

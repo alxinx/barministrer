@@ -1,25 +1,38 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, money } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { useShift } from '../context/ShiftContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
-import PinInput, { PIN_LENGTH } from '../components/PinInput'
+import BigMoneyInput from '../components/BigMoneyInput'
+import PinField from '../components/PinField'
+import { usePinVerificado } from '../hooks/usePinVerificado'
 import ReciboModal from '../components/ReciboModal'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
 import ConsumoDetalleModal from '../components/ConsumoDetalleModal'
 import CuadreResumen from '../components/CuadreResumen'
+import { olvidarCodigoRecordado } from '../lib/codigoRecordado'
 import RangoFechas from '../components/RangoFechas'
+import TirillaTurnoModal from '../components/TirillaTurnoModal'
 import { parseISOLocal } from '../lib/fechas'
-import { METHODS } from '../lib/paymentMethods'
+import { METHODS, esperadoPorMetodo } from '../lib/paymentMethods'
+import { getSocket } from '../lib/socket'
 
 const PERIODOS = [
   { key: 'hoy', label: 'Hoy' },
   { key: 'ayer', label: 'Ayer' },
   { key: '7d', label: '7 días' },
   { key: '30d', label: '30 días' },
+]
+
+const TONOS_TURNO = [
+  { fila: 'bg-raised/40 hover:bg-raised', etiqueta: 'text-muted border-edge bg-surface' },
+  { fila: 'bg-amber/5 hover:bg-amber/10', etiqueta: 'text-amberText border-amber/40 bg-amber/10' },
+  { fila: 'bg-libre/5 hover:bg-libre/10', etiqueta: 'text-libre border-libre/40 bg-libre/10' },
+  { fila: 'bg-ocupada/5 hover:bg-ocupada/10', etiqueta: 'text-ocupada border-ocupada/40 bg-ocupada/10' },
+  { fila: 'bg-reservada/5 hover:bg-reservada/10', etiqueta: 'text-reservada border-reservada/40 bg-reservada/10' },
 ]
 
 const ETIQUETA_VARIACION = {
@@ -33,10 +46,16 @@ const ETIQUETA_VARIACION = {
 export default function Caja() {
   const { session, isAdmin } = useAuth()
   const navigate = useNavigate()
-  const { shift, setShift } = useShift() // compartido con Nueva venta: un solo fetch por sesion
+  const { shift, setShift, reload } = useShift() // compartido con Nueva venta: un solo fetch por sesion
   const [history, setHistory] = useState([])
   const [error, setError] = useState('')
   const [closing, setClosing] = useState(false)
+  // Cuadre en dos pasos: primero se cuenta a ciegas (closing), despues se
+  // confirma viendo esperado vs. contado y se pide el PIN (confirmando). El
+  // conteo ya escrito se guarda en countsDraft para no perderlo si vuelve
+  // atras desde la confirmacion.
+  const [countsDraft, setCountsDraft] = useState(null)
+  const [confirmando, setConfirmando] = useState(false)
   const [closedResult, setClosedResult] = useState(null)
   // Flujo de "cerrar turno" con cuentas todavia abiertas: primero se pregunta
   // que hacer con ellas (cobrarlas ya o dejarlas pasar), y si elige cobrarlas
@@ -63,19 +82,35 @@ export default function Caja() {
   const [cargandoMovs, setCargandoMovs] = useState(true)
   const [busqueda, setBusqueda] = useState('')
   const [filtroTipo, setFiltroTipo] = useState('TODOS')
+  const [turnosSeleccionados, setTurnosSeleccionados] = useState(null)
 
   useEffect(() => {
     load()
   }, [])
 
-  // Sin turno abierto no hay nada que vender, asi que el modal de apertura
-  // se muestra solo: aparece al cargar la pagina si nunca se abrio ninguno,
-  // y de nuevo justo despues de cerrar uno (ver cerrarTurno). Si el operador
-  // lo cancela para ir a mirar el historial, se queda cerrado hasta que lo
-  // vuelva a pedir con el boton de la tarjeta.
   useEffect(() => {
-    if (shift === null) setAbriendoTurno(true)
-  }, [shift])
+    const socket = getSocket()
+    const actualizarTurno = ({ shiftId } = {}) => {
+      if (shift?.id && shiftId && shiftId !== shift.id) return
+      reload().catch(show)
+    }
+
+    socket.on('turno:actualizado', actualizarTurno)
+    socket.on('connect', actualizarTurno)
+    return () => {
+      socket.off('turno:actualizado', actualizarTurno)
+      socket.off('connect', actualizarTurno)
+    }
+  }, [shift?.id, reload])
+
+  // Sin turno abierto no hay nada que vender, asi que el modal de apertura
+  // se muestra solo: aparece al cargar la pagina si nunca se abrio ninguno.
+  // Justo despues de cerrar uno no se dispara aqui (closedResult de por
+  // medio): primero se ve el voucher, y de ahi se pasa a /venta, donde
+  // NuevaVenta tiene su propio aviso para abrir el siguiente turno.
+  useEffect(() => {
+    if (shift === null && !closedResult) setAbriendoTurno(true)
+  }, [shift, closedResult])
 
   useEffect(() => {
     if (!shift) return
@@ -108,6 +143,7 @@ export default function Caja() {
   function elegirPeriodo(key) {
     setPeriodo(key)
     setRangoCustom(null)
+    setTurnosSeleccionados(null)
   }
 
   async function abrirTurno(baseCash, pin) {
@@ -133,13 +169,34 @@ export default function Caja() {
   async function cerrarTurno(counts, pin) {
     try {
       const cerrado = await api(`/shifts/${shift.id}/close`, { method: 'POST', body: { counts, pin } })
-      setClosing(false)
+      setConfirmando(false)
       setShift(null)
       setClosedResult(cerrado)
-      load()
+      // Un turno nuevo nunca hereda el codigo recordado del anterior: vuelve
+      // a pedirse en la primera cuenta que se cierre del turno que sigue.
+      olvidarCodigoRecordado()
     } catch (err) {
       show(err)
     }
+  }
+
+  // Del cuadre (conteo ciego) a la confirmacion (esperado vs. contado + PIN).
+  function continuarAConfirmar(counts) {
+    setCountsDraft(counts)
+    setClosing(false)
+    setConfirmando(true)
+  }
+
+  // De vuelta al cuadre sin perder lo ya contado.
+  function volverAContar() {
+    setConfirmando(false)
+    setClosing(true)
+  }
+
+  function cerrarVoucherYSeguir() {
+    setClosedResult(null)
+    load()
+    navigate('/venta')
   }
 
   // Antes de dejar cuadrar el turno, hay que saber si quedan cuentas sin
@@ -148,6 +205,7 @@ export default function Caja() {
   async function iniciarCierreTurno() {
     try {
       const abiertas = await api('/orders/open')
+      setCountsDraft(null)
       if (abiertas.length === 0) return setClosing(true)
       setEligiendoCierre(abiertas)
     } catch (err) {
@@ -205,11 +263,21 @@ export default function Caja() {
     if (!movs) return []
     const term = busqueda.trim().toLowerCase()
     return movs.movimientos.filter((m) => {
+      if (turnosSeleccionados && !turnosSeleccionados.includes(m.turnoId)) return false
       if (filtroTipo !== 'TODOS' && m.tipo !== filtroTipo) return false
       if (!term) return true
       return m.descripcion.toLowerCase().includes(term) || m.detalle.toLowerCase().includes(term)
     })
-  }, [movs, busqueda, filtroTipo])
+  }, [movs, busqueda, filtroTipo, turnosSeleccionados])
+
+  function cambiarTurnoSeleccionado(turnoId, checked) {
+    const todosLosIds = (movs?.turnos || []).map((turno) => turno.id)
+    const seleccionActual = turnosSeleccionados ?? todosLosIds
+    const siguiente = checked
+      ? [...new Set([...seleccionActual, turnoId])]
+      : seleccionActual.filter((id) => id !== turnoId)
+    setTurnosSeleccionados(siguiente.length === todosLosIds.length ? null : siguiente)
+  }
 
   if (shift === undefined) {
     return <div className="p-7 text-muted text-sm">Cargando…</div>
@@ -221,6 +289,7 @@ export default function Caja() {
   const efectivoEsperado = shift
     ? Number(shift.baseCash) + (sales.byMethod.EFECTIVO || 0) + (sales.abonos.byMethod.EFECTIVO || 0) - totalEgresos
     : 0
+  const separarTurnos = (movs?.turnos?.length || 0) > 1
 
   return (
     <div className="p-5 md:p-7 max-w-[1500px] mx-auto">
@@ -259,6 +328,7 @@ export default function Caja() {
               onElegir={(r) => {
                 setPeriodo('custom')
                 setRangoCustom(r)
+                setTurnosSeleccionados(null)
               }}
             />
           </div>
@@ -336,6 +406,70 @@ export default function Caja() {
                     <option value="DEVOLUCION">Devoluciones</option>
                   </select>
                 </div>
+                {(movs?.turnos?.length || 0) > 1 && (
+                  <details className="relative">
+                    <summary className="field h-10 px-3 flex items-center gap-2 cursor-pointer list-none whitespace-nowrap">
+                      <Icon.filter width={15} height={15} className="text-muted" />
+                      <span>
+                        Turnos ·{' '}
+                        {turnosSeleccionados === null
+                          ? 'Todos'
+                          : turnosSeleccionados.length === 0
+                            ? 'Ninguno'
+                            : `${turnosSeleccionados.length} seleccionados`}
+                      </span>
+                      <Icon.chevronDown width={14} height={14} className="text-muted" />
+                    </summary>
+                    <div className="absolute right-0 top-full z-30 mt-2 w-72 rounded-xl border border-edge bg-surface p-3 shadow-xl">
+                      <div className="flex items-center justify-between gap-3 pb-2 border-b border-edge">
+                        <p className="text-xs font-semibold text-muted">Turnos de este periodo</p>
+                        <div className="flex items-center gap-3 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setTurnosSeleccionados(null)}
+                            className="text-amberText hover:underline"
+                          >
+                            Todos
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTurnosSeleccionados([])}
+                            className="text-muted hover:text-ink"
+                          >
+                            Ninguno
+                          </button>
+                        </div>
+                      </div>
+                      <fieldset className="max-h-64 overflow-y-auto pt-2">
+                        <legend className="sr-only">Seleccionar turnos para mostrar</legend>
+                        {movs.turnos.map((turno) => (
+                          <label
+                            key={turno.id}
+                            className="flex items-start gap-2.5 rounded-lg px-2 py-2 text-sm hover:bg-raised cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 accent-amber"
+                              checked={turnosSeleccionados === null || turnosSeleccionados.includes(turno.id)}
+                              onChange={(e) => cambiarTurnoSeleccionado(turno.id, e.target.checked)}
+                            />
+                            <span className="min-w-0">
+                              <span className="block font-medium">
+                                Turno {String(turno.numero).padStart(4, '0')}
+                              </span>
+                              <span className="block text-xs text-muted">
+                                Abrió {turno.openedByName || 'Sin dato'} · {formatFechaHora(turno.openedAt)}
+                              </span>
+                              {turno.closedByName && (
+                                <span className="block text-xs text-muted">Cerró {turno.closedByName}</span>
+                              )}
+                            </span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    </div>
+                  </details>
+                )}
               </div>
             </div>
 
@@ -343,7 +477,8 @@ export default function Caja() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-muted border-y border-edge">
-                    <th className="px-5 py-2.5 text-left font-semibold">Hora</th>
+                    <th className="px-5 py-2.5 text-left font-semibold">Fecha y hora</th>
+                    {separarTurnos && <th className="px-4 py-2.5 text-left font-semibold">Turno</th>}
                     <th className="px-4 py-2.5 text-left font-semibold">Tipo</th>
                     <th className="px-4 py-2.5 text-left font-semibold">Descripción</th>
                     <th className="px-4 py-2.5 text-left font-semibold">Detalle</th>
@@ -357,9 +492,25 @@ export default function Caja() {
                     <tr
                       key={m.id}
                       onClick={() => verDetalle(m.orderId)}
-                      className="border-b border-edge/60 last:border-0 hover:bg-raised/60 cursor-pointer"
+                      className={`border-b border-edge/60 last:border-b-0 cursor-pointer ${
+                        separarTurnos
+                          ? TONOS_TURNO[((m.turnoNumero || 1) - 1) % TONOS_TURNO.length].fila
+                          : 'hover:bg-raised/60'
+                      }`}
                     >
-                      <td className="px-5 py-3 text-muted whitespace-nowrap">{formatHora(m.hora)}</td>
+                      <td className="px-5 py-3 text-muted whitespace-nowrap">{formatFechaHora(m.hora)}</td>
+                      {separarTurnos && (
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span
+                            className={`inline-flex rounded-pill border px-2 py-1 text-[11px] font-semibold ${
+                              TONOS_TURNO[((m.turnoNumero || 1) - 1) % TONOS_TURNO.length].etiqueta
+                            }`}
+                            title={`Abierto ${formatFechaHora(m.turnoAbiertoAt)}`}
+                          >
+                            Turno {m.turnoNumero}
+                          </span>
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <span
                           className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-pill border ${
@@ -389,7 +540,7 @@ export default function Caja() {
                             verFactura(m.orderId)
                           }}
                           aria-label="Reimprimir factura"
-                          className="w-8 h-8 rounded-lg grid place-items-center hover:text-amber hover:bg-raised transition-colors"
+                          className="w-8 h-8 rounded-lg grid place-items-center hover:text-amberText hover:bg-raised transition-colors"
                         >
                           <Icon.receipt width={16} height={16} />
                         </button>
@@ -435,7 +586,7 @@ export default function Caja() {
                           type="button"
                           onClick={() => setEgresoTicket(e)}
                           aria-label="Reimprimir comprobante"
-                          className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amber hover:bg-raised transition-colors"
+                          className="w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-amberText hover:bg-raised transition-colors"
                         >
                           <Icon.receipt width={16} height={16} />
                         </button>
@@ -478,7 +629,16 @@ export default function Caja() {
       </div>
 
       {closedResult && (
-        <ResumenCierreModal resultado={closedResult} onCerrar={() => setClosedResult(null)} />
+        <TirillaTurnoModal
+          shift={closedResult}
+          sales={closedResult.sales}
+          counts={closedResult.counts || []}
+          egresos={closedResult.expenses || []}
+          totalEgresos={(closedResult.expenses || []).reduce((s, e) => s + Number(e.amount), 0)}
+          tenant={session?.tenant}
+          autoPrint
+          onClose={cerrarVoucherYSeguir}
+        />
       )}
 
       {eligiendoCierre && (
@@ -507,13 +667,37 @@ export default function Caja() {
             puedeDescuento={isAdmin || (session?.user.role === 'CAJERO' && session?.tenant.cajeroAplicaDescuentos)}
             tableLabel={`Mesa ${colaCuentas[0].table?.number}`}
             items={colaCuentas[0].items}
+            tenant={session?.tenant}
             onClose={() => setColaCuentas(null)}
             onConfirm={confirmarCuentaDeLaCola}
           />
         </>
       )}
 
-      {closing && <CuadreModal onCancel={() => setClosing(false)} onConfirm={cerrarTurno} />}
+      {closing && (
+        <CuadreModal
+          initial={countsDraft}
+          onCancel={() => setClosing(false)}
+          onContinuar={continuarAConfirmar}
+          onAgregarEgreso={() => setAgregandoEgreso(true)}
+        />
+      )}
+
+      {confirmando && (
+        <ConfirmarCierreModal
+          counts={countsDraft}
+          baseCash={shift.baseCash}
+          sales={sales}
+          totalEgresos={totalEgresos}
+          onAtras={volverAContar}
+          onCancel={() => {
+            setConfirmando(false)
+            setCountsDraft(null)
+          }}
+          onConfirm={cerrarTurno}
+          onAgregarEgreso={() => setAgregandoEgreso(true)}
+        />
+      )}
 
       {abriendoTurno && (
         <AbrirTurnoModal onCancel={() => setAbriendoTurno(false)} onAbrir={abrirTurno} />
@@ -537,7 +721,7 @@ export default function Caja() {
         <ReciboModal
           order={factura}
           splitCount={1}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setFactura(null)}
         />
@@ -548,7 +732,7 @@ export default function Caja() {
       {egresoTicket && (
         <TicketEgresoModal
           egreso={egresoTicket}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setEgresoTicket(null)}
         />
@@ -563,7 +747,7 @@ function porcentaje(valor, total) {
 }
 
 const TONOS_CAJA = {
-  amber: 'bg-amber/10 border-amber/40 text-amber',
+  amber: 'bg-amber/10 border-amber/40 text-amberText',
   ocupada: 'bg-ocupada/10 border-ocupada/40 text-ocupada',
   default: 'bg-raised border-edge text-muted',
 }
@@ -590,7 +774,7 @@ function TurnoActualCard({ shift, onPedirCierre }) {
     <section className="card p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="w-10 h-10 rounded-xl bg-raised border border-edge grid place-items-center text-amber shrink-0">
+          <span className="w-10 h-10 rounded-xl bg-raised border border-edge grid place-items-center text-amberText shrink-0">
             <Icon.calendar width={18} height={18} />
           </span>
           <div className="min-w-0">
@@ -620,34 +804,130 @@ function ResumenTurnoCard({ shift, sales, totalEgresos, efectivoEsperado, onPedi
       <div className="space-y-2.5 text-sm">
         <div className="flex items-center justify-between">
           <span className="text-muted">Apertura de caja</span>
-          <span className="font-semibold">{money(shift.baseCash)}</span>
+          <ValorTurno value={shift.baseCash} className="font-semibold" />
         </div>
         <div className="flex items-center justify-between">
           <span className="text-muted">Ventas del turno</span>
-          <span className="font-semibold text-libre">{money(sales.totalVentas)}</span>
+          <ValorTurno value={sales.totalVentas} className="font-semibold text-libre" />
         </div>
         <div className="flex items-center justify-between">
           <span className="text-muted">Devoluciones</span>
-          <span className={`font-semibold ${sales.devoluciones > 0 ? 'text-ocupada' : ''}`}>
-            {money(sales.devoluciones)}
-          </span>
+          <ValorTurno
+            value={sales.devoluciones}
+            className={`font-semibold ${sales.devoluciones > 0 ? 'text-ocupada' : ''}`}
+          />
         </div>
         <div className="flex items-center justify-between">
           <span className="text-muted">Egresos y retiros</span>
-          <span className={`font-semibold ${totalEgresos > 0 ? 'text-ocupada' : ''}`}>
-            {money(totalEgresos)}
-          </span>
+          <ValorTurno
+            value={totalEgresos}
+            className={`font-semibold ${totalEgresos > 0 ? 'text-ocupada' : ''}`}
+          />
         </div>
       </div>
       <div className="pt-4 border-t border-edge flex items-center justify-between">
         <span className="text-sm font-semibold">Total en caja</span>
-        <span className="text-2xl font-bold text-amber">{money(efectivoEsperado)}</span>
+        <ValorTurno value={efectivoEsperado} className="text-2xl font-bold text-amberText" />
       </div>
       <button onClick={onPedirCierre} className="btn-primary w-full">
         <Icon.cash width={16} height={16} />
         Cerrar turno
       </button>
     </section>
+  )
+}
+
+function ValorTurno({ value, className = '' }) {
+  const elementRef = useRef(null)
+  const formatted = money(value)
+  const previous = useRef({ formatted, value: Number(value) || 0 })
+
+  useEffect(() => {
+    if (previous.current.formatted === formatted) return
+    previous.current = { formatted, value: Number(value) || 0 }
+
+    const element = elementRef.current
+    if (!element?.animate) return
+    element.getAnimations?.().forEach((animation) => animation.cancel())
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    element.animate(
+      [
+        { backgroundColor: 'rgba(232, 163, 61, 0)' },
+        { backgroundColor: 'rgba(232, 163, 61, 0.18)', offset: 0.25 },
+        { backgroundColor: 'rgba(232, 163, 61, 0)' },
+      ],
+      { duration: reduceMotion ? 500 : 700, easing: 'ease-out' }
+    )
+  }, [formatted, value])
+
+  const direccion = Number(value) >= previous.current.value ? 1 : -1
+  const caracteres = Array.from(formatted)
+  let digitosRestantes = caracteres.filter((caracter) => /\d/.test(caracter)).length
+
+  return (
+    <span
+      ref={elementRef}
+      aria-label={formatted}
+      className={`inline-flex rounded-md px-1 -mx-1 tabular-nums ${className}`}
+    >
+      <span aria-hidden="true" className="inline-flex whitespace-pre">
+        {caracteres.map((caracter, index) => {
+          if (!/\d/.test(caracter)) {
+            return <span key={`literal-${index}-${caracter}`}>{caracter}</span>
+          }
+          const place = digitosRestantes - 1
+          digitosRestantes -= 1
+          return <DigitoRodante key={`digito-${place}`} digit={caracter} direction={direccion} />
+        })}
+      </span>
+    </span>
+  )
+}
+
+function DigitoRodante({ digit, direction }) {
+  const [position, setPosition] = useState(20 + Number(digit))
+  const [recentering, setRecentering] = useState(false)
+  const previousDigit = useRef(digit)
+
+  useLayoutEffect(() => {
+    const currentDigit = Number(previousDigit.current)
+    const nextDigit = Number(digit)
+    previousDigit.current = digit
+    if (currentDigit === nextDigit) return
+
+    setPosition((currentPosition) => {
+      const displayedDigit = currentPosition % 10
+      const steps =
+        direction >= 0
+          ? (nextDigit - displayedDigit + 10) % 10
+          : -((displayedDigit - nextDigit + 10) % 10)
+      return currentPosition + steps
+    })
+  }, [digit, direction])
+
+  function recentrar(event) {
+    if (event.propertyName !== 'transform') return
+    requestAnimationFrame(() => {
+      setRecentering(true)
+      setPosition(20 + Number(digit))
+      requestAnimationFrame(() => setRecentering(false))
+    })
+  }
+
+  return (
+    <span className="inline-block h-[1em] min-w-[0.62em] overflow-hidden text-center align-bottom">
+      <span
+        onTransitionEnd={recentrar}
+        className={`flex flex-col leading-none ${recentering ? 'transition-none' : 'transition-[transform] duration-[420ms] ease-out'}`}
+        style={{ transform: `translateY(-${position}em)` }}
+      >
+        {Array.from({ length: 50 }, (_, index) => (
+          <span key={index} className="h-[1em] shrink-0">
+            {index % 10}
+          </span>
+        ))}
+      </span>
+    </span>
   )
 }
 
@@ -701,9 +981,17 @@ function TurnosAnterioresCard({ turnos, onVer }) {
 // con una cuenta todo el dia, pero se turnan varios ADMIN/CAJERO en el).
 function AbrirTurnoModal({ onCancel, onAbrir }) {
   const [base, setBase] = useState('')
-  const [pin, setPin] = useState('')
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+  } = usePinVerificado()
   const [saving, setSaving] = useState(false)
-  const completo = base !== '' && pin.length === PIN_LENGTH
+  const completo = base !== '' && pinValido
 
   async function confirmar() {
     setSaving(true)
@@ -718,20 +1006,26 @@ function AbrirTurnoModal({ onCancel, onAbrir }) {
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
         <div>
-          <h2 className="text-lg font-bold mb-1">Abrir turno</h2>
+          <h2 className="text-lg font-bold mb-1">Abrir caja</h2>
           <p className="text-sm text-muted">
             Declara la base inicial en efectivo con la que arranca la caja y el PIN de quien la abre, para que quede
             registrado.
           </p>
         </div>
         <div>
-          <label className="label">Base inicial (efectivo)</label>
-          <MoneyInput className="field" value={base} onChange={setBase} />
+          <label className="label text-center">Base inicial (efectivo)</label>
+          <BigMoneyInput value={base} onChange={setBase} />
         </div>
-        <div>
-          <label className="label text-center">PIN de quien abre</label>
-          <PinInput value={pin} onChange={setPin} autoFocus />
-        </div>
+        <PinField
+          pin={pin}
+          onChange={setPin}
+          verificando={verificandoPin}
+          error={pinError}
+          bloqueado={pinBloqueado}
+          segundosRestantes={pinSegundosRestantes}
+          label="PIN de quien abre"
+          autoFocus
+        />
         <div className="flex gap-3 pt-1">
           <button onClick={onCancel} className="btn-ghost flex-1">
             Cancelar
@@ -865,16 +1159,105 @@ function ElegirCierreModal({ cantidad, onCobrarlas, onPasarlas, onCancel }) {
   )
 }
 
-function CuadreModal({ onCancel, onConfirm }) {
-  const [counts, setCounts] = useState({ EFECTIVO: '', NEQUI: '', TRANSFERENCIA: '', DATAFONO: '' })
-  const [pin, setPin] = useState('')
+// Paso 1 del cierre: conteo ciego, el cajero cuenta sin ver lo esperado (eso
+// solo aparece despues, al confirmar -- ver ConfirmarCierreModal). Los inputs
+// nacen en 0, nunca vacios, para que "no toque nada" se lea como "esta
+// vacio de verdad", no como un campo que el cajero se saltó por error.
+function CuadreModal({ initial, onCancel, onContinuar, onAgregarEgreso }) {
+  const [counts, setCounts] = useState(
+    initial || Object.fromEntries([...METHODS.map((m) => [m.key, '0']), ['EGRESOS', '0']])
+  )
+
+  function actualizar(key, v) {
+    setCounts((prev) => ({ ...prev, [key]: v === '' ? '0' : v }))
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-md p-5 space-y-4">
+        <h2 className="text-lg font-bold">Cuadre de caja</h2>
+        <p className="text-sm text-muted">
+          Cuenta cada medio de pago tal cual lo tienes, sin mirar lo esperado. El sistema te muestra la diferencia en
+          el siguiente paso, antes de cerrar.
+        </p>
+        <div className="space-y-3">
+          {METHODS.map((m) => (
+            <div key={m.key}>
+              <label className="label">{m.label}</label>
+              <MoneyInput className="field" value={counts[m.key]} onChange={(v) => actualizar(m.key, v)} />
+            </div>
+          ))}
+        </div>
+        <div className="pt-3 border-t border-edge">
+          <label className="label">Egresos (recibos en mano)</label>
+          <p className="text-xs text-muted mb-2">
+            Suma los recibos de gastos y retiros que tengas físicamente. El sistema la cruza contra lo que quedó
+            registrado en el turno.
+          </p>
+          <MoneyInput className="field" value={counts.EGRESOS} onChange={(v) => actualizar('EGRESOS', v)} />
+        </div>
+        <button
+          type="button"
+          onClick={onAgregarEgreso}
+          className="text-xs font-semibold text-muted hover:text-amberText flex items-center gap-1.5"
+        >
+          <Icon.plus width={13} height={13} />
+          ¿Falta un gasto o retiro por registrar? Agrégalo aquí
+        </button>
+        <div className="flex gap-3 pt-1">
+          <button onClick={onCancel} className="btn-ghost flex-1">
+            Cancelar
+          </button>
+          <button onClick={() => onContinuar(counts)} className="btn-primary flex-1">
+            Revisar cierre
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Paso 2: ahora si se ve esperado vs. contado (CuadreResumen), con los
+// descuadres resaltados si los hay, y aqui se pide el PIN que de verdad
+// cierra el turno. Volver atras no borra lo contado (ver countsDraft en
+// Caja()).
+function ConfirmarCierreModal({ counts, baseCash, sales, totalEgresos, onAtras, onCancel, onConfirm, onAgregarEgreso }) {
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+  } = usePinVerificado()
   const [saving, setSaving] = useState(false)
-  const completo = METHODS.every((m) => counts[m.key] !== '') && pin.length === PIN_LENGTH
+
+  // Guarda defensiva: entre el click en "Cerrar turno" y que el padre
+  // desmonte este modal (ver cerrarTurno en Caja()), puede colarse un render
+  // con counts/sales ya en su valor post-cierre. No hay nada util que mostrar
+  // ahi, mejor no reventar. Va despues de los hooks: nunca se saltan.
+  if (!counts || !sales) return null
+
+  const comparacion = [
+    ...METHODS.map((m) => {
+      const expected = esperadoPorMetodo(m.key, { baseCash, sales, totalEgresos })
+      const counted = Number(counts[m.key]) || 0
+      return { method: m.key, expected, counted, difference: counted - expected }
+    }),
+    {
+      method: 'EGRESOS',
+      expected: totalEgresos,
+      counted: Number(counts.EGRESOS) || 0,
+      difference: (Number(counts.EGRESOS) || 0) - totalEgresos,
+    },
+  ]
+  const hayDescuadre = comparacion.some((c) => c.difference !== 0)
 
   async function confirmar() {
     setSaving(true)
     try {
-      await onConfirm(Object.fromEntries(METHODS.map((m) => [m.key, Number(counts[m.key]) || 0])), pin)
+      await onConfirm(Object.fromEntries(comparacion.map((c) => [c.method, c.counted])), pin)
     } finally {
       setSaving(false)
     }
@@ -883,60 +1266,43 @@ function CuadreModal({ onCancel, onConfirm }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-md p-5 space-y-4">
-        <h2 className="text-lg font-bold">Cuadre de caja</h2>
-        <p className="text-sm text-muted">
-          Cuenta cada medio de pago tal cual lo tienes, sin mirar lo esperado. El sistema calcula la diferencia después
-          de que confirmes.
-        </p>
-        <div className="space-y-3">
-          {METHODS.map((m) => (
-            <div key={m.key}>
-              <label className="label">{m.label}</label>
-              <MoneyInput
-                className="field"
-                value={counts[m.key]}
-                onChange={(v) => setCounts((prev) => ({ ...prev, [m.key]: v }))}
-              />
-            </div>
-          ))}
-        </div>
-        <div>
-          <label className="label text-center">PIN de quien cierra</label>
-          <PinInput value={pin} onChange={setPin} />
-        </div>
+        <h2 className="text-lg font-bold">Confirmar cierre de turno</h2>
+        {hayDescuadre ? (
+          <p className="text-sm font-semibold text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+            Hay descuadres entre lo esperado y lo contado. Revísalos antes de cerrar.
+          </p>
+        ) : (
+          <p className="text-sm font-semibold text-libre border border-libre/30 bg-libre/10 rounded-xl px-3 py-2.5">
+            Todo cuadrado, sin diferencias.
+          </p>
+        )}
+        <CuadreResumen counts={comparacion} />
+        <button
+          type="button"
+          onClick={onAgregarEgreso}
+          className="text-xs font-semibold text-muted hover:text-amberText flex items-center gap-1.5"
+        >
+          <Icon.plus width={13} height={13} />
+          ¿Falta un gasto o retiro por registrar? Agrégalo aquí
+        </button>
+        <PinField
+          pin={pin}
+          onChange={setPin}
+          verificando={verificandoPin}
+          error={pinError}
+          bloqueado={pinBloqueado}
+          segundosRestantes={pinSegundosRestantes}
+          label="PIN de quien cierra"
+        />
         <div className="flex gap-3 pt-1">
-          <button onClick={onCancel} className="btn-ghost flex-1">
-            Cancelar
+          <button onClick={onAtras} className="btn-ghost flex-1">
+            Atrás
           </button>
-          <button onClick={confirmar} disabled={!completo || saving} className="btn-primary flex-1">
+          <button onClick={confirmar} disabled={!pinValido || saving} className="btn-primary flex-1">
             {saving ? 'Cerrando…' : 'Cerrar turno'}
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-function ResumenCierreModal({ resultado, onCerrar }) {
-  const counts = resultado.counts || []
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <section className="card w-full max-w-md p-5 space-y-4">
-        <div>
-          <h2 className="font-semibold mb-1">Turno cerrado</h2>
-          <p className="text-sm text-muted">
-            Cerró {resultado.closedBy?.name} · {formatFechaCorta(resultado.closedAt)} {formatHora(resultado.closedAt)}
-          </p>
-        </div>
-        <div className="flex items-center justify-between pb-1 border-b border-edge">
-          <span className="text-sm text-muted">Total vendido</span>
-          <span className="text-lg font-bold text-amber">{money(resultado.sales?.totalVentas || 0)}</span>
-        </div>
-        <CuadreResumen counts={counts} />
-        <button onClick={onCerrar} className="btn-primary w-full">
-          Entendido
-        </button>
-      </section>
     </div>
   )
 }
@@ -949,6 +1315,10 @@ function diffColor(diff) {
 function formatFechaCorta(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleDateString('es-CO', { weekday: 'short', day: '2-digit', month: 'short' })
+}
+
+function formatFechaHora(iso) {
+  return `${formatFechaCorta(iso)} ${formatHora(iso)}`
 }
 
 function formatHora(iso) {

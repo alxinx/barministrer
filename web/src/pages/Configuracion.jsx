@@ -5,7 +5,7 @@ const SECTORES = [
   {
     to: '/configuracion/datos',
     icon: Icon.gear,
-    titulo: 'Datos del bar',
+    titulo: 'Datos del negocio',
     descripcion: 'Nombre, logo, dirección y datos tributarios para la factura.',
   },
   {
@@ -13,6 +13,12 @@ const SECTORES = [
     icon: Icon.crown,
     titulo: 'Permisos',
     descripcion: 'Dale a cajero acceso puntual a algo que hoy es solo tuyo.',
+  },
+  {
+    to: '/configuracion/implementacion',
+    icon: Icon.box,
+    titulo: 'Implementación',
+    descripcion: 'Carga masiva de insumos y productos desde un Excel.',
   },
 ]
 
@@ -34,7 +40,7 @@ export default function Configuracion() {
             onClick={() => navigate(s.to)}
             className="card p-5 text-left hover:border-amber/50 transition-colors flex flex-col gap-3"
           >
-            <span className="w-11 h-11 rounded-xl bg-raised border border-edge grid place-items-center text-amber shrink-0">
+            <span className="w-11 h-11 rounded-xl bg-raised border border-edge grid place-items-center text-amberText shrink-0">
               <s.icon width={20} height={20} />
             </span>
             <div>

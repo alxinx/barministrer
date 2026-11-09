@@ -8,3 +8,39 @@ export const METHODS = [
 ]
 
 export const METHOD_LABEL = Object.fromEntries(METHODS.map((m) => [m.key, m.label]))
+// No es un medio de pago (por eso no vive en METHODS: rompería las tarjetas
+// de ventas por medio, el selector de cierre de cuenta, etc.), pero
+// comparte el mismo renglón "esperado vs. contado" del cuadre de caja --
+// ver ConfirmarCierreModal en Caja.jsx y POST /shifts/:id/close.
+METHOD_LABEL.EGRESOS = 'Egresos (recibos)'
+
+// Mismo calculo que el servidor al cerrar turno (POST /shifts/:id/close): solo
+// para mostrarle al operador un preview antes de cerrar -- el valor que manda
+// es el que recalcula el servidor en la misma transaccion del cierre.
+export function esperadoPorMetodo(method, { baseCash, sales, totalEgresos }) {
+  const recibido = (sales.byMethod?.[method] || 0) + (sales.abonos?.byMethod?.[method] || 0)
+  return method === 'EFECTIVO' ? Number(baseCash) + recibido - totalEgresos : recibido
+}
+
+const TIPO_METODO = { BANCO: 'TRANSFERENCIA', BILLETERA: 'NEQUI' }
+
+// Sustituye las opciones genericas TRANSFERENCIA/NEQUI por una opcion por
+// cada cuenta real de ese tipo en el modulo de Cajas y bancos (ver
+// useCuentasPago), con su propio nombre y su id -- asi el operador ve
+// "Bancolombia ahorros" en vez de "Transferencia" y ese pago queda ligado a
+// la cuenta real. Sin cuentas de un tipo, se deja la opcion generica de
+// siempre; EFECTIVO/DATAFONO/CREDITO nunca cambian. Compartido entre el
+// selector de cierre de cuenta (su propia lista, con CREDITO) y el de abono
+// a fiado (METHODS, sin CREDITO).
+export function conCuentasPago(methods, cuentas = []) {
+  const porMetodo = {}
+  for (const c of cuentas) {
+    const metodo = TIPO_METODO[c.tipo]
+    if (metodo) (porMetodo[metodo] ??= []).push(c)
+  }
+  return methods.flatMap((m) => {
+    const cuentasDelMetodo = porMetodo[m.key]
+    if (!cuentasDelMetodo?.length) return [m]
+    return cuentasDelMetodo.map((c) => ({ ...m, label: c.nombre, cuentaFinancieraId: c.id }))
+  })
+}

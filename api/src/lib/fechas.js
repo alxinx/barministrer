@@ -5,6 +5,35 @@ export function diaLocal(fecha, timezone) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(fecha)
 }
 
+export function sumarDias(fechaStr, delta) {
+  return new Date(Date.parse(`${fechaStr}T00:00:00Z`) + delta * 86400000).toISOString().slice(0, 10)
+}
+
+function minutosDelDiaLocal(fecha, timezone) {
+  const partes = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(fecha)
+  const hora = Number(partes.find((p) => p.type === 'hour').value)
+  const minuto = Number(partes.find((p) => p.type === 'minute').value)
+  return hora * 60 + minuto
+}
+
+export function turnoEnRango(shift, desdeStr, hastaStr, timezone) {
+  const diaApertura = diaLocal(shift.openedAt, timezone)
+  if (diaApertura >= desdeStr && diaApertura <= hastaStr) return true
+
+  if (!shift.closedAt || diaApertura !== sumarDias(desdeStr, -1)) return false
+  const diaCierre = diaLocal(shift.closedAt, timezone)
+  return (
+    diaCierre >= desdeStr &&
+    diaCierre <= hastaStr &&
+    minutosDelDiaLocal(shift.closedAt, timezone) < 6 * 60
+  )
+}
+
 // Las ultimas N fechas (como strings YYYY-MM-DD, de la mas vieja a la mas
 // nueva) en el calendario del tenant, mas un rango [desde, hasta] para
 // consultar en la base de datos con colchon de 1 dia a cada lado: evita

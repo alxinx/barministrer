@@ -14,7 +14,83 @@
   src: url('/fonts/archivo-variable.woff2') format('woff2-variations');
 }
 
+/* Tipografias del login (ver Login.jsx): self-hosteadas igual que Archivo.
+   Son variables (un solo archivo cubre todo el rango de pesos), y quedan
+   disponibles globalmente aunque solo el login las use. */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/plus-jakarta-sans-variable.woff2') format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-variable.woff2') format('woff2-variations');
+}
+
 @layer base {
+  /* Oscuro (default) y sepia: mismos nombres de token, valores distintos.
+     "night" y "amber" se declaran una sola vez aqui y nunca se repiten en el
+     bloque [data-theme='sepia']: al no pisarse, quedan fijos en ambos temas
+     (ver tailwind.config.js). El resto cambia cuando el tenant elige sepia
+     desde Configuracion > Datos del negocio (AuthContext pone data-theme en
+     <html> segun tenant.theme). */
+  :root {
+    --color-night: 14 12 19; /* #0E0C13, fijo en ambos temas */
+    --color-amber: 232 163 61; /* #E8A33D, fijo en ambos temas */
+    --color-canvas: 14 12 19; /* #0E0C13 */
+    --color-surface: 23 20 32; /* #171420 */
+    --color-raised: 33 29 44; /* #211D2C */
+    --color-edge: 46 41 57; /* #2E2939 */
+    --color-ink: 242 239 232; /* #F2EFE8 */
+    --color-muted: 154 147 168; /* #9A93A8 */
+    --color-amber-text: 232 163 61; /* #E8A33D, igual al amber fijo */
+    --color-amber-dim: 138 99 33; /* #8A6321 */
+    --color-libre: 95 209 140; /* #5FD18C */
+    --color-ocupada: 224 82 82; /* #E05252 */
+    --color-reservada: 232 163 61; /* #E8A33D */
+    /* Menu lateral: en oscuro es igual a surface/raised/edge/ink/muted de
+       arriba (sin cambio visual), para que sepia pueda pisarlo aparte sin
+       afectar el resto de tarjetas de la pantalla (ver Shell.jsx). */
+    --color-sidebar: 23 20 32; /* #171420, igual a surface */
+    --color-sidebar-raised: 33 29 44; /* #211D2C, igual a raised */
+    --color-sidebar-edge: 46 41 57; /* #2E2939, igual a edge */
+    --color-sidebar-ink: 242 239 232; /* #F2EFE8, igual a ink */
+    --color-sidebar-muted: 154 147 168; /* #9A93A8, igual a muted */
+    --color-sidebar-ocupada: 224 82 82; /* #E05252, igual a ocupada */
+  }
+
+  :root[data-theme='sepia'] {
+    --color-canvas: 238 227 209; /* #EEE3D1 */
+    --color-surface: 248 241 228; /* #F8F1E4 */
+    --color-raised: 255 251 242; /* #FFFBF2 */
+    --color-edge: 185 163 120; /* #B9A378 */
+    --color-ink: 36 26 14; /* #241A0E */
+    --color-muted: 107 90 66; /* #6B5A42 */
+    /* Mismo tono de amber que el relleno, pero oscurecido: el E8A33D
+       original no llega a 4.5:1 como texto sobre el crema de este tema. */
+    --color-amber-text: 138 78 16; /* #8A4E10 */
+    --color-amber-dim: 107 67 16; /* #6B4310 */
+    --color-libre: 31 92 49; /* #1F5C31 */
+    --color-ocupada: 166 50 31; /* #A6321F */
+    --color-reservada: 138 78 16; /* #8A4E10, igual al amber-text */
+    /* Pedido puntual: el menu lateral se queda oscuro aunque el resto del
+       tema sea claro. Texto/iconos reusan el mismo ink/muted claros que ya
+       usa el tema oscuro -- ya estan probados contra un fondo casi negro
+       como este, no hace falta inventar un tercer par de colores. */
+    --color-sidebar: 33 32 29; /* #21201D */
+    --color-sidebar-raised: 43 42 38; /* #2B2A26, un poco mas claro para hover */
+    --color-sidebar-edge: 56 54 47; /* #38362F */
+    --color-sidebar-ink: 242 239 232; /* #F2EFE8 */
+    --color-sidebar-muted: 154 147 168; /* #9A93A8 */
+    --color-sidebar-ocupada: 224 82 82; /* #E05252, la vivida de oscuro, no la opaca de sepia */
+  }
+
   html,
   body,
   #root {
@@ -22,7 +98,7 @@
   }
 
   body {
-    @apply bg-night text-ink font-sans antialiased;
+    @apply bg-canvas text-ink font-sans antialiased;
     /* Tabular para que los totales no bailen al cambiar de cifra */
     font-variant-numeric: tabular-nums;
   }
@@ -42,6 +118,17 @@
 }
 
 @layer components {
+  /* Solo en sepia: el sidebar oscuro sobre fondo claro necesita leerse
+     elevado (dos capas -- una sombra cercana y marcada, otra mas lejana y
+     difusa -- es lo que de verdad lee como "levantado", una sola sombra
+     plana se ve pegada). En oscuro no hace falta: ahi ya separa el borde
+     sobre un fondo igual de oscuro, una sombra casi no se nota. */
+  :root[data-theme='sepia'] .sidebar-panel {
+    box-shadow:
+      3px 0 8px -2px rgb(33 32 29 / 0.35),
+      10px 0 24px -6px rgb(33 32 29 / 0.25);
+  }
+
   .card {
     @apply bg-surface border border-edge rounded-2xl;
   }
@@ -69,6 +156,45 @@
   .label {
     @apply block text-sm text-muted mb-1.5;
   }
+}
+
+/* Login (ver Login.jsx): mundo visual propio, fuera de los tokens del POS.
+   El patron de puntos y el glow ambiental se quedan aqui y no como
+   utilidades genericas para no filtrar esta estetica al resto de la app. */
+.login-shell {
+  background-color: #090d16;
+}
+
+.login-shell.login-light {
+  background-color: #f7f9fc;
+  color: #0f172a;
+}
+
+.login-pos-pattern {
+  background-image: radial-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.login-light.login-pos-pattern {
+  background-image: radial-gradient(rgba(100, 116, 139, 0.11) 0.75px, transparent 0.75px);
+  background-size: 24px 24px;
+}
+
+.login-ambient-glow {
+  background: radial-gradient(circle, rgba(132, 204, 22, 0.12) 0%, rgba(15, 23, 42, 0) 70%);
+}
+
+.login-light-glow {
+  background: radial-gradient(circle, rgba(132, 204, 22, 0.1) 0%, rgba(247, 249, 252, 0) 70%);
+}
+
+.login-shell ::selection {
+  background-color: rgba(132, 204, 22, 0.3);
+}
+
+.login-light ::selection {
+  color: #0f172a;
+  background-color: rgba(132, 204, 22, 0.32);
 }
 
 @layer utilities {
@@ -213,6 +339,27 @@
     animation: pre-pedido-estroboscopico 0.5s steps(1, end) infinite;
   }
 
+  /* Minuto de gracia para devolver sin justificar (ver DevolverModal): una
+     barrita que se achica de llena a vacia en 60s, mismo truco del
+     animation-delay negativo que el crawl de pre-pedido -- el navegador
+     sigue el conteo solo, sin que React tenga que re-renderizar cada
+     segundo. forwards la deja en 0 (invisible) una vez se acaba el minuto,
+     y si el item ya nacio con mas de 60s de antiguedad (delay mas negativo
+     que la duracion), arranca directo en ese final: nunca "reaparece" llena
+     por error. */
+  @keyframes devolucion-gracia {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+  .animate-devolucion-gracia {
+    animation: devolucion-gracia 60s linear forwards;
+    transform-origin: left;
+  }
+
   /* Vuelo del producto tocado hasta la tarjeta de "Cuenta de la mesa": los
      puntos de salida y llegada cambian en cada toque (posicion real en
      pantalla), asi que van como variables inline en vez de keyframes fijos;
@@ -268,6 +415,10 @@
     transition-duration: 0.01ms !important;
   }
 
+  .transition-\[transform\] {
+    transition: none !important;
+  }
+
   /* Las de arriba son "infinite": forzar su duracion a 0.01ms las deja
      parpadeando sin parar en vez de quietas. Se apagan del todo; el resaltado
      estatico (borde/fondo ambar) que ya tienen se queda como aviso. */
@@ -286,6 +437,14 @@
     background-color: rgba(224, 82, 82, 0.55) !important;
     border-color: #e05252 !important;
     box-shadow: none !important;
+  }
+
+  /* No hay forma correcta de "congelar" esto en su punto exacto sin el
+     reloj animado (daria una lectura falsa, llena o vacia, segun cuando se
+     haya montado la pagina): se oculta del todo. El boton "Devolver" sigue
+     ahi iguales; el servidor decide igual si hace falta PIN y motivo. */
+  .animate-devolucion-gracia {
+    display: none !important;
   }
 }
 
@@ -316,48 +475,51 @@
 /* Calendario de rango de fechas (react-day-picker): la libreria trae su
    propio CSS pensado para fondo claro, asi que se pisa con los mismos
    tokens del resto de la app en vez de dejarlo con su tema por defecto. */
+/* La libreria trae su propio CSS pensado para fondo claro; se pisa con los
+   tokens del tema activo (var() anidado en una custom property es CSS
+   valido) para que el calendario tambien cambie con sepia/oscuro. */
 .rdp-licorplus {
   --rdp-cell-size: 36px;
-  --rdp-accent-color: #e8a33d;
-  --rdp-background-color: #211d2c;
-  --rdp-accent-color-dark: #e8a33d;
-  --rdp-background-color-dark: #211d2c;
-  --rdp-outline: 2px solid #e8a33d;
-  --rdp-outline-selected: 2px solid #e8a33d;
-  --rdp-selected-color: #0e0c13;
+  --rdp-accent-color: rgb(var(--color-amber));
+  --rdp-background-color: rgb(var(--color-raised));
+  --rdp-accent-color-dark: rgb(var(--color-amber));
+  --rdp-background-color-dark: rgb(var(--color-raised));
+  --rdp-outline: 2px solid rgb(var(--color-amber));
+  --rdp-outline-selected: 2px solid rgb(var(--color-amber));
+  --rdp-selected-color: rgb(var(--color-night));
   margin: 0;
 }
 .rdp-licorplus .rdp-caption_label,
 .rdp-licorplus .rdp-day {
-  color: #f2efe8;
+  color: rgb(var(--color-ink));
 }
 .rdp-licorplus .rdp-head_cell {
-  color: #9a93a8;
+  color: rgb(var(--color-muted));
   font-weight: 600;
   text-transform: capitalize;
 }
 .rdp-licorplus .rdp-nav_button {
-  color: #9a93a8;
+  color: rgb(var(--color-muted));
 }
 .rdp-licorplus .rdp-nav_button:hover {
-  color: #f2efe8;
-  background-color: #211d2c;
+  color: rgb(var(--color-ink));
+  background-color: rgb(var(--color-raised));
 }
 .rdp-licorplus .rdp-day_range_middle {
-  background-color: rgba(232, 163, 61, 0.18);
-  color: #f2efe8;
+  background-color: rgb(var(--color-amber) / 0.18);
+  color: rgb(var(--color-ink));
 }
 .rdp-licorplus .rdp-day_range_start,
 .rdp-licorplus .rdp-day_range_end {
-  background-color: #e8a33d;
-  color: #0e0c13;
+  background-color: rgb(var(--color-amber));
+  color: rgb(var(--color-night));
   font-weight: 700;
 }
 .rdp-licorplus .rdp-day_outside {
-  color: #9a93a8;
+  color: rgb(var(--color-muted));
   opacity: 0.4;
 }
 .rdp-licorplus .rdp-day:focus-visible {
-  outline: 2px solid #e8a33d;
+  outline: 2px solid rgb(var(--color-amber));
   outline-offset: 1px;
 }

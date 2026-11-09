@@ -13,8 +13,8 @@ export function ShiftProvider({ children }) {
   const [shift, setShift] = useState(undefined) // undefined = cargando, null = sin turno abierto
 
   const reload = useCallback(() => {
-    if (!session) return
-    api('/shifts/current').then(setShift)
+    if (!session) return Promise.resolve()
+    return api('/shifts/current').then(setShift)
   }, [session])
 
   useEffect(() => {

@@ -11,6 +11,18 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
+  // Cuenta de plataforma (fuera del grafo de tenant): se asegura siempre,
+  // igual que los usuarios de prueba, nunca se le pisa la clave si ya existe.
+  await prisma.platformAdmin.upsert({
+    where: { email: 'alejogonzalezvasquez25@gmail.com' },
+    update: {},
+    create: {
+      name: 'Alejo Gonzalez',
+      email: 'alejogonzalezvasquez25@gmail.com',
+      passwordHash: await bcrypt.hash('Etnico1984', 10),
+    },
+  })
+
   const existia = await prisma.tenant.findUnique({ where: { slug: 'bar-piloto' } })
   const tenant = await prisma.tenant.upsert({
     where: { slug: 'bar-piloto' },
@@ -19,9 +31,9 @@ async function main() {
   })
 
   const users = [
-    { name: 'Alejandro Gonzalez', email: 'admin@licorplus.co', role: 'ADMIN', pass: 'admin123' },
-    { name: 'Carolina Ruiz', email: 'caja@licorplus.co', role: 'CAJERO', pass: 'caja123' },
-    { name: 'Geraldine Mesa', email: 'mesera@licorplus.co', role: 'MESERO', pass: 'mesa123' },
+    { name: 'Alejandro Gonzalez', email: 'admin@barminister.co', role: 'ADMIN', pass: 'admin123' },
+    { name: 'Carolina Ruiz', email: 'caja@barminister.co', role: 'CAJERO', pass: 'caja123' },
+    { name: 'Geraldine Mesa', email: 'mesera@barminister.co', role: 'MESERO', pass: 'mesa123' },
   ]
   for (const u of users) {
     await prisma.user.upsert({
@@ -202,7 +214,7 @@ async function main() {
     })
   }
 
-  console.log('Seed listo. Entra con admin@licorplus.co / admin123')
+  console.log('Seed listo. Entra con admin@barminister.co / admin123')
 }
 
 main()

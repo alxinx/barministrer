@@ -8,10 +8,53 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
+// PLATAFORMA
+// Fuera del grafo multitenant a proposito: no tiene tenantId ni relacion con
+// Tenant/User. Un bug de scoping en una consulta de negocio nunca puede
+// hacer que esta cuenta aparezca mezclada con las de un bar. Solo existe
+// para crear tenants nuevos desde /plataforma, nada mas.
+// ---------------------------------------------------------------------------
+
+model PlatformAdmin {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+}
+
+enum RentalPeriod {
+  MENSUAL
+  TRIMESTRAL
+  SEMESTRAL
+  ANUAL
+}
+
+// Catalogo de planes de renta que se le cobran a un bar por usar Barminister
+// (no tiene nada que ver con lo que el bar le cobra a SUS clientes). Solo el
+// valor actual: si sube la tarifa se edita el plan, no se versiona todavia.
+model RentalPlan {
+  id        String       @id @default(uuid())
+  name      String
+  price     Int
+  period    RentalPeriod @default(MENSUAL)
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  tenants Tenant[]
+}
+
+// ---------------------------------------------------------------------------
 // MULTITENANT
 // Toda tabla de negocio lleva tenantId. El middleware de la API lo inyecta
 // desde el JWT; ninguna consulta debe recibir tenantId del cliente.
 // ---------------------------------------------------------------------------
+
+enum Theme {
+  OSCURO
+  SEPIA
+}
 
 model Tenant {
   id        String   @id @default(uuid())
@@ -21,9 +64,20 @@ model Tenant {
   currency  String   @default("COP")
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  /// Presentacion de la interfaz para todo el que entre a este tenant. OSCURO
+  /// por defecto: el bar opera de noche con poca luz. SEPIA es la alternativa
+  /// clara para quien opere de dia o con mas luz ambiente.
+  theme Theme @default(OSCURO)
   /// Ultimo numero de factura asignado. Una sola secuencia por bar, nunca se
   /// reinicia por turno ni por dia: es lo que pide un control contable serio.
   lastInvoiceNumber Int @default(0)
+
+  // Lo que ESTE bar le paga a Barminister (plataforma), no lo que el bar le
+  // cobra a sus clientes. Opcional: un bar puede existir sin plan asignado
+  // todavia (ej. recien creado, antes de negociar).
+  rentalPlanId String?
+  rentalPlan   RentalPlan? @relation(fields: [rentalPlanId], references: [id])
 
   // Datos para la factura y la marca del bar. Todos opcionales: un bar chico
   // puede no tener NIT ni logo todavia.
@@ -32,6 +86,24 @@ model Tenant {
   legalName  String? // razon social
   taxId      String? // NIT
   taxRegime  String? // regimen tributario
+
+  // Pie de pagina PROPIO del negocio en la tirilla impresa (venta, abono,
+  // egreso, merma, cierre de turno), ademas de -nunca en lugar de- la linea
+  // fija "Sistema POS · Barminister · barminister.com" (ver
+  // web/src/lib/brand.js): esa es codigo, no dato, y ningun tenant la puede
+  // editar ni quitar. Esto de aqui es opcional: horario, redes, "no se
+  // aceptan devoluciones", lo que cada bar quiera agregar desde
+  // /configuracion/datos.
+  receiptFooter String?
+
+  // Propina sugerida al cerrar cuenta (ver CerrarCuentaModal): null/0 = el
+  // bar no la usa, el switch ni aparece. propinaPorDefecto solo decide si ese
+  // switch nace prendido o apagado -- el operador lo puede cambiar siempre
+  // antes de cobrar. Pendiente de implementar: impuestos (cada tenant podra
+  // configurar el que le aplique por ley) -- la tirilla ya deja el espacio
+  // listo, pero el campo todavia no existe.
+  propinaPorcentaje Decimal? @db.Decimal(5, 2)
+  propinaPorDefecto Boolean  @default(false)
 
   // Permisos especiales: por defecto todo sigue como esta (solo ADMIN). El
   // dueno del bar los prende si quiere delegarle algo puntual al cajero.
@@ -42,10 +114,20 @@ model Tenant {
   cajeroGestionaUsuarios     Boolean @default(false)
   cajeroAplicaDescuentos     Boolean @default(false)
 
-  /// Si al agregar el ultimo producto de un pedido directo (admin) pasan 5s
-  /// sin que de clic en "Enviar pedido a la barra", se envia solo. No aplica
-  /// al pre-pedido de mesera/cajero, que siempre necesita aprobacion de otro.
-  autoEnviarPedido Boolean @default(true)
+  // Modulos activables por tenant: a diferencia de los flags cajero* de
+  // arriba (que el ADMIN del bar delega a CAJERO), estos los prende/apaga
+  // SOLO la plataforma (super admin), segun lo que ese bar pago o solicito.
+  // Nunca editable desde /configuracion del propio bar.
+  moduloCajasBancos Boolean @default(false)
+  moduloCompras     Boolean @default(false)
+
+  /// Mismo criterio que los modulos de arriba (solo plataforma lo prende,
+  /// nunca el ADMIN del bar): si este tenant puede eliminar un producto del
+  /// todo (ver Product.deletedAt) en vez de solo suspenderlo. Apagado por
+  /// defecto -- eliminar es mas dificil de deshacer que suspender (solo
+  /// plataforma puede restaurarlo, ver /plataforma/tenants/:id), asi que no
+  /// todos los bares lo necesitan prendido de entrada.
+  permiteEliminarProductos Boolean @default(false)
 
   users      User[]
   categories Category[]
@@ -62,6 +144,16 @@ model Tenant {
   orderItems     OrderItem[]
   orderPayments  OrderPayment[]
   stockMovements StockMovement[]
+  cuentasFinancieras     CuentaFinanciera[]
+  traslados              Traslado[]
+  movimientosFinancieros MovimientoFinanciero[]
+  insumoCategorias       InsumoCategoria[]
+  proveedores            Proveedor[]
+  insumos                Insumo[]
+  compras                Compra[]
+  compraPagos            CompraPago[]
+  insumoMovements        InsumoMovement[]
+  listaCompra            ListaCompraItem[]
 }
 
 enum Role {
@@ -94,6 +186,17 @@ model User {
   ordersDiscounted Order[]     @relation("OrderDiscountAppliedBy")
   itemsCreated OrderItem[] @relation("OrderItemCreatedBy")
   voidedItems  OrderItem[] @relation("OrderItemVoidedBy")
+  cuentasFinancieraCreadas      CuentaFinanciera[]
+  trasladosCreados              Traslado[]
+  movimientosFinancierosCreados MovimientoFinanciero[]
+  insumosCreados                Insumo[]
+  comprasCreadas                Compra[]      @relation("CompraCreatedBy")
+  comprasRecibidas              Compra[]      @relation("CompraRecibidaBy")
+  comprasAnuladas               Compra[]      @relation("CompraAnuladaBy")
+  compraPagosCreados            CompraPago[]
+  insumoMovementsCreados        InsumoMovement[]
+  listaCompraCreada             ListaCompraItem[]
+  productsDeleted                Product[]        @relation("ProductDeletedBy")
 
   @@index([tenantId])
 }
@@ -133,14 +236,28 @@ model Product {
   id         String      @id @default(uuid())
   tenantId   String
   categoryId String
-  name       String
-  kind       ProductKind @default(STOCK)
-  imageUrl   String? // null => se muestra nombre sobre el color de la categoria
-  active     Boolean     @default(true)
-  createdAt  DateTime    @default(now())
+  name        String
+  kind        ProductKind @default(STOCK)
+  description String? // solo se expone hoy en Recetas y preparaciones (PREPARED)
+  imageUrl    String? // null => se muestra nombre sobre el color de la categoria
+  active      Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+
+  // Eliminar (no confundir con active=false, "suspender"): desaparece del
+  // todo de /productos del tenant, incluso de la lista -- a diferencia de
+  // suspender, que solo lo saca de la venta pero lo sigue mostrando como
+  // suspendido. Nunca es un DELETE de verdad (rompería pedidos ya
+  // facturados que lo referencian, ver OrderItem): queda la fila, con quien
+  // y cuando. Solo plataforma lo ve y lo puede restaurar (ver
+  // /plataforma/tenants/:id) -- por eso no hay ruta propia del tenant para
+  // leer productos eliminados, ni siquiera ADMIN. Requiere
+  // Tenant.permiteEliminarProductos encendido.
+  deletedAt   DateTime?
+  deletedById String?
 
   tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   category  Category   @relation(fields: [categoryId], references: [id])
+  deletedBy User?      @relation("ProductDeletedBy", fields: [deletedById], references: [id])
   variants  Variant[]
   recipe    Recipe?
   asIngredientOf RecipeItem[] @relation("IngredientProduct")
@@ -160,22 +277,28 @@ model Variant {
   cost      Decimal @db.Decimal(12, 2) @default(0)
   volumeMl  Int? // obligatorio si la categoria permite venta por ml
   stock     Int     @default(0) // derivado de los movimientos; cache para el POS
+  // null = nunca se configuro, no alerta -- misma semantica que
+  // Insumo.stockMinimo (ver ese campo para el criterio completo).
+  stockMinimo Int?
   active    Boolean @default(true)
   sortOrder Int     @default(0)
 
   product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
   asIngredientOf RecipeItem[]    @relation("IngredientVariant")
   movements      StockMovement[]
+  compraItems    CompraItem[]
+  enListaCompra  ListaCompraItem[]
 
   @@unique([productId, name])
   @@index([productId])
 }
 
 enum StockMovementType {
-  PURCHASE     // entrada de inventario: compra, suma al stock
-  SALE         // se envio a la barra (pedido ACTIVE): resta al stock, puede dejarlo en negativo
-  VOID_RESTORE // se devolvio un producto ya activo: repone lo que se habia restado
-  WASTE        // merma/perdida registrada a mano: resta al stock, nunca mas de lo que hay
+  PURCHASE      // entrada de inventario: compra, suma al stock
+  PURCHASE_VOID // una Compra (ver COMPRAS) que la habia subido se anulo, resta lo que esa compra sumo
+  SALE          // se envio a la barra (pedido ACTIVE): resta al stock, puede dejarlo en negativo
+  VOID_RESTORE  // se devolvio un producto ya activo: repone lo que se habia restado
+  WASTE         // merma/perdida registrada a mano: resta al stock, nunca mas de lo que hay
 }
 
 /// Entrada de inventario: la compra por empaque (caja, canasta) se resuelve
@@ -195,9 +318,16 @@ model StockMovement {
 
   createdById String
 
-  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  createdBy User    @relation(fields: [createdById], references: [id])
+  // Si esta entrada nacio de recibir una Compra (ver COMPRAS mas abajo, un
+  // producto de consumo final -- cerveza, gaseosa, pan -- comprado junto con
+  // insumos en la misma orden), el rastro queda aqui. Null para una entrada
+  // manual desde /productos/inventario, que no pasa por Compras.
+  compraItemId String?
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variant    Variant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdBy  User        @relation(fields: [createdById], references: [id])
+  compraItem CompraItem? @relation(fields: [compraItemId], references: [id])
 
   @@index([variantId])
   @@index([tenantId])
@@ -225,18 +355,355 @@ model RecipeItem {
   id       String @id @default(uuid())
   recipeId String
 
-  // Un ingrediente es (a) ml de una botella abierta de un producto, o
-  // (b) N unidades de una presentacion sellada.
+  // Tres tipos de ingrediente posibles, segun cuando se agrego la receta:
+  // (a) ml de una botella abierta de un producto [legado, OpenContainer no
+  //     existe todavia], (b) N unidades de una presentacion sellada
+  //     [legado], (c) N unidades-de-inventario de un Insumo [actual: todo lo
+  //     que se arma desde Inventario > Recetas y preparaciones usa esto].
   sourceProductId String?
   ml              Int?
   variantId       String?
+  insumoId        String?
   qty             Int?
 
   recipe        Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   sourceProduct Product? @relation("IngredientProduct", fields: [sourceProductId], references: [id])
+  insumo        Insumo?  @relation(fields: [insumoId], references: [id])
   variant       Variant? @relation("IngredientVariant", fields: [variantId], references: [id])
 
   @@index([recipeId])
+}
+
+// ---------------------------------------------------------------------------
+// INSUMOS
+// Materia prima que se compra para preparar (jamon, pan, pimienta), separada
+// a proposito del catalogo de Productos: un insumo no se vende directo (no
+// tiene precio), vive en su PROPIA categoria (nunca se mezcla con las
+// categorias de productos) y su stock se cuenta en una unidad de inventario
+// propia (gramos, mililitros, unidades...) con conversion desde la unidad en
+// que se compra. Query: Recipe/RecipeItem todavia NO consume Insumo (solo
+// Product/Variant) -- eso se conecta en una entrega futura.
+// ---------------------------------------------------------------------------
+
+/// Categorias de insumos: lista plana (sin padre/hija, a diferencia de
+/// Category) porque el catalogo de insumos es mucho mas chico.
+model InsumoCategoria {
+  id        String  @id @default(uuid())
+  tenantId  String
+  name      String
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  insumos Insumo[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+enum TipoIdentificacion {
+  NIT
+  CEDULA
+}
+
+enum CondicionPago {
+  CONTADO
+  CREDITO
+}
+
+/// name es la razon social (se queda con ese nombre de campo: InsumoForm ya
+/// lo usa para el alta minima "solo nombre" al vuelo, que sigue funcionando
+/// igual con o sin el modulo de Compras activo). El resto de campos son
+/// opcionales a proposito: un proveedor puede nacer con solo el nombre desde
+/// Insumos y completarse despues desde /proveedores (requiere el modulo).
+model Proveedor {
+  id                   String              @id @default(uuid())
+  tenantId             String
+  name                 String
+  nombreComercial      String?
+  tipoIdentificacion   TipoIdentificacion?
+  numeroIdentificacion String?
+  contacto             String?
+  telefono             String?
+  whatsapp             String?
+  email                String?
+  direccion            String?
+  ciudad               String?
+  observaciones        String?
+  condicionPago        CondicionPago       @default(CONTADO)
+  diasCredito          Int? // solo relevante si condicionPago = CREDITO
+  active               Boolean             @default(true)
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  insumos Insumo[]
+  compras Compra[]
+
+  @@unique([tenantId, name])
+  @@unique([tenantId, numeroIdentificacion]) // MySQL permite varios NULL sin chocar
+  @@index([tenantId])
+}
+
+/// unidadInventario/unidadCompra son claves del catalogo fijo en
+/// api/src/lib/unidades.js (gramo, kilogramo, mililitro, litro, unidad). Las
+/// dos deben ser de la misma magnitud (masa, volumen o conteo); la
+/// conversion entre ellas se calcula de ese catalogo, nunca se guarda aqui.
+/// stock sube solo por una compra recibida (ver InsumoMovement) -- nunca se
+/// escribe a mano en dos lugares.
+model Insumo {
+  id               String   @id @default(uuid())
+  tenantId         String
+  categoriaId      String
+  name             String
+  codigoInterno    String?
+  description      String?
+  imageUrl         String?
+  unidadInventario String
+  unidadCompra     String
+  stock            Int      @default(0)
+  stockMinimo      Int?
+  ubicacion        String?
+  costoCompra      Decimal  @db.Decimal(12, 2) @default(0) // costo de 1 unidadCompra
+  // Caso especial: unidadCompra sin un tamano fijo real (unidad cuando cada
+  // una pesa distinto, ej. lechugas; o paquete cuando cada paquete trae
+  // distinta cantidad, ej. pan, jamon). No existe una conversion fija --
+  // asi que esto es solo un ESTIMADO (promedio de unidadInventario por
+  // unidad/paquete comprado), usado para costear la receta y sugerir el
+  // total al registrar la compra. La cantidad real de cada compra se
+  // declara aparte (ver CompraItem.cantidadInventarioReal) y es lo que de
+  // verdad mueve el stock -- este promedio nunca lo decide. Null para
+  // insumos normales (ver sinConversionFija en api/src/lib/unidades.js).
+  cantidadPromedioPorUnidad Decimal? @db.Decimal(12, 3)
+  proveedorId      String?
+  active           Boolean  @default(true)
+  createdById      String
+  createdAt        DateTime @default(now())
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoria InsumoCategoria @relation(fields: [categoriaId], references: [id])
+  proveedor Proveedor?      @relation(fields: [proveedorId], references: [id])
+  createdBy User            @relation(fields: [createdById], references: [id])
+  asIngredientOf RecipeItem[]
+  compraItems CompraItem[]
+  movimientos InsumoMovement[]
+  enListaCompra ListaCompraItem[]
+
+  @@unique([tenantId, name])
+  @@unique([tenantId, codigoInterno])
+  @@index([tenantId])
+  @@index([categoriaId])
+}
+
+// ---------------------------------------------------------------------------
+// COMPRAS (modulo activable, ver Tenant.moduloCompras)
+// Compra solo trae Insumos (materia prima de recetas), nunca el catalogo de
+// venta Product/Variant: ese sigue entrando por /productos/inventario tal
+// cual existe. Una compra nace BORRADOR (no toca stock ni plata) y solo al
+// RECIBIRLA sube el stock del insumo (convertido a su unidadInventario,
+// mismo mecanismo que unidades.js), actualiza su costo, y opcionalmente
+// registra un pago. Anularla revierte el stock, nunca la plata ya pagada.
+// ---------------------------------------------------------------------------
+
+enum CompraEstado {
+  BORRADOR
+  RECIBIDA
+  ANULADA
+}
+
+enum CompraEstadoPago {
+  PENDIENTE
+  PARCIAL
+  PAGADA
+}
+
+enum CompraPagoMetodo {
+  EFECTIVO_TURNO // sale del efectivo del turno abierto (ShiftExpense tipo RETIRO)
+  CUENTA_FINANCIERA // sale de una CAJA/BANCO/BILLETERA del modulo de Cajas y Bancos
+  // Se salda sin mover plata de ningun turno ni cuenta registrada (canje de
+  // mercancia, caja de eventos, cualquier otro arreglo que no este en el
+  // sistema). CompraPago.nota es obligatoria para este metodo: es la unica
+  // forma de saber despues de que se trato.
+  OTRO
+}
+
+/// Cabecera. subtotal/descuento/impuesto/total se recalculan siempre en el
+/// backend a partir de los items (nunca se confia en lo que mande el
+/// cliente). totalPagado es un cache derivado de CompraPago, mismo criterio
+/// que Variant.stock: se mantiene sincronizado a mano en cada ruta que lo
+/// toca, no hay recalculo automatico desde los pagos.
+model Compra {
+  id               String            @id @default(uuid())
+  tenantId         String
+  proveedorId      String
+  numeroDocumento  String?
+  fecha            DateTime          @default(now())
+  fechaVencimiento DateTime?
+  observaciones    String?
+  // Foto o PDF de la factura fisica del proveedor, en R2 (ver
+  // api/src/lib/r2.js: subirFacturaCompra). No se recomprime a webp como las
+  // fotos de producto -- es un soporte contable, no una imagen ilustrativa.
+  // Se puede adjuntar en cualquier estado, no solo mientras esta en borrador.
+  facturaUrl       String?
+  facturaNombre    String?
+  estado           CompraEstado      @default(BORRADOR)
+  estadoPago       CompraEstadoPago  @default(PENDIENTE)
+  subtotal         Decimal           @db.Decimal(12, 2) @default(0)
+  descuento        Decimal           @db.Decimal(12, 2) @default(0)
+  impuesto         Decimal           @db.Decimal(12, 2) @default(0)
+  total            Decimal           @db.Decimal(12, 2) @default(0)
+  totalPagado      Decimal           @db.Decimal(12, 2) @default(0)
+  recibidaAt       DateTime?
+  recibidaById     String?
+  anuladaAt        DateTime?
+  anuladaById      String?
+  motivoAnulacion  String?
+  createdById      String
+  createdAt        DateTime          @default(now())
+
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proveedor  Proveedor    @relation(fields: [proveedorId], references: [id])
+  items      CompraItem[]
+  pagos      CompraPago[]
+  createdBy  User         @relation("CompraCreatedBy", fields: [createdById], references: [id])
+  recibidaBy User?        @relation("CompraRecibidaBy", fields: [recibidaById], references: [id])
+  anuladaBy  User?        @relation("CompraAnuladaBy", fields: [anuladaById], references: [id])
+
+  @@unique([tenantId, proveedorId, numeroDocumento]) // NULL no choca (MySQL)
+  @@index([tenantId])
+  @@index([proveedorId])
+}
+
+/// Una linea es un insumo (materia prima de receta) O un producto de consumo
+/// final (cerveza, gaseosa, pan empacado -- lo que se vende tal cual, no
+/// entra a ninguna receta): exactamente uno de insumoId/variantId, nunca los
+/// dos ni ninguno. Mismo criterio que RecipeItem ya usa para sus tres tipos
+/// de ingrediente. Para un insumo, cantidad va en su unidadCompra (puede ser
+/// fraccionaria: 2.5 kg) y cantidadConvertida = round(cantidad *
+/// factorConversion) es lo que de verdad sube Insumo.stock. Para un
+/// producto, cantidad ya son unidades enteras (un Variant siempre se cuenta
+/// en unidades, ver CLAUDE.md) y sube Variant.stock directo, sin conversion.
+model CompraItem {
+  id                 String  @id @default(uuid())
+  compraId           String
+  insumoId           String?
+  variantId          String?
+  cantidad           Decimal @db.Decimal(12, 3)
+  precioUnitario     Decimal @db.Decimal(12, 2) // precio de 1 unidadCompra (insumo) o de 1 unidad (producto)
+  descuento          Decimal @db.Decimal(12, 2) @default(0) // valor, no porcentaje
+  porcentajeImpuesto Decimal @db.Decimal(5, 2)  @default(0) // 0 = sin IVA/exento
+  // Solo para insumos sin conversion fija (ver sinConversionFija): la
+  // cantidad REAL total que se conto o peso al recibir esta linea, en
+  // unidadInventario del insumo (ej. 1450 gramos para 3 lechugas, o 24
+  // unidades para 2 paquetes de pan). Esto -- no cantidad*promedio -- es lo
+  // que sube Insumo.stock, porque cada unidad o paquete trae distinto. Null
+  // para insumos normales (misma magnitud, conversion fija real) y para
+  // productos (variantId), que no tienen este caso especial.
+  cantidadInventarioReal Decimal? @db.Decimal(12, 3)
+  // Cuanto queda de este lote en unidadInventario del insumo (null para
+  // lineas de producto/variantId, que no usan FIFO). Arranca en la misma
+  // cantidad convertida que sube el stock al recibir, y baja a medida que
+  // una venta con receta lo consume (ver consumoInsumo.js) -- nunca sube
+  // mas alla de su valor original salvo que una devolucion reponga lo que
+  // esa venta le habia quitado. Un lote con 0 (o anulado) deja de pesar en
+  // el costo ponderado del insumo (ver recalcularCostoPonderadoInsumo).
+  cantidadRestante   Int?
+  subtotal           Decimal @db.Decimal(12, 2)
+  impuesto           Decimal @db.Decimal(12, 2) @default(0)
+  total              Decimal @db.Decimal(12, 2)
+
+  compra         Compra           @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  insumo         Insumo?          @relation(fields: [insumoId], references: [id])
+  variant        Variant?         @relation(fields: [variantId], references: [id])
+  movimientos    InsumoMovement[]
+  movimientosStock StockMovement[]
+
+  @@index([compraId])
+  @@index([insumoId])
+  @@index([variantId])
+}
+
+/// Un pago o abono sobre una compra. Exactamente uno de los dos links de
+/// abajo, o ninguno si quedo a credito sin pago inicial.
+model CompraPago {
+  id          String           @id @default(uuid())
+  tenantId    String
+  compraId    String
+  monto       Decimal          @db.Decimal(12, 2)
+  metodo      CompraPagoMetodo
+  nota        String?
+  createdAt   DateTime         @default(now())
+  createdById String
+
+  shiftExpenseId String? @unique // efectivo del turno abierto (ShiftExpense tipo RETIRO)
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  compra       Compra        @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  createdBy    User          @relation(fields: [createdById], references: [id])
+  shiftExpense ShiftExpense? @relation(fields: [shiftExpenseId], references: [id])
+  // Salida de una CuentaFinanciera (modulo Cajas y Bancos): el FK vive en
+  // MovimientoFinanciero.compraPagoId (igual patron que orderPayment/
+  // customerPayment), esta es solo la back-relation que Prisma exige.
+  movimientoFinanciero MovimientoFinanciero?
+
+  @@index([compraId])
+  @@index([tenantId])
+}
+
+enum InsumoMovementType {
+  PURCHASE      // entrada por compra recibida, suma al stock
+  PURCHASE_VOID // compra anulada, resta lo que esa compra habia sumado
+  SALE          // se consumio en una receta vendida (pedido ACTIVE): resta al stock
+  SALE_VOID     // se devolvio un producto ya activo: repone lo que esa venta habia restado
+}
+
+/// Primer movimiento real sobre Insumo.stock (antes de Compras no existia
+/// ninguno). Misma filosofia que StockMovement: append-only, qty siempre
+/// positivo, el signo lo da `type`, una correccion es un movimiento mas,
+/// nunca se edita ni se borra este.
+model InsumoMovement {
+  id           String             @id @default(uuid())
+  tenantId     String
+  insumoId     String
+  type         InsumoMovementType
+  qty          Int
+  compraItemId String?
+  note         String?
+  createdAt    DateTime           @default(now())
+  createdById  String
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  insumo     Insumo      @relation(fields: [insumoId], references: [id])
+  compraItem CompraItem? @relation(fields: [compraItemId], references: [id])
+  createdBy  User        @relation(fields: [createdById], references: [id])
+
+  @@index([insumoId])
+  @@index([tenantId])
+}
+
+/// "Lista de compras": marcar a mano insumos para comprar pronto (tipico
+/// desde la alerta de stock bajo en /compras, un clic sobre el insumo), para
+/// imprimirla o mandarla por WhatsApp al proveedor despues. No tiene cantidad
+/// ni precio -- es solo un recordatorio de "hay que pedir esto", no una
+/// Compra todavia (eso nace cuando de verdad se registra/recibe el pedido).
+/// Se quita a mano cuando ya se compro; nada la limpia sola.
+// Insumo (materia prima) o producto de consumo final (Variant), exactamente
+// uno de los dos -- mismo criterio polimorfico que CompraItem. Un clic
+// agrega/quita; el ticket de /compras los imprime mezclados.
+model ListaCompraItem {
+  id          String   @id @default(uuid())
+  tenantId    String
+  insumoId    String?
+  variantId   String?
+  createdAt   DateTime @default(now())
+  createdById String
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  insumo    Insumo?  @relation(fields: [insumoId], references: [id], onDelete: Cascade)
+  variant   Variant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@unique([tenantId, insumoId])
+  @@unique([tenantId, variantId])
+  @@index([tenantId])
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +872,13 @@ model ShiftExpense {
   shift        Shift  @relation(fields: [shiftId], references: [id], onDelete: Cascade)
   authorizedBy User   @relation(fields: [authorizedById], references: [id])
 
+  // Si este RETIRO nacio de pagar una compra a un proveedor en efectivo
+  // desde un turno abierto (ver modulo de Compras), el pago que lo creo --
+  // para poder reimprimir su comprobante original. El FK vive en
+  // CompraPago.shiftExpenseId; esta es solo la back-relation que Prisma
+  // exige.
+  compraPago CompraPago?
+
   @@index([shiftId])
   @@index([tenantId])
 }
@@ -486,10 +960,18 @@ model CustomerPayment {
 
   createdById String
 
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  shift     Shift?   @relation(fields: [shiftId], references: [id])
-  createdBy User     @relation(fields: [createdById], references: [id])
+  // Si el medio de pago es un banco/billetera registrado en el modulo de
+  // Cajas y bancos (ver mas abajo), este abono tambien quedo como un
+  // MovimientoFinanciero de ingreso en esa cuenta -- opcional: solo aplica
+  // con el modulo activo y una cuenta real elegida al pagar.
+  cuentaFinancieraId String?
+
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer             Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  shift                Shift?                @relation(fields: [shiftId], references: [id])
+  createdBy            User                  @relation(fields: [createdById], references: [id])
+  cuentaFinanciera     CuentaFinanciera?     @relation(fields: [cuentaFinancieraId], references: [id])
+  movimientoFinanciero MovimientoFinanciero?
 
   @@index([customerId])
   @@index([tenantId])
@@ -543,6 +1025,11 @@ model Order {
   /// mostrar valor original, descuento y valor pagado por separado.
   discountAmount     Decimal @db.Decimal(12, 2) @default(0)
   discountAppliedById String?
+
+  /// Propina sumada al total a cobrar (pesos, foto del momento del cierre --
+  /// igual que discountAmount, el % del tenant puede cambiar despues sin
+  /// alterar facturas ya cerradas). 0 = no hubo.
+  tipAmount Decimal @db.Decimal(12, 2) @default(0)
 
   openedById String
   closedById String?
@@ -613,9 +1100,139 @@ model OrderPayment {
 
   createdAt DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // Igual que en CustomerPayment: banco/billetera real elegido al cobrar,
+  // opcional (ver modulo de Cajas y bancos mas abajo).
+  cuentaFinancieraId String?
+
+  // Numero de comprobante/voucher de la transferencia (el que da el banco o
+  // la billetera al hacer el envio). Texto libre, opcional: nunca bloquea un
+  // cobro por faltar -- queda vacio si no lo dieron o no aplica (efectivo).
+  referencia String?
+
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order                Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  cuentaFinanciera     CuentaFinanciera?     @relation(fields: [cuentaFinancieraId], references: [id])
+  movimientoFinanciero MovimientoFinanciero?
 
   @@index([orderId])
+  @@index([tenantId])
+}
+
+// ---------------------------------------------------------------------------
+// CAJAS Y BANCOS (modulo activable, ver Tenant.moduloCajasBancos)
+// Caja aqui NO es la caja del turno de venta (ver Shift): es un bolsillo de
+// plata virtual con nombre propio (ej. "Caja de nomina"). El saldo nunca se
+// persiste, se calcula sumando MovimientoFinanciero (ingreso - egreso) --
+// misma regla que la disponibilidad de un producto: nunca se guarda en dos
+// lugares. Los movimientos son append-only: una correccion es un movimiento
+// mas en sentido contrario, nunca se edita ni se borra el original.
+// ---------------------------------------------------------------------------
+
+enum CuentaFinancieraTipo {
+  CAJA
+  BANCO
+  BILLETERA
+}
+
+enum MovimientoFinancieroTipo {
+  INGRESO
+  EGRESO
+}
+
+model CuentaFinanciera {
+  id       String               @id @default(uuid())
+  tenantId String
+  nombre   String
+  tipo     CuentaFinancieraTipo
+
+  /// Solo BANCO/BILLETERA: codigo del catalogo fijo (ver
+  /// api/src/lib/catalogoFinanciero.js). CAJA es virtual, sin entidad
+  /// financiera real detras.
+  codigoEntidadFinanciera String?
+
+  /// Numero real de cuenta/billetera. Obligatorio para BANCO/BILLETERA (nulo
+  /// en CAJA, que es virtual). Unico por tenant para no cargar la misma
+  /// cuenta dos veces por accidente; los NULL de las cajas no chocan entre
+  /// si (MySQL no compara NULL=NULL). Nunca editable despues de creada (ver
+  /// PATCH /cajas-bancos/cuentas/:id, solo acepta nombre/active).
+  numeroCuenta String?
+
+  active      Boolean  @default(true) // nunca se borra, se desactiva -- igual que categorias/usuarios
+  createdById String
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User   @relation(fields: [createdById], references: [id])
+
+  movimientos      MovimientoFinanciero[]
+  trasladosOrigen  Traslado[]             @relation("TrasladoOrigen")
+  trasladosDestino Traslado[]             @relation("TrasladoDestino")
+  orderPayments    OrderPayment[]
+  customerPayments CustomerPayment[]
+
+  @@unique([tenantId, nombre])
+  @@unique([tenantId, numeroCuenta])
+  @@index([tenantId])
+}
+
+/// Documento de un traslado entre dos cuentas propias del negocio. Genera
+/// siempre 2 MovimientoFinanciero (egreso en origen, ingreso en destino) en
+/// la misma transaccion.
+model Traslado {
+  id          String   @id @default(uuid())
+  tenantId    String
+  origenId    String
+  destinoId   String
+  valor       Decimal  @db.Decimal(12, 2)
+  concepto    String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  origen    CuentaFinanciera @relation("TrasladoOrigen", fields: [origenId], references: [id])
+  destino   CuentaFinanciera @relation("TrasladoDestino", fields: [destinoId], references: [id])
+  createdBy User             @relation(fields: [createdById], references: [id])
+
+  movimientos MovimientoFinanciero[]
+
+  @@index([tenantId])
+}
+
+/// Append-only a proposito (igual que StockMovement): no existe ruta
+/// PATCH/DELETE para este modelo. Para corregir un error se registra un
+/// movimiento contrario, nunca se edita el original.
+model MovimientoFinanciero {
+  id       String                    @id @default(uuid())
+  tenantId String
+  cuentaId String
+  tipo     MovimientoFinancieroTipo
+  valor    Decimal                   @db.Decimal(12, 2) // siempre positivo; el signo lo da `tipo`
+  concepto String
+
+  /// Si este movimiento es una de las 2 patas de un traslado.
+  trasladoId String?
+
+  /// Si este movimiento nacio de cobrar una venta o un abono a fiado con una
+  /// cuenta real (ver resolverCuentaPago en api/src/lib/cuentaPago.js), o de
+  /// pagarle a un proveedor desde una cuenta del modulo (ver Compras): el id
+  /// de ese pago, para poder reimprimir la factura/comprobante original en
+  /// vez de uno generico. Exactamente uno de los tres, o ninguno si es un
+  /// ingreso/egreso/traslado manual de este modulo.
+  orderPaymentId    String? @unique
+  customerPaymentId String? @unique
+  compraPagoId      String? @unique
+
+  createdById String
+  createdAt   DateTime @default(now())
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cuenta          CuentaFinanciera @relation(fields: [cuentaId], references: [id])
+  traslado        Traslado?        @relation(fields: [trasladoId], references: [id])
+  createdBy       User             @relation(fields: [createdById], references: [id])
+  orderPayment    OrderPayment?    @relation(fields: [orderPaymentId], references: [id])
+  customerPayment CustomerPayment? @relation(fields: [customerPaymentId], references: [id])
+  compraPago      CompraPago?      @relation(fields: [compraPagoId], references: [id])
+
+  @@index([cuentaId])
   @@index([tenantId])
 }

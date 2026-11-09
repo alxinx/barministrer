@@ -1,4 +1,14 @@
 /** @type {import('tailwindcss').Config} */
+
+// Cada token lee una CSS var "R G B" (ver :root y [data-theme="sepia"] en
+// index.css), para que un mismo nombre de color siga funcionando con
+// modificadores de opacidad (bg-amber/10, border-edge/60...) sin tocar cada
+// clase del proyecto al agregar el tema claro.
+function conVariable(variable) {
+  return ({ opacityValue }) =>
+    opacityValue !== undefined ? `rgb(var(${variable}) / ${opacityValue})` : `rgb(var(${variable}))`
+}
+
 export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
@@ -9,22 +19,61 @@ export default {
         nav: '900px',
       },
       colors: {
-        // Interfaz oscura: el bar opera de noche con poca luz. Una pantalla
-        // clara encandila y se lee peor a metro y medio de distancia.
-        night: '#0E0C13',
-        surface: '#171420',
-        raised: '#211D2C',
-        edge: '#2E2939',
-        ink: '#F2EFE8', // texto principal
-        muted: '#9A93A8', // texto secundario
-        amber: '#E8A33D', // accion principal: la luz del bar
-        amberDim: '#8A6321',
-        libre: '#5FD18C',
-        ocupada: '#E05252',
-        reservada: '#E8A33D',
+        // Paleta del login (ver Login.jsx): un mundo visual propio para la
+        // pantalla de acceso, separado de los tokens operativos de arriba.
+        // "lime" vive dentro de brand a proposito: Tailwind ya trae su
+        // propia escala lime (lime-400/500) y no conviene pisarla.
+        brand: {
+          navy: '#0F172A',
+          navyDark: '#090D16',
+          navyCard: '#131D31',
+          navyBorder: '#1E293B',
+          lime: '#84CC16',
+          limeHover: '#65A30D',
+          limeDim: '#4D7C0F',
+        },
+        // "night" y "amber" quedan fijos en ambos temas a proposito: night
+        // es el oscuro de contraste detras del acento (texto de boton,
+        // chips sobre fondo oscuro); amber es el relleno audaz del acento.
+        // Si cambiaran con el tema, un boton ambar con texto oscuro
+        // perderia su contraste justo en el tema donde mas se nota.
+        night: conVariable('--color-night'),
+        amber: conVariable('--color-amber'),
+        // El resto SI cambia con el tema (ver index.css).
+        // "canvas" (no "base"): Tailwind ya usa "base" como paso de su
+        // escala de tamaños de letra (text-base = 1rem). Un color con ese
+        // mismo nombre generaba una regla .text-base que le ponia color
+        // ademas de tamano a CUALQUIER texto con esa clase en todo el sitio.
+        canvas: conVariable('--color-canvas'),
+        surface: conVariable('--color-surface'),
+        raised: conVariable('--color-raised'),
+        edge: conVariable('--color-edge'),
+        ink: conVariable('--color-ink'),
+        muted: conVariable('--color-muted'),
+        // amberText: el ambar usado como texto/icono directo sobre una
+        // superficie clara. Separado de "amber" (el relleno) porque el
+        // mismo tono que se ve bien como fondo de boton no alcanza
+        // contraste 4.5:1 como texto sobre el tema sepia.
+        amberText: conVariable('--color-amber-text'),
+        amberDim: conVariable('--color-amber-dim'),
+        libre: conVariable('--color-libre'),
+        ocupada: conVariable('--color-ocupada'),
+        reservada: conVariable('--color-reservada'),
+        // El menu lateral (Shell.jsx) tiene su propio fondo, separado de
+        // "surface": en sepia se pide oscuro aunque el resto del tema sea
+        // claro, asi que no puede compartir el token que tambien pintan
+        // todas las demas tarjetas de la pantalla (ver index.css).
+        sidebar: conVariable('--color-sidebar'),
+        sidebarRaised: conVariable('--color-sidebar-raised'),
+        sidebarEdge: conVariable('--color-sidebar-edge'),
+        sidebarInk: conVariable('--color-sidebar-ink'),
+        sidebarMuted: conVariable('--color-sidebar-muted'),
+        sidebarOcupada: conVariable('--color-sidebar-ocupada'),
       },
       fontFamily: {
         sans: ['Archivo', 'system-ui', 'sans-serif'],
+        jakarta: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+        jbmono: ['"JetBrains Mono"', 'monospace'],
       },
       fontSize: {
         // Los numeros de mesa son el heroe de la pantalla: se leen de lejos.
@@ -32,6 +81,9 @@ export default {
       },
       borderRadius: {
         pill: '999px',
+      },
+      boxShadow: {
+        'panel-card': '0 20px 40px -15px rgba(0, 0, 0, 0.7)',
       },
     },
   },

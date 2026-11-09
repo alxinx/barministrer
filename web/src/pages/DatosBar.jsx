@@ -4,6 +4,8 @@ import { api } from '../lib/api'
 import { resizeLogo } from '../lib/image'
 import { Icon } from '../components/Icons'
 import { useAuth } from '../context/AuthContext'
+import { construirTicket } from '../lib/escpos'
+import * as printer from '../lib/printer'
 
 export default function DatosBar() {
   const navigate = useNavigate()
@@ -14,9 +16,60 @@ export default function DatosBar() {
   const [error, setError] = useState('')
   const [guardado, setGuardado] = useState(false)
 
+  // Estado de la impresora: es del dispositivo/navegador, no del negocio —
+  // no viaja en `tenant` ni en el PATCH de guardar() de abajo.
+  const [impresoraConectada, setImpresoraConectada] = useState(false)
+  const [emparejando, setEmparejando] = useState(false)
+  const [errorImpresora, setErrorImpresora] = useState('')
+  const [anchoPapel, setAnchoPapelState] = useState(printer.anchoColumnas())
+  const [modoSim, setModoSimState] = useState(printer.modoSimulador())
+
   useEffect(() => {
     api('/tenant').then(setTenant)
+    printer.reconectar().then(setImpresoraConectada)
   }, [])
+
+  async function emparejarImpresora() {
+    setErrorImpresora('')
+    setEmparejando(true)
+    try {
+      await printer.emparejar()
+      setImpresoraConectada(true)
+    } catch (err) {
+      setErrorImpresora(err.message)
+    } finally {
+      setEmparejando(false)
+    }
+  }
+
+  function cambiarAnchoPapel(n) {
+    printer.setAnchoColumnas(n)
+    setAnchoPapelState(n)
+  }
+
+  // Para probar todo el flujo (incluido el tramado del logo, ver
+  // ticketRaster.js) sin tener una impresora termica fisica: en vez de
+  // abrir el puerto serial, printer.js decodifica los bytes y los muestra
+  // en pantalla (ver SimuladorImpresora.jsx, montado en Shell.jsx).
+  function alternarSimulador() {
+    const nuevo = !modoSim
+    printer.setModoSimulador(nuevo)
+    setModoSimState(nuevo)
+  }
+
+  async function probarImpresora() {
+    setErrorImpresora('')
+    const ok = await printer.imprimirSilencioso(
+      construirTicket([
+        { texto: 'PRUEBA DE IMPRESIÓN', centro: true, negrita: true },
+        { texto: 'Tildes: áéíóú ñ ¿? ¡!', centro: true },
+        { raya: true },
+        { cols: ['Columna izquierda', 'Derecha'] },
+        { feed: 1 },
+      ])
+    )
+    if (!ok) setErrorImpresora('No se pudo imprimir. Revisa que la impresora siga emparejada.')
+  }
 
   function set(campo, valor) {
     setTenant((t) => ({ ...t, [campo]: valor }))
@@ -42,7 +95,7 @@ export default function DatosBar() {
   }
 
   async function guardar() {
-    if (!tenant.name.trim()) return setError('El bar necesita un nombre')
+    if (!tenant.name.trim()) return setError('El negocio necesita un nombre')
     setError('')
     setSaving(true)
     try {
@@ -54,6 +107,10 @@ export default function DatosBar() {
           legalName: tenant.legalName,
           taxId: tenant.taxId,
           taxRegime: tenant.taxRegime,
+          receiptFooter: tenant.receiptFooter,
+          theme: tenant.theme,
+          propinaPorcentaje: tenant.propinaPorcentaje,
+          propinaPorDefecto: tenant.propinaPorDefecto,
         },
       })
       await refreshSession()
@@ -81,7 +138,7 @@ export default function DatosBar() {
       </button>
 
       <header>
-        <h1 className="text-2xl font-bold">Datos del bar</h1>
+        <h1 className="text-2xl font-bold">Datos del negocio</h1>
         <p className="text-muted text-sm mt-1">
           Esto aparece en la factura y en el menú lateral. Los datos tributarios son opcionales.
         </p>
@@ -99,13 +156,11 @@ export default function DatosBar() {
           <p className="text-xs text-muted mb-2">Máximo 200×70 px. Se convierte a webp automáticamente.</p>
           <div className="flex items-center gap-4">
             <span className="w-[100px] h-[70px] rounded-xl bg-raised border border-edge grid place-items-center overflow-hidden shrink-0">
-              {tenant.logoUrl ? (
-                <img src={tenant.logoUrl} alt="" className="max-w-full max-h-full object-contain" />
-              ) : (
-                <span className="w-9 h-9 rounded-lg bg-amber grid place-items-center text-night font-extrabold text-sm">
-                  {tenant.name.slice(0, 2).toUpperCase()}
-                </span>
-              )}
+              <img
+                src={tenant.logoUrl || '/img/isotipo.webp'}
+                alt=""
+                className="max-w-full max-h-full object-contain"
+              />
             </span>
             <label className="btn-ghost cursor-pointer">
               {subiendoLogo ? 'Subiendo…' : 'Subir logo'}
@@ -115,7 +170,7 @@ export default function DatosBar() {
         </div>
 
         <div>
-          <label className="label">Nombre del bar</label>
+          <label className="label">Nombre del negocio</label>
           <input className="field" value={tenant.name} onChange={(e) => set('name', e.target.value)} />
         </div>
 
@@ -127,6 +182,122 @@ export default function DatosBar() {
             onChange={(e) => set('address', e.target.value)}
             placeholder="Opcional"
           />
+        </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Presentación</label>
+          <p className="text-xs text-muted mb-3">
+            Se aplica a todas las pantallas de este negocio, para todos los usuarios.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <TemaOpcion
+              activo={(tenant.theme || 'OSCURO') === 'OSCURO'}
+              onClick={() => set('theme', 'OSCURO')}
+              titulo="Oscura"
+              descripcion="La de siempre. Para operar de noche con poca luz."
+              swatchClase="bg-[#0E0C13]"
+              dotClase="bg-[#E8A33D]"
+              textoClase="text-[#F2EFE8]"
+            />
+            <TemaOpcion
+              activo={tenant.theme === 'SEPIA'}
+              onClick={() => set('theme', 'SEPIA')}
+              titulo="Clara (sepia)"
+              descripcion="Para operar de día o con más luz ambiente."
+              swatchClase="bg-[#EEE3D1]"
+              dotClase="bg-[#8A4E10]"
+              textoClase="text-[#241A0E]"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Impresora de tickets</label>
+          <p className="text-xs text-muted mb-3">
+            Solo para este computador: una vez emparejada, las tirillas salen directo por USB sin abrir el panel de
+            impresión del navegador, y el cajón de dinero se abre solo al cobrar en efectivo.
+          </p>
+
+          <div className="flex items-center justify-between py-2.5 border-y border-edge mb-3">
+            <div>
+              <p className="text-sm font-medium">Simular impresora</p>
+              <p className="text-xs text-muted mt-0.5">
+                Sin impresora a mano: muestra en pantalla lo que se habría impreso, en vez de mandarlo por USB.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={alternarSimulador}
+              className={`h-7 w-12 rounded-pill relative transition-colors shrink-0 ml-3 ${
+                modoSim ? 'bg-amber' : 'bg-raised border border-edge'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
+                  modoSim ? 'translate-x-5 bg-night' : 'bg-muted'
+                }`}
+              />
+            </button>
+          </div>
+
+          {!printer.disponible() && !modoSim ? (
+            <p className="text-sm text-muted">
+              Este navegador no soporta impresión directa. Usa Chrome o Edge en el computador de caja.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {!modoSim && (
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm">
+                    <span className={`w-2 h-2 rounded-full ${impresoraConectada ? 'bg-libre' : 'bg-muted'}`} />
+                    {impresoraConectada ? 'Impresora emparejada' : 'Sin emparejar'}
+                  </span>
+                  <button type="button" onClick={emparejarImpresora} disabled={emparejando} className="btn-ghost text-sm">
+                    {emparejando ? 'Abriendo selector…' : impresoraConectada ? 'Volver a emparejar' : 'Emparejar impresora'}
+                  </button>
+                </div>
+              )}
+
+              {(impresoraConectada || modoSim) && (
+                <>
+                  <div>
+                    <label className="label">Ancho del papel</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => cambiarAnchoPapel(32)}
+                        className={`btn-ghost text-sm ${anchoPapel === 32 ? 'border-amber text-ink' : ''}`}
+                      >
+                        58 mm (32 col)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => cambiarAnchoPapel(48)}
+                        className={`btn-ghost text-sm ${anchoPapel === 48 ? 'border-amber text-ink' : ''}`}
+                      >
+                        80 mm (48 col)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button type="button" onClick={probarImpresora} className="btn-ghost text-sm">
+                      Imprimir tirilla de prueba
+                    </button>
+                    <button type="button" onClick={() => printer.abrirCajon()} className="btn-ghost text-sm">
+                      Abrir cajón
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {errorImpresora && <p className="text-sm text-ocupada">{errorImpresora}</p>}
+            </div>
+          )}
         </div>
       </div>
 
@@ -160,9 +331,98 @@ export default function DatosBar() {
         </div>
       </div>
 
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Propina sugerida</label>
+          <p className="text-xs text-muted mb-3">
+            Opcional. Si la pones, al cerrar una cuenta aparece un switch para sumarla al total a cobrar. Vacío =
+            el switch ni aparece.
+          </p>
+          <div className="flex items-center gap-4">
+            <div className="w-28">
+              <label className="label text-xs">Porcentaje</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                className="field"
+                value={tenant.propinaPorcentaje ?? ''}
+                onChange={(e) => set('propinaPorcentaje', e.target.value === '' ? null : e.target.value)}
+                placeholder="Ej: 10"
+              />
+            </div>
+            <label className="flex items-center justify-between gap-3 cursor-pointer flex-1">
+              <span className="text-sm">
+                Va activada por defecto
+                <span className="block text-xs text-muted font-normal mt-0.5">
+                  El operador siempre la puede prender o apagar antes de cobrar.
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => set('propinaPorDefecto', !tenant.propinaPorDefecto)}
+                disabled={!tenant.propinaPorcentaje}
+                className={`h-7 w-12 rounded-pill relative transition-colors shrink-0 disabled:opacity-40 ${
+                  tenant.propinaPorDefecto ? 'bg-amber' : 'bg-raised border border-edge'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
+                    tenant.propinaPorDefecto ? 'translate-x-5 bg-night' : 'bg-muted'
+                  }`}
+                />
+              </button>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Pie de página de la tirilla</label>
+          <p className="text-xs text-muted mb-2">
+            Opcional. Sale al final de cada tirilla impresa (venta, abono, egreso, merma, cierre de turno), antes de
+            la línea del sistema. Ej: horario, redes, "no se aceptan devoluciones".
+          </p>
+          <textarea
+            className="field resize-none"
+            rows={2}
+            value={tenant.receiptFooter ?? ''}
+            onChange={(e) => set('receiptFooter', e.target.value)}
+            placeholder="Opcional"
+          />
+        </div>
+      </div>
+
       <button onClick={guardar} disabled={saving} className="btn-primary w-full">
         {saving ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar'}
       </button>
     </div>
+  )
+}
+
+// Los colores de la muestra van fijos con [#hex] (no con los tokens
+// ink/base/amber, que cambian con el tema activo): tienen que mostrar como
+// se ve CADA opcion de verdad, incluso la que no esta elegida todavia.
+function TemaOpcion({ activo, onClick, titulo, descripcion, swatchClase, dotClase, textoClase }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-left rounded-xl border p-3 transition-colors ${
+        activo ? 'border-amber bg-raised' : 'border-edge hover:border-muted'
+      }`}
+    >
+      <span className={`block w-full h-12 rounded-lg mb-2.5 ${swatchClase} relative overflow-hidden`}>
+        <span className={`absolute bottom-1.5 left-1.5 w-5 h-5 rounded-full ${dotClase}`} />
+        <span className={`absolute top-1.5 right-2 text-[10px] font-bold ${textoClase}`}>Aa</span>
+      </span>
+      <p className="text-sm font-semibold flex items-center gap-1.5">
+        {titulo}
+        {activo && <Icon.check width={14} height={14} className="text-amber" />}
+      </p>
+      <p className="text-xs text-muted mt-0.5">{descripcion}</p>
+    </button>
   )
 }

@@ -1,4 +1,4 @@
-# CLAUDE.md — LicorPlus
+# CLAUDE.md — Barminister
 
 POS multitenant para bares. El piloto es un bar de barrio en Medellín (15 mesas,
 3 sectores). El objetivo a mediano plazo es venderlo a varios bares, así que
@@ -28,8 +28,8 @@ web/   React + Vite + Tailwind. Páginas en src/pages, UI en src/components
 Arranque: `cp .env.example .env && docker compose up --build`.
 Web `:5173` · API `:4000` · MySQL `:3307`.
 
-Usuarios de prueba: `admin@licorplus.co`/`admin123`, `caja@licorplus.co`/`caja123`,
-`mesera@licorplus.co`/`mesa123`. PIN de todos: `12345`.
+Usuarios de prueba: `admin@barminister.co`/`admin123`, `caja@barminister.co`/`caja123`,
+`mesera@barminister.co`/`mesa123`. PIN de todos: `12345`.
 
 ## Reglas del dominio (no negociables)
 
@@ -166,7 +166,17 @@ usa hielo y el whisky no usa limón.
   autoriza. Para eventos (el artista), se abre una cuenta de cortesía con cupo
   **antes** del evento en vez de aprobar cada cerveza. El PIN no se rota por
   calendario: se cambia cuando sale un empleado o hay sospecha.
-- **Propinas:** fuera del sistema. No van en la factura.
+- **Propinas (nov-2026, reemplaza la decisión anterior de "fuera del sistema"):**
+  cada tenant configura un % sugerido y si nace activado por defecto, desde
+  `/configuracion/datos` (`Tenant.propinaPorcentaje`/`propinaPorDefecto`). En
+  `CerrarCuentaModal` aparece un switch que hereda ese "por defecto" pero el
+  operador lo puede prender/apagar antes de cobrar. Cuando está activo, se
+  calcula sobre el valor a cobrar (ya con descuento aplicado si hay) y SÍ se
+  suma al total que hay que pagar y que debe cuadrar en caja -- va en la
+  factura como una línea más (`Order.tipAmount`, foto en pesos del momento del
+  cierre, igual que `discountAmount`). No es una acción sensible: no exige PIN
+  fresco ni bloquea el código recordado, a diferencia de descuento/fiado fuera
+  de cupo/cortesía.
 - **Turnos:** el turno no es el día calendario (el viernes termina a las 3 am).
   Toda venta va atada a un turno. Cierre con base inicial, medios de pago
   separados (efectivo / Nequi / transferencia / datáfono), fiados como cuentas
@@ -280,6 +290,22 @@ El bar opera de noche con poca luz. Interfaz **oscura**, tokens en
   ADMIN real, nunca delegable (si no, un cajero podría otorgarse más acceso a
   sí mismo).
 
+## Paginación
+
+- **Todo `ORDER BY` que se pagine con `LIMIT/OFFSET` o con cursor tiene que
+  ser un orden TOTAL**: si la columna de orden admite empates (precio,
+  nombre, `createdAt` de una importación masiva), hay que cerrar con una
+  columna única -- el id -- como último criterio. Sin eso MySQL no garantiza
+  el orden de las filas empatadas entre consultas, y una misma fila sale en
+  dos páginas: en el catálogo web eso rompía el scroll infinito con
+  "Encountered two children with the same key" de React.
+- Para listados acotados por punto de venta o por catálogo (productos,
+  empleados, etc.), `OFFSET/LIMIT` es aceptable dado el volumen actual de un
+  solo negocio.
+- Para listados que puedan crecer sin límite con el tiempo (historial de
+  movimientos, compras, auditoría si se llega a implementar), preferir
+  paginación por cursor.
+
 ## Estado actual
 
 Hecho: auth con roles, aislamiento por tenant, catálogo (categorías, productos,
@@ -315,5 +341,6 @@ Pendientes conocidos:
   usuarios por app; cuota extendida exige 250k MAU) y usar una cuenta personal en
   un negocio va contra los términos. Si hay demanda, la oportunidad es una rocola
   por QR, que es lógica propia.
-- **Sin propina en factura**, sin control de hielo/limones como inventario, sin
-  cócteles preparados en v1 (por ahora solo prefabricados tipo Smirnoff Ice).
+- Sin control de hielo/limones como inventario, sin cócteles preparados en v1
+  (por ahora solo prefabricados tipo Smirnoff Ice). (La propina SÍ va en
+  factura desde nov-2026 -- ver "Propinas" en Operación, ya no aplica aquí.)

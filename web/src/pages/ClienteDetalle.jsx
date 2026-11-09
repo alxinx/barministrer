@@ -9,7 +9,8 @@ import ReciboAbonoModal from '../components/ReciboAbonoModal'
 import ConsumoDetalleModal from '../components/ConsumoDetalleModal'
 import ConsumoChart from '../components/ConsumoChart'
 import MoneyInput from '../components/MoneyInput'
-import { METHODS, METHOD_LABEL } from '../lib/paymentMethods'
+import { METHODS, METHOD_LABEL, conCuentasPago } from '../lib/paymentMethods'
+import { useCuentasPago } from '../hooks/useCuentasPago'
 
 export default function ClienteDetalle() {
   const { id } = useParams()
@@ -44,8 +45,11 @@ export default function ClienteDetalle() {
     load()
   }
 
-  async function agregarPago({ amount, method, note }) {
-    const payment = await api(`/customers/${id}/payments`, { method: 'POST', body: { amount, method, note } })
+  async function agregarPago({ amount, method, note, cuentaFinancieraId }) {
+    const payment = await api(`/customers/${id}/payments`, {
+      method: 'POST',
+      body: { amount, method, note, cuentaFinancieraId },
+    })
     setCustomer(await api(`/customers/${id}`))
     setComprobante(payment)
   }
@@ -153,7 +157,7 @@ export default function ClienteDetalle() {
           <span
             className={`text-[10px] font-bold rounded-pill px-2 py-0.5 border ${
               customer.creditEnabled
-                ? 'text-amber border-amber/40 bg-amber/10'
+                ? 'text-amberText border-amber/40 bg-amber/10'
                 : 'text-muted border-edge bg-raised'
             }`}
           >
@@ -260,7 +264,7 @@ export default function ClienteDetalle() {
                       verFactura(h.order.id)
                     }}
                     aria-label={`Ver factura de la mesa ${h.order.table.number}`}
-                    className="w-9 h-9 rounded-lg bg-raised border border-edge grid place-items-center text-muted hover:text-amber hover:border-amber/40 transition-colors shrink-0"
+                    className="w-9 h-9 rounded-lg bg-raised border border-edge grid place-items-center text-muted hover:text-amberText hover:border-amber/40 transition-colors shrink-0"
                   >
                     <Icon.receipt width={16} height={16} />
                   </button>
@@ -288,7 +292,7 @@ export default function ClienteDetalle() {
         <ReciboModal
           order={factura}
           splitCount={1}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setFactura(null)}
         />
@@ -300,7 +304,7 @@ export default function ClienteDetalle() {
         <ReciboAbonoModal
           payment={comprobante}
           customer={customer}
-          tenantName={session?.tenant?.name}
+          tenant={session?.tenant}
           autoPrint={false}
           onClose={() => setComprobante(null)}
         />
@@ -309,9 +313,19 @@ export default function ClienteDetalle() {
   )
 }
 
+// value del <select>: las opciones genericas son unicas por key, pero puede
+// haber varias cuentas reales bajo el mismo metodo (ej. dos bancos), asi que
+// el value incluye el id de la cuenta para no colisionar.
+function valorMetodo(m) {
+  return m.cuentaFinancieraId ? `${m.key}:${m.cuentaFinancieraId}` : m.key
+}
+
 function PagoForm({ onAgregar }) {
+  const cuentasPago = useCuentasPago()
+  const metodosDisponibles = conCuentasPago(METHODS, cuentasPago)
   const [amount, setAmount] = useState('')
   const [method, setMethod] = useState('EFECTIVO')
+  const [cuentaFinancieraId, setCuentaFinancieraId] = useState(undefined)
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -321,7 +335,7 @@ function PagoForm({ onAgregar }) {
     setSaving(true)
     setError('')
     try {
-      await onAgregar({ amount: Number(amount), method, note: note.trim() })
+      await onAgregar({ amount: Number(amount), method, cuentaFinancieraId, note: note.trim() })
       setAmount('')
       setNote('')
     } catch (err) {
@@ -336,9 +350,17 @@ function PagoForm({ onAgregar }) {
       {error && <p className="text-xs text-ocupada">{error}</p>}
       <div className="flex flex-wrap gap-2 items-end bg-raised border border-edge rounded-xl p-3">
         <div className="w-40">
-          <select className="field h-10" value={method} onChange={(e) => setMethod(e.target.value)}>
-            {METHODS.map((m) => (
-              <option key={m.key} value={m.key}>
+          <select
+            className="field h-10"
+            value={cuentaFinancieraId ? `${method}:${cuentaFinancieraId}` : method}
+            onChange={(e) => {
+              const [m, cId] = e.target.value.split(':')
+              setMethod(m)
+              setCuentaFinancieraId(cId || undefined)
+            }}
+          >
+            {metodosDisponibles.map((m) => (
+              <option key={valorMetodo(m)} value={valorMetodo(m)}>
                 {m.label}
               </option>
             ))}

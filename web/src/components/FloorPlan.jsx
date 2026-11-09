@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon } from './Icons'
 
 const CELL = 64 // px por celda de la cuadricula
@@ -29,9 +29,26 @@ const statusGlow = {
 // (el reflejo) sobre un degradado oscuro translucido (el cuerpo del vidrio).
 // Una sola capa de fondo, sin nodos extra, para no complicar el DOM de cada
 // mesa.
+// NOTA: Tailwind no esta generando esta clase (el gradiente de dos capas
+// separadas por coma dentro de bg-[...] choca con su parser de valores
+// arbitrarios) — getComputedStyle confirma backgroundImage:none en el
+// navegador. El efecto nunca se vio; en oscuro pasaba inadvertido porque el
+// tablero de atras ya era oscuro. No se repara aqui (fuera del alcance de
+// este cambio de tema) pero vale la pena revisarlo aparte.
 const GLASS_FILL =
   'bg-[radial-gradient(circle_at_30%_22%,rgba(255,255,255,0.16),transparent_55%),' +
   'linear-gradient(180deg,rgba(33,29,44,0.55),rgba(14,12,19,0.65))] backdrop-blur-sm'
+
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(query)
+    const onChange = (e) => setMatches(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [query])
+  return matches
+}
 
 // Mismo formato que usa el panel de la cuenta: nombre y apellido, con el
 // alias entre parentesis si tiene.
@@ -109,6 +126,20 @@ export default function FloorPlan({
     setPressingTableId(null)
   }
 
+  // Celular acostado: la altura disponible es minima (~380-430px), el plano
+  // a escala real (aspectRatio + cuadricula) queda apretado y dificil de
+  // tocar. Se cambia a una cuadricula de botones grandes, mas facil con el
+  // pulgar. Celular parado tiene el problema contrario: el plano a escala
+  // real dispersa las mesas por toda la cuadricula (asi se diseno pensando
+  // en una pantalla grande del bar) y en una pantalla angosta eso deja mucho
+  // espacio vacio entre mesas chiquitas y dificiles de tocar -- Alejo lo
+  // mostro con una captura real de un celular. Ahi se cambia a una lista a
+  // todo el ancho en vez de cuadricula. Ninguno de los dos aplica al editor
+  // de distribucion (editable=true): ahi se esta armando el plano de
+  // verdad, hace falta ver las posiciones reales.
+  const celularHorizontal = useMediaQuery('(max-height: 500px) and (orientation: landscape)')
+  const celularVertical = useMediaQuery('(max-width: 640px) and (orientation: portrait)')
+
   // Misma logica que el onContextMenu de abajo, pero sin preventDefault (no
   // hay evento nativo que cancelar: esto lo dispara un timer, no el navegador).
   function dispararPorPulsacion(t, e) {
@@ -126,6 +157,138 @@ export default function FloorPlan({
   }
 
   if (!zone) return null
+
+  // Boton de mesa para celular: mismos gestos (toque, clic largo) que el
+  // plano de verdad, solo cambia el layout entre horizontal y vertical (ver
+  // celularHorizontal/celularVertical arriba).
+  function botonMesa(t, lista) {
+    const elapsed = elapsedByTable[t.id]
+    const pendiente = pendingIds?.has(t.id)
+    const multiSel = multiSelectable && selectedIds?.has(t.id)
+    const vinculada = linkedIds?.has(t.id)
+    return (
+      <button
+        key={t.id}
+        type="button"
+        onPointerDown={(e) => {
+          if (e.pointerType !== 'touch') return
+          longPressOriginRef.current = { x: e.clientX, y: e.clientY }
+          setPressingTableId(t.id)
+          const clientX = e.clientX
+          const clientY = e.clientY
+          longPressTimerRef.current = setTimeout(() => {
+            longPressTimerRef.current = null
+            setPressingTableId(null)
+            suppressNextClickRef.current = true
+            dispararPorPulsacion(t, { clientX, clientY, preventDefault() {} })
+          }, 2000)
+        }}
+        onPointerMove={(e) => {
+          if (!longPressTimerRef.current || !longPressOriginRef.current) return
+          const dx = e.clientX - longPressOriginRef.current.x
+          const dy = e.clientY - longPressOriginRef.current.y
+          if (Math.hypot(dx, dy) > 10) cancelarPulsacion()
+        }}
+        onPointerUp={cancelarPulsacion}
+        onPointerCancel={cancelarPulsacion}
+        onPointerLeave={cancelarPulsacion}
+        onClick={(e) => {
+          if (suppressNextClickRef.current) {
+            suppressNextClickRef.current = false
+            e.preventDefault()
+            return
+          }
+          if (multiSelectable && (e.ctrlKey || e.metaKey)) {
+            onToggleSelect?.(t.id)
+            return
+          }
+          onSelect?.('table', t)
+        }}
+        onContextMenu={(e) => {
+          if (multiSelectable && selectedIds?.size >= 2 && selectedIds.has(t.id)) {
+            e.preventDefault()
+            onMultiContextMenu?.([...selectedIds], e)
+            return
+          }
+          if (!onContextMenu) return
+          e.preventDefault()
+          onContextMenu(t, e)
+        }}
+        className={`relative border-2 ${GLASS_FILL} transition-colors transition-transform ${
+          lista
+            ? 'flex items-center gap-4 rounded-2xl px-4 py-5 text-left w-full min-h-[92px]'
+            : 'flex flex-col items-center justify-center gap-1 rounded-2xl p-3 min-h-[84px]'
+        } ${
+          selectedId === t.id
+            ? 'border-amber animate-mesa-seleccionada'
+            : `${statusRing[t.status]} ${statusGlow[t.status]}`
+        } ${multiSel ? 'ring-2 ring-amber ring-offset-2 ring-offset-night' : ''} ${
+          pressingTableId === t.id ? `${lista ? 'scale-[0.98]' : 'scale-95'} border-amber` : ''
+        }`}
+      >
+        {pendiente && (
+          <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-amber border-2 border-night animate-pulse" />
+        )}
+        {vinculada && !pendiente && (
+          <span
+            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-night border border-amber/60
+                       text-amber grid place-items-center"
+            title="Fusionada temporalmente con otra mesa"
+          >
+            <Icon.link width={10} height={10} strokeWidth={2.2} />
+          </span>
+        )}
+        {lista ? (
+          <>
+            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusDot[t.status]}`} />
+            <span className={`text-2xl font-extrabold leading-none shrink-0 ${pendiente ? 'text-amber' : ''}`}>
+              {t.number}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-muted truncate">
+                {t.seats} pers.
+                {t.customer && ` · ${nombreCliente(t.customer)}`}
+              </p>
+              {elapsed && <p className="text-xs font-semibold text-reservada mt-0.5">{elapsed}</p>}
+            </div>
+            <Icon.chevronRight width={16} height={16} className="text-muted shrink-0" />
+          </>
+        ) : (
+          <>
+            <span className={`w-2 h-2 rounded-full ${statusDot[t.status]}`} />
+            <span className={`text-xl font-extrabold leading-none ${pendiente ? 'text-amber' : ''}`}>{t.number}</span>
+            <span className="text-[11px] text-muted leading-tight text-center">
+              {t.seats} pers.
+              {t.customer && ` · ${nombreCliente(t.customer)}`}
+            </span>
+            {elapsed && <span className="text-[10px] font-semibold text-reservada">{elapsed}</span>}
+          </>
+        )}
+      </button>
+    )
+  }
+
+  if (!editable && celularHorizontal) {
+    return (
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2.5">
+        {zone.tables?.map((t) => botonMesa(t, false))}
+        {!zone.tables?.length && (
+          <p className="col-span-full text-center text-sm text-muted py-8">Esta zona todavía no tiene mesas.</p>
+        )}
+      </div>
+    )
+  }
+
+  if (!editable && celularVertical) {
+    return (
+      <div className="flex flex-col gap-2.5">
+        {zone.tables?.map((t) => botonMesa(t, true))}
+        {!zone.tables?.length && (
+          <p className="text-center text-sm text-muted py-8">Esta zona todavía no tiene mesas.</p>
+        )}
+      </div>
+    )
+  }
 
   const cols = zone.gridCols
   const rows = zone.gridRows

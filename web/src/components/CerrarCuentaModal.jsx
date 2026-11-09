@@ -1,16 +1,36 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, money } from '../lib/api'
+import { useAuth } from '../context/AuthContext'
 import { Icon } from './Icons'
 import MoneyInput from './MoneyInput'
-import PinInput from './PinInput'
+import PinField from './PinField'
+import { usePinVerificado } from '../hooks/usePinVerificado'
+import { useCuentasPago } from '../hooks/useCuentasPago'
+import {
+  MAX_TRANSACCIONES_RECORDADAS,
+  activarCodigoRecordado,
+  consumirCodigoRecordado,
+  obtenerCodigoRecordado,
+  olvidarCodigoRecordado,
+} from '../lib/codigoRecordado'
 
-const METHODS = [
-  { key: 'EFECTIVO', label: 'Efectivo' },
-  { key: 'TRANSFERENCIA', label: 'Transferencia Bancolombia' },
-  { key: 'NEQUI', label: 'Nequi' },
-  { key: 'DATAFONO', label: 'Datáfono' },
-  { key: 'CREDITO', label: 'Crédito (fiado)' },
+// Tarjetas de metodo fijas (ver tarjeta "Finalizar Venta" de referencia que
+// trajo Alejo): Transferencia es una sola tarjeta que cubre banco Y
+// billetera -- cual de los dos metodos reales se manda (TRANSFERENCIA o
+// NEQUI) lo decide el pill de cuenta que se elija debajo, nunca el cajero
+// directamente. Credito solo aparece si hay cliente vinculado (ver abajo).
+const METHOD_CARDS = [
+  { key: 'EFECTIVO', label: 'Efectivo', subtitle: 'Pago físico', icon: 'cash' },
+  { key: 'TRANSFERENCIA', label: 'Transferencia', subtitle: 'Bancos y billeteras', icon: 'bank' },
+  { key: 'DATAFONO', label: 'Datáfono', subtitle: 'Pago con tarjeta', icon: 'card' },
+  { key: 'CREDITO', label: 'Crédito', subtitle: 'Fiado', icon: 'clipboard' },
 ]
+
+// La tarjeta "Transferencia" cubre tanto TRANSFERENCIA (banco) como NEQUI
+// (billetera): una fila cae bajo esa tarjeta sea cual sea el que tenga.
+function tarjetaDeMetodo(method) {
+  return method === 'NEQUI' ? 'TRANSFERENCIA' : method
+}
 
 /**
  * Cierra la cuenta: paga en uno o varios medios con cambio si es en efectivo,
@@ -23,6 +43,13 @@ const METHODS = [
  * cliente no tiene credito o este fiado deja el saldo por encima del cupo,
  * igual se puede continuar (es decision del encargado, no del codigo) pero
  * pide su PIN para que quede quien autorizo cuando se audite.
+ *
+ * Codigo de empleado: todo cierre (cobro o cortesia) lo pide. Para que no
+ * haya que teclearlo en cada mesa, se puede "recordar" por las siguientes 20
+ * veces (ver lib/codigoRecordado) -- pero descuento y fiado fuera de cupo
+ * NUNCA usan ese atajo, siempre piden el PIN de verdad: son lo bastante
+ * sensibles como para no dejarlos pasar con un codigo que pudo haber tecleado
+ * otro operador hace rato.
  */
 export default function CerrarCuentaModal({
   orderId,
@@ -32,10 +59,14 @@ export default function CerrarCuentaModal({
   puedeDescuento,
   tableLabel,
   items = [],
+  tenant,
   onClose,
   onConfirm,
 }) {
-  const metodosDisponibles = customer ? METHODS : METHODS.filter((m) => m.key !== 'CREDITO')
+  const { session } = useAuth()
+  const userId = session?.user?.id
+  const cuentasPago = useCuentasPago()
+  const tarjetasDisponibles = customer ? METHOD_CARDS : METHOD_CARDS.filter((c) => c.key !== 'CREDITO')
   const nombreCliente = customer
     ? [customer.firstName, customer.lastName].filter(Boolean).join(' ') + (customer.alias ? ` (${customer.alias})` : '')
     : null
@@ -43,16 +74,39 @@ export default function CerrarCuentaModal({
   const [desgloseAbierto, setDesgloseAbierto] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
   const [splitCount, setSplitCount] = useState(1)
-  const [rows, setRows] = useState([{ method: 'EFECTIVO', amount: String(total), tendered: '' }])
+  // Arranca vacio: ningun medio de pago queda preseleccionado, el operador
+  // elige con que se pago tocando una tarjeta (ver alternarMetodo).
+  const [rows, setRows] = useState([])
   const [clickCount, setClickCount] = useState(0)
   const [courtesy, setCourtesy] = useState(false)
-  const [totalClickCount, setTotalClickCount] = useState(0)
   const [discountOpen, setDiscountOpen] = useState(false)
   const [finalValue, setFinalValue] = useState(String(total))
   const [cost, setCost] = useState(null)
-  const [pin, setPin] = useState('')
+  const [propinaActiva, setPropinaActiva] = useState(() => Boolean(tenant?.propinaPorDefecto) && Number(tenant?.propinaPorcentaje) > 0)
+  // Solo importa cuando hay cuentas registradas: controla si se ven los
+  // pills de bancos/billeteras dentro de la propia tarjeta "Transferencia"
+  // (ver tarjetasDisponibles abajo). Sin cuentas, esa tarjeta vuelve a
+  // comportarse como una mas (prende/apaga un campo generico).
+  const [transferenciaExpandida, setTransferenciaExpandida] = useState(false)
+  const {
+    pin,
+    setPin,
+    valido: pinValido,
+    nombre: nombreVerificado,
+    verificando: verificandoPin,
+    error: pinError,
+    bloqueado: pinBloqueado,
+    segundosRestantes: pinSegundosRestantes,
+    reset: resetPin,
+  } = usePinVerificado()
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Codigo recordado para este dispositivo/operador: se relee al montar (una
+  // vez por apertura del modal basta, no cambia mientras esta abierto salvo
+  // que el propio operador lo quite con "Cambiar").
+  const [recordado, setRecordado] = useState(() => (userId ? obtenerCodigoRecordado(userId) : null))
+  const [mantenerCodigo, setMantenerCodigo] = useState(false)
 
   // El costo de la cuenta solo se necesita si de verdad se va a aplicar un
   // descuento: evita el viaje a la base de datos (recetas, presentaciones)
@@ -63,10 +117,19 @@ export default function CerrarCuentaModal({
   }, [discountOpen, orderId])
 
   const descuento = discountOpen ? total - (Number(finalValue) || 0) : 0
-  const montoACobrar = discountOpen ? Number(finalValue) || 0 : total
-  const perdida = discountOpen && cost !== null && montoACobrar < cost
+  const valorConDescuento = discountOpen ? Number(finalValue) || 0 : total
+  const perdida = discountOpen && cost !== null && valorConDescuento < cost
   const descuentoInvalido = discountOpen && (Number(finalValue) < 0 || Number(finalValue) > total)
   const hayDescuento = discountOpen && descuento > 0
+
+  // Propina: se calcula sobre el valor ya con descuento (si hay), y SI se
+  // suma a lo que hay que cobrar -- ver nota de nov-2026 en CLAUDE.md, que
+  // reemplaza la decision anterior de "propina fuera del sistema". No es
+  // courtesy porque de una cortesia no se cobra nada.
+  const porcentajePropina = Number(tenant?.propinaPorcentaje) || 0
+  const propinaDisponible = !courtesy && porcentajePropina > 0
+  const propina = propinaDisponible && propinaActiva ? Math.round((valorConDescuento * porcentajePropina) / 100) : 0
+  const montoACobrar = valorConDescuento + propina
 
   const sumaPagos = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
   const restante = montoACobrar - sumaPagos
@@ -83,16 +146,58 @@ export default function CerrarCuentaModal({
   const sinCreditoHabilitado = montoCredito > 0 && !customer?.creditEnabled
   const excedeLimiteCredito = montoCredito > 0 && limiteCredito !== null && proyectadoCredito > limiteCredito
   const necesitaAutorizarCredito = sinCreditoHabilitado || excedeLimiteCredito
-  const necesitaPin = hayDescuento || necesitaAutorizarCredito
+
+  // Descuento, fiado fuera de cupo y cortesia son lo bastante sensibles como
+  // para pedir el PIN de verdad siempre: nunca usan el codigo recordado,
+  // sin importar cuantas transacciones le queden al contador.
+  const accionSensible = hayDescuento || necesitaAutorizarCredito || courtesy
+  const puedeUsarRecordado = !accionSensible && Boolean(recordado)
 
   function setRow(i, patch) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   }
-  function addRow() {
-    setRows((prev) => [...prev, { method: 'EFECTIVO', amount: restante > 0 ? String(restante) : '', tendered: '' }])
-  }
   function removeRow(i) {
     setRows((prev) => prev.filter((_, idx) => idx !== i))
+  }
+  // Cada tarjeta es un interruptor para su campo GENERICO (sin cuenta real
+  // ligada): tocarla prende/apaga ese campo, asi que combinar efectivo +
+  // transferencia es tocar las dos tarjetas, no reemplazar una por otra.
+  // Nunca toca las filas que ya tienen una cuenta especifica elegida por
+  // pill (ver agregarFilaCuenta) -- esas se quitan una por una con su propio
+  // boton.
+  function alternarMetodo(card) {
+    // Con cuentas registradas, la tarjeta "Transferencia" no agrega nada por
+    // si sola: solo abre/cierra sus pills (ver tarjetasDisponibles abajo).
+    if (card.key === 'TRANSFERENCIA' && cuentasPago.length > 0) {
+      setTransferenciaExpandida((v) => !v)
+      return
+    }
+    const idx = rows.findIndex((r) => tarjetaDeMetodo(r.method) === card.key && !r.cuentaFinancieraId)
+    if (idx >= 0) {
+      removeRow(idx)
+    } else {
+      if (restante <= 0 && rows.length > 0) return
+      const monto = rows.length === 0 ? montoACobrar : restante > 0 ? restante : 0
+      setRows((prev) => [...prev, { method: card.key, amount: String(monto), tendered: '', referencia: '' }])
+    }
+  }
+  // Cada clic en un pill SUMA una fila nueva, nunca reemplaza una existente:
+  // un cliente puede pagar parte con Nequi, parte con una cuenta de
+  // Bancolombia y parte con otra cuenta de Bancolombia -- son 3 vouchers
+  // distintos, 3 filas distintas, aunque dos caigan en el mismo banco.
+  function agregarFilaCuenta(cuenta) {
+    if (restante <= 0 && rows.length > 0) return
+    const monto = rows.length === 0 ? montoACobrar : restante > 0 ? restante : 0
+    setRows((prev) => [
+      ...prev,
+      {
+        method: cuenta.tipo === 'BILLETERA' ? 'NEQUI' : 'TRANSFERENCIA',
+        cuentaFinancieraId: cuenta.id,
+        amount: String(monto),
+        tendered: '',
+        referencia: '',
+      },
+    ])
   }
 
   // Mientras solo haya un medio de pago, lo mas comun, se mantiene igualado
@@ -106,28 +211,54 @@ export default function CerrarCuentaModal({
 
   function alternarCourtesy() {
     setCourtesy((v) => {
-      if (!v) setDiscountOpen(false)
+      if (!v) {
+        setDiscountOpen(false)
+        setPropinaActiva(false)
+      }
       return !v
     })
   }
 
-  function alternarDescuento() {
-    setDiscountOpen((v) => {
-      if (!v) {
-        setCourtesy(false)
-        setFinalValue(String(total))
-      }
-      setPin('')
-      return !v
-    })
+  // El descuento es de un solo sentido: una vez activado no hay botón para
+  // "desactivarlo" -- para quitarlo basta volver a poner el valor a cobrar
+  // igual al total (descuento queda en 0, no exige PIN de encargado).
+  function activarDescuento() {
+    setCourtesy(false)
+    setFinalValue(String(total))
+    resetPin()
+    setDiscountOpen(true)
+  }
+
+  // El doble click nativo (dblclick) no sirve en celular: si el viewport
+  // permite zoom (y aqui lo permite), un doble tap lo usa el navegador para
+  // hacer zoom en vez de generar un evento dblclick -- nunca llega a React.
+  // Por eso se cuenta a mano contra el reloj, igual en mouse y en touch.
+  const ultimoTapRef = useRef(0)
+  function tapTotalACobrar() {
+    const ahora = Date.now()
+    const esDobleTap = ahora - ultimoTapRef.current < 400
+    ultimoTapRef.current = esDobleTap ? 0 : ahora
+    if (esDobleTap && puedeDescuento && !discountOpen) activarDescuento()
+  }
+
+  function cambiarCodigo() {
+    olvidarCodigoRecordado()
+    setRecordado(null)
+    resetPin()
   }
 
   async function confirmar() {
     setError('')
+    if (!puedeUsarRecordado && !pinValido) {
+      return setError('Escribe el código de empleado para cerrar la cuenta')
+    }
+    const pinAEnviar = puedeUsarRecordado ? recordado.pin : pin
+
     if (courtesy) {
       setSaving(true)
       try {
-        await onConfirm({ courtesy: true, splitCount: Number(splitCount) || 1 })
+        await onConfirm({ courtesy: true, splitCount: Number(splitCount) || 1, pin: pinAEnviar })
+        if (puedeUsarRecordado) consumirCodigoRecordado(userId)
       } catch (err) {
         setError(err.message)
       } finally {
@@ -142,15 +273,6 @@ export default function CerrarCuentaModal({
     if (perdida) {
       return setError('Ese descuento deja la cuenta en pérdida')
     }
-    if (necesitaPin && !pin.trim()) {
-      return setError(
-        hayDescuento && necesitaAutorizarCredito
-          ? 'El descuento y el fiado necesitan el PIN de un encargado'
-          : hayDescuento
-            ? 'El descuento necesita el PIN del encargado'
-            : 'Ese fiado necesita el PIN de un encargado para autorizarlo'
-      )
-    }
     if (restante !== 0) {
       return setError(restante > 0 ? `Faltan ${money(restante)} por asignar` : `Sobran ${money(-restante)} asignados`)
     }
@@ -162,11 +284,19 @@ export default function CerrarCuentaModal({
           method: r.method,
           amount: Number(r.amount) || 0,
           ...(r.method === 'EFECTIVO' && r.tendered ? { tendered: Number(r.tendered) } : {}),
+          ...(r.cuentaFinancieraId ? { cuentaFinancieraId: r.cuentaFinancieraId } : {}),
+          ...(r.referencia?.trim() ? { referencia: r.referencia.trim() } : {}),
         })),
         splitCount: Number(splitCount) || 1,
         ...(hayDescuento ? { discountAmount: descuento } : {}),
-        ...(necesitaPin ? { pin: pin.trim() } : {}),
+        ...(propina > 0 ? { tip: propina } : {}),
+        pin: pinAEnviar,
       })
+      if (puedeUsarRecordado) {
+        consumirCodigoRecordado(userId)
+      } else if (mantenerCodigo && !accionSensible && userId) {
+        activarCodigoRecordado(userId, pin, nombreVerificado)
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -174,11 +304,253 @@ export default function CerrarCuentaModal({
     }
   }
 
+  function etiquetaFila(r) {
+    if (r.cuentaFinancieraId) return cuentasPago.find((c) => c.id === r.cuentaFinancieraId)?.nombre || 'Transferencia'
+    return METHOD_CARDS.find((c) => c.key === tarjetaDeMetodo(r.method))?.label || r.method
+  }
+
+  const desgloseLista = itemsActivos.length > 0 && (
+    <div className="space-y-1.5">
+      {itemsActivos.map((it) => (
+        <div key={it.id} className="flex justify-between gap-2 text-sm">
+          <span className="text-ink">
+            {it.qty} × {it.name}
+            {it.variantName ? ` · ${it.variantName}` : ''}
+          </span>
+          <span className="text-muted shrink-0">{money(Number(it.price) * it.qty)}</span>
+        </div>
+      ))}
+    </div>
+  )
+
+  const panelMediosDePago = !courtesy && (
+    <div className="space-y-3">
+      <label className="label mb-0">Medios de pago</label>
+
+      {/* Cada tarjeta prende/apaga su propio campo -- tocar una segunda no
+          reemplaza la primera, las combina. Ninguna queda prendida por
+          defecto: el operador elige con que se pago. */}
+      <div className="grid grid-cols-2 gap-2">
+        {tarjetasDisponibles.map((card) => {
+          const CardIcon = Icon[card.icon]
+          const esTransferenciaConCuentas = card.key === 'TRANSFERENCIA' && cuentasPago.length > 0
+          const activa = esTransferenciaConCuentas
+            ? transferenciaExpandida || rows.some((r) => tarjetaDeMetodo(r.method) === 'TRANSFERENCIA')
+            : rows.some((r) => tarjetaDeMetodo(r.method) === card.key)
+          // Deshabilitada solo si tocarla agregaria un medio nuevo (no esta
+          // activa, no es el acordeon de transferencia) y ya no falta nada
+          // por pagar.
+          const deshabilitada = !activa && !esTransferenciaConCuentas && restante <= 0 && rows.length > 0
+
+          return (
+            <button
+              key={card.key}
+              type="button"
+              onClick={() => alternarMetodo(card)}
+              disabled={deshabilitada}
+              className={`flex items-center gap-2.5 p-2.5 rounded-xl border-2 text-left transition-colors ${
+                activa ? 'border-amber bg-amber/10' : 'border-edge bg-raised hover:border-muted'
+              } ${deshabilitada ? 'opacity-40 cursor-not-allowed' : ''}`}
+            >
+              <span
+                className={`w-8 h-8 rounded-lg grid place-items-center shrink-0 ${
+                  activa ? 'bg-amber text-night' : 'bg-night/30 text-muted'
+                }`}
+              >
+                <CardIcon width={16} height={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <p className="text-sm font-semibold truncate">{card.label}</p>
+                <p className="text-[11px] text-muted truncate">{card.subtitle}</p>
+              </span>
+              {esTransferenciaConCuentas && (
+                <Icon.chevronDown
+                  width={14}
+                  height={14}
+                  className={`shrink-0 transition-transform ${transferenciaExpandida ? 'rotate-180' : ''}`}
+                />
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* El detalle de Transferencia (pills + una linea por cuenta elegida,
+          con su monto y su comprobante juntos) vive en esta misma zona de
+          abajo, junto a los demas medios -- nunca metido entre la tarjeta de
+          Transferencia y la de Datafono en la grilla de arriba. */}
+      {cuentasPago.length > 0 &&
+        (transferenciaExpandida || rows.some((r) => tarjetaDeMetodo(r.method) === 'TRANSFERENCIA')) && (
+          <div className="bg-raised border border-edge rounded-xl p-3 space-y-2.5">
+            <p className="text-xs font-semibold text-muted">Transferencia</p>
+            <div className="flex flex-wrap gap-1.5">
+              {cuentasPago.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => agregarFilaCuenta(c)}
+                  disabled={restante <= 0 && rows.length > 0}
+                  className={`px-2.5 py-1 rounded-pill text-xs font-semibold border border-edge text-muted hover:text-ink hover:border-muted transition-colors ${
+                    restante <= 0 && rows.length > 0 ? 'opacity-40 cursor-not-allowed' : ''
+                  }`}
+                >
+                  + {c.nombre}
+                </button>
+              ))}
+            </div>
+
+            {rows.map((r, i) =>
+              tarjetaDeMetodo(r.method) !== 'TRANSFERENCIA' ? null : (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted w-20 shrink-0 truncate">
+                    {cuentasPago.find((c) => c.id === r.cuentaFinancieraId)?.nombre}
+                  </span>
+                  <MoneyInput
+                    className="field h-9 flex-1 min-w-0"
+                    value={r.amount}
+                    onChange={(v) => setRow(i, { amount: v })}
+                    placeholder="Monto"
+                  />
+                  <input
+                    className="field h-9 flex-1 min-w-0"
+                    value={r.referencia || ''}
+                    onChange={(e) => setRow(i, { referencia: e.target.value })}
+                    placeholder="Nº comprobante"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeRow(i)}
+                    aria-label="Quitar esta transferencia"
+                    className="text-muted hover:text-ocupada shrink-0"
+                  >
+                    <Icon.trash width={15} height={15} />
+                  </button>
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+      {rows.map((r, i) => {
+        // Las filas de transferencia con cuenta real ya se muestran dentro
+        // de su propia tarjeta (arriba); aqui solo van efectivo, datafono,
+        // credito, y transferencia generica (solo existe sin ningun
+        // banco/billetera registrado).
+        if (tarjetaDeMetodo(r.method) === 'TRANSFERENCIA' && cuentasPago.length > 0) return null
+        const card = METHOD_CARDS.find((c) => c.key === tarjetaDeMetodo(r.method))
+        const esTransferencia = tarjetaDeMetodo(r.method) === 'TRANSFERENCIA'
+        const cambio = r.method === 'EFECTIVO' && r.tendered ? Number(r.tendered) - Number(r.amount || 0) : 0
+        return (
+          <div key={i} className="bg-raised border border-edge rounded-xl p-3 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-muted">{card?.label}</p>
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                aria-label="Quitar este medio de pago"
+                className="text-muted hover:text-ocupada"
+              >
+                <Icon.trash width={15} height={15} />
+              </button>
+            </div>
+
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="label text-xs">{esTransferencia ? 'Monto' : 'Monto con este medio'}</label>
+                <MoneyInput className="field h-9" value={r.amount} onChange={(v) => setRow(i, { amount: v })} />
+              </div>
+              {r.method === 'EFECTIVO' && (
+                <div className="flex-1">
+                  <label className="label text-xs">Recibió en efectivo</label>
+                  <MoneyInput
+                    className="field h-9"
+                    value={r.tendered}
+                    onChange={(v) => setRow(i, { tendered: v })}
+                    placeholder="Igual al monto"
+                  />
+                </div>
+              )}
+              {esTransferencia && (
+                <div className="flex-1">
+                  <label className="label text-xs">Nº comprobante (opcional)</label>
+                  <input
+                    className="field h-9"
+                    value={r.referencia || ''}
+                    onChange={(e) => setRow(i, { referencia: e.target.value })}
+                    placeholder="Ej: 123456789"
+                  />
+                </div>
+              )}
+            </div>
+
+            {r.method === 'EFECTIVO' && (
+              <p className="text-xs text-muted">Déjalo vacío si pagó el valor exacto, sin cambio.</p>
+            )}
+            {cambio > 0 && <p className="text-sm font-semibold text-libre">Devolver {money(cambio)} de cambio</p>}
+            {r.method === 'CREDITO' && (
+              <p className="text-xs text-amberText">Se carga como deuda a {customer.firstName}, no entra a caja.</p>
+            )}
+          </div>
+        )
+      })}
+
+      <p className={`text-sm font-semibold ${rows.length === 0 ? 'text-muted' : restante === 0 ? 'text-libre' : 'text-ocupada'}`}>
+        {rows.length === 0
+          ? 'Elige con qué se pagó'
+          : restante === 0
+            ? 'Los pagos cuadran con el total'
+            : restante > 0
+              ? `Faltan ${money(restante)} por asignar`
+              : `Sobran ${money(-restante)} asignados`}
+      </p>
+
+      {!splitOpen ? (
+        <button
+          type="button"
+          onClick={() => setSplitOpen(true)}
+          className="text-xs font-semibold text-muted hover:text-ink flex items-center gap-1.5"
+        >
+          <Icon.users width={14} height={14} />
+          Dividir el comprobante entre varias personas
+        </button>
+      ) : (
+        <div className="bg-raised border border-edge rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="label mb-0">Dividir el comprobante entre</label>
+            <button
+              type="button"
+              onClick={() => {
+                setSplitOpen(false)
+                setSplitCount(1)
+              }}
+              className="text-xs text-muted hover:text-ink"
+            >
+              Quitar
+            </button>
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min="1"
+              className="field w-20 h-9"
+              value={splitCount}
+              onChange={(e) => setSplitCount(e.target.value)}
+            />
+            <span className="text-sm text-muted">personas · {money(porPersona)} c/u</span>
+          </div>
+          <p className="text-xs text-muted">
+            Solo cambia lo que imprime el comprobante, no afecta los medios de pago de arriba.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className={`card w-full max-w-md p-5 space-y-5 max-h-[90vh] overflow-y-auto transition-colors ${
+        className={`card w-full max-w-lg min-[800px]:max-w-[min(90vw,56rem)] p-5 space-y-5 max-h-[90vh] overflow-y-auto transition-colors ${
           perdida ? 'border-2 border-ocupada' : ''
         }`}
       >
@@ -187,19 +559,19 @@ export default function CerrarCuentaModal({
             Cerrar cuenta
           </h2>
           <div
-            onClick={() => !discountOpen && setTotalClickCount((c) => c + 1)}
+            onClick={tapTotalACobrar}
             className="text-right select-none cursor-default"
           >
             <p className="text-xs text-muted">{discountOpen ? 'Valor a cobrar' : 'Total a cobrar'}</p>
             {discountOpen ? (
               <MoneyInput
-                className="field h-9 w-36 text-right font-bold text-amber"
+                className="field h-9 w-36 text-right font-bold text-amberText"
                 value={finalValue}
                 onChange={setFinalValue}
                 autoFocus
               />
             ) : (
-              <p className="text-xl font-bold text-amber leading-tight">{money(total)}</p>
+              <p className="text-xl font-bold text-amberText leading-tight">{money(total)}</p>
             )}
           </div>
         </header>
@@ -212,45 +584,6 @@ export default function CerrarCuentaModal({
                 A nombre de <span className="text-ink font-semibold">{nombreCliente}</span>
               </p>
             )}
-          </div>
-        )}
-
-        {itemsActivos.length > 0 && (
-          <div>
-            <button
-              type="button"
-              onClick={() => setDesgloseAbierto((v) => !v)}
-              className="text-xs font-semibold text-muted hover:text-ink flex items-center gap-1.5"
-            >
-              <Icon.chevronDown width={14} height={14} className={desgloseAbierto ? 'rotate-180' : ''} />
-              Desglose de lo consumido
-            </button>
-            {desgloseAbierto && (
-              <div className="mt-2 bg-raised border border-edge rounded-xl p-3 space-y-1.5 max-h-40 overflow-y-auto">
-                {itemsActivos.map((it) => (
-                  <div key={it.id} className="flex justify-between gap-2 text-sm">
-                    <span className="text-ink">
-                      {it.qty} × {it.name}
-                      {it.variantName ? ` · ${it.variantName}` : ''}
-                    </span>
-                    <span className="text-muted shrink-0">{money(Number(it.price) * it.qty)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {discountOpen && (
-          <div className="bg-raised border border-edge rounded-xl p-3 space-y-1 text-sm">
-            <div className="flex justify-between text-muted">
-              <span>Valor original</span>
-              <span>{money(total)}</span>
-            </div>
-            <div className="flex justify-between text-muted">
-              <span>Descuento</span>
-              <span>{money(Math.max(0, descuento))}</span>
-            </div>
           </div>
         )}
 
@@ -272,170 +605,203 @@ export default function CerrarCuentaModal({
             {sinCreditoHabilitado
               ? `${customer.firstName} no tiene crédito habilitado.`
               : `${customer.firstName} ya superó su límite de crédito: quedaría debiendo ${money(proyectadoCredito)} de un cupo de ${money(limiteCredito)}.`}{' '}
-            Para fiarle de todos modos, un encargado tiene que autorizarlo con su PIN.
+            Para fiarle de todos modos, hace falta el PIN de un encargado (no se puede usar el código recordado).
           </p>
         )}
 
-        {necesitaPin && !perdida && !descuentoInvalido && (
-          <div>
-            <label className="label text-xs text-center">
-              PIN del encargado para autorizar{' '}
-              {hayDescuento && necesitaAutorizarCredito
-                ? 'el descuento y el fiado'
-                : hayDescuento
-                  ? 'el descuento'
-                  : 'el fiado'}
-            </label>
-            <PinInput value={pin} onChange={setPin} autoFocus />
-          </div>
-        )}
+        {/* En movil/resoluciones bajas, una sola columna de arriba hacia
+            abajo. Desde 800px, dos columnas: medios de pago a la izquierda,
+            lo que consumio el cliente a la derecha -- con un tope de ancho
+            del 90% de la pantalla para que nunca se desborde en resoluciones
+            apenas por encima de ese punto. */}
+        <div className="space-y-5 min-[800px]:space-y-0 min-[800px]:grid min-[800px]:grid-cols-2 min-[800px]:gap-6 min-[800px]:items-start">
+          <div className="order-2 min-[800px]:order-1">{panelMediosDePago}</div>
 
-        {error && (
-          <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
-            {error}
-          </p>
-        )}
-
-        {!courtesy && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="label mb-0">Medios de pago</span>
-              <button type="button" onClick={addRow} className="text-xs font-semibold text-amber flex items-center gap-1">
-                <Icon.plus width={14} height={14} /> Agregar medio
-              </button>
-            </div>
-
-            {rows.map((r, i) => {
-              const cambio = r.method === 'EFECTIVO' && r.tendered ? Number(r.tendered) - Number(r.amount || 0) : 0
-              return (
-                <div key={i} className="bg-raised border border-edge rounded-xl p-3 space-y-2.5">
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label className="label text-xs">Medio de pago</label>
-                      <select
-                        className="field h-9"
-                        value={r.method}
-                        onChange={(e) => setRow(i, { method: e.target.value, tendered: '' })}
-                      >
-                        {metodosDisponibles.map((m) => (
-                          <option key={m.key} value={m.key}>
-                            {m.label}
-                          </option>
-                        ))}
-                      </select>
+          <div className="order-1 min-[800px]:order-2 min-w-0">
+            {itemsActivos.length > 0 && (
+              <>
+                {/* Movil: lista escondida detras de un boton, para no empujar
+                    los medios de pago fuera de pantalla. Desktop: columna
+                    propia, siempre visible, no hace falta tocar nada. */}
+                <div className="min-[800px]:hidden">
+                  <button
+                    type="button"
+                    onClick={() => setDesgloseAbierto((v) => !v)}
+                    className="text-xs font-semibold text-muted hover:text-ink flex items-center gap-1.5"
+                  >
+                    <Icon.chevronDown width={14} height={14} className={desgloseAbierto ? 'rotate-180' : ''} />
+                    Desglose de lo consumido
+                  </button>
+                  {desgloseAbierto && (
+                    <div className="mt-2 bg-raised border border-edge rounded-xl p-3 max-h-40 overflow-y-auto">
+                      {desgloseLista}
                     </div>
-                    {rows.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeRow(i)}
-                        aria-label="Quitar este medio de pago"
-                        className="h-9 px-1 text-muted hover:text-ocupada"
-                      >
-                        <Icon.trash width={16} height={16} />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="label text-xs">Monto con este medio</label>
-                      <MoneyInput className="field h-9" value={r.amount} onChange={(v) => setRow(i, { amount: v })} />
-                    </div>
-                    {r.method === 'EFECTIVO' && (
-                      <div className="flex-1">
-                        <label className="label text-xs">Recibió en efectivo</label>
-                        <MoneyInput
-                          className="field h-9"
-                          value={r.tendered}
-                          onChange={(v) => setRow(i, { tendered: v })}
-                          placeholder="Igual al monto"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {r.method === 'EFECTIVO' && (
-                    <p className="text-xs text-muted">Déjalo vacío si pagó el valor exacto, sin cambio.</p>
-                  )}
-                  {cambio > 0 && (
-                    <p className="text-sm font-semibold text-libre">Devolver {money(cambio)} de cambio</p>
-                  )}
-                  {r.method === 'CREDITO' && (
-                    <p className="text-xs text-amber">Se carga como deuda a {customer.firstName}, no entra a caja.</p>
                   )}
                 </div>
-              )
-            })}
+                <div className="hidden min-[800px]:block">
+                  <label className="label mb-0">Lo que consumió</label>
+                  <div className="mt-2 bg-raised border border-edge rounded-xl p-3 max-h-[55vh] overflow-y-auto">
+                    {desgloseLista}
+                  </div>
+                </div>
+              </>
+            )}
 
-            <p className={`text-sm font-semibold ${restante === 0 ? 'text-libre' : 'text-ocupada'}`}>
-              {restante === 0
-                ? 'Los pagos cuadran con el total'
-                : restante > 0
-                  ? `Faltan ${money(restante)} por asignar`
-                  : `Sobran ${money(-restante)} asignados`}
-            </p>
-          </div>
-        )}
+            {propinaDisponible && (
+              <label className="mt-4 flex items-center justify-between gap-3 cursor-pointer">
+                <span className="text-sm">
+                  Propina ({porcentajePropina}%)
+                  <span className="block text-xs text-muted font-normal mt-0.5">Se suma al total a cobrar</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPropinaActiva((v) => !v)}
+                  className={`h-6 w-11 rounded-pill relative transition-colors shrink-0 ${
+                    propinaActiva ? 'bg-amber' : 'bg-night/30 border border-edge'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${
+                      propinaActiva ? 'translate-x-5 bg-night' : 'bg-muted'
+                    }`}
+                  />
+                </button>
+              </label>
+            )}
 
-        {courtesy && (
-          <p className="text-sm text-amber border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
-            Esta cuenta se cierra como cortesía: no se cobra nada y queda como gasto del turno ("Pago a
-            proveedor oficial").
-          </p>
-        )}
+            {(discountOpen || propina > 0) && (
+              <div className="mt-2 bg-raised border border-edge rounded-xl p-3 space-y-1 text-sm">
+                <div className="flex justify-between text-muted">
+                  <span>Subtotal</span>
+                  <span>{money(total)}</span>
+                </div>
+                {discountOpen && (
+                  <div className="flex justify-between text-muted">
+                    <span>Descuento</span>
+                    <span>-{money(Math.max(0, descuento))}</span>
+                  </div>
+                )}
+                {propina > 0 && (
+                  <div className="flex justify-between text-muted">
+                    <span>Propina</span>
+                    <span>+{money(propina)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-bold text-ink pt-1 border-t border-edge">
+                  <span>Total a pagar</span>
+                  <span>{money(montoACobrar)}</span>
+                </div>
+              </div>
+            )}
 
-        {!splitOpen ? (
-          <button
-            type="button"
-            onClick={() => setSplitOpen(true)}
-            className="text-xs font-semibold text-muted hover:text-ink flex items-center gap-1.5"
-          >
-            <Icon.users width={14} height={14} />
-            Dividir el comprobante entre varias personas
-          </button>
-        ) : (
-          <div className="bg-raised border border-edge rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="label mb-0">Dividir el comprobante entre</label>
+            {/* Distribución del dinero: debajo de lo que consumió, misma
+                columna -- no es un bloque de footer aparte. */}
+            {!courtesy && rows.length > 0 && (
+              <div className="mt-4 bg-raised border border-edge rounded-xl p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-muted">Distribución del pago</p>
+                {rows.map((r, i) => (
+                  <div key={i} className="flex justify-between text-sm">
+                    <span className="text-ink">{etiquetaFila(r)}</span>
+                    <span className="font-semibold">{money(Number(r.amount) || 0)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Código de empleado + botones: misma columna que lo que
+                consumió, no un footer aparte -- si medios de pago (columna
+                izquierda) tiene muchas filas y queda mas alta, esto no debe
+                esperar a que esa columna termine para poder verse ni para
+                poder pagar. */}
+            {courtesy && (
+              <p className="mt-4 text-sm text-amberText border border-amber/30 bg-amber/10 rounded-xl px-3 py-2.5">
+                Esta cuenta se cierra como cortesía: no se cobra nada y queda como gasto del turno ("Pago a
+                proveedor oficial").
+              </p>
+            )}
+
+            {puedeUsarRecordado ? (
+              <div className="mt-4 flex items-center justify-between gap-3 bg-raised border border-edge rounded-xl px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink truncate">Código recordado: {recordado.nombre}</p>
+                  <p className="text-xs text-muted">
+                    Quedan {recordado.remaining} de {MAX_TRANSACCIONES_RECORDADAS} cierres sin volver a pedirlo
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={cambiarCodigo}
+                  className="text-xs font-semibold text-ocupada hover:underline shrink-0"
+                >
+                  Cambiar
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2.5">
+                <PinField
+                  pin={pin}
+                  onChange={setPin}
+                  verificando={verificandoPin}
+                  error={pinError}
+                  bloqueado={pinBloqueado}
+                  segundosRestantes={pinSegundosRestantes}
+                  label={
+                    accionSensible
+                      ? `PIN del encargado para autorizar ${
+                          hayDescuento && necesitaAutorizarCredito
+                            ? 'el descuento y el fiado'
+                            : hayDescuento
+                              ? 'el descuento'
+                              : necesitaAutorizarCredito
+                                ? 'el fiado'
+                                : 'la cortesía'
+                        }`
+                      : 'Código de empleado'
+                  }
+                />
+                {!accionSensible && (
+                  <label className="flex items-center justify-between gap-3 cursor-pointer">
+                    <span className="text-xs text-muted">
+                      Mantener el código para las próximas {MAX_TRANSACCIONES_RECORDADAS} transacciones
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMantenerCodigo((v) => !v)}
+                      className={`h-6 w-11 rounded-pill relative transition-colors shrink-0 ${
+                        mantenerCodigo ? 'bg-amber' : 'bg-night/30 border border-edge'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${
+                          mantenerCodigo ? 'translate-x-5 bg-night' : 'bg-muted'
+                        }`}
+                      />
+                    </button>
+                  </label>
+                )}
+              </div>
+            )}
+
+            {error && (
+              <p className="mt-4 text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+                {error}
+              </p>
+            )}
+
+            <div className="mt-4 flex items-center gap-2">
+              <button type="button" onClick={onClose} className="btn-ghost flex-1">
+                Cancelar
+              </button>
               <button
                 type="button"
-                onClick={() => {
-                  setSplitOpen(false)
-                  setSplitCount(1)
-                }}
-                className="text-xs text-muted hover:text-ink"
+                onClick={confirmar}
+                disabled={saving || perdida || descuentoInvalido || (!puedeUsarRecordado && !pinValido)}
+                className="btn-primary flex-1"
               >
-                Quitar
+                {saving ? 'Procesando…' : courtesy ? 'Marcar como cortesía' : 'Pagar'}
               </button>
             </div>
-            <div className="flex items-center gap-3">
-              <input
-                type="number"
-                min="1"
-                className="field w-20 h-9"
-                value={splitCount}
-                onChange={(e) => setSplitCount(e.target.value)}
-              />
-              <span className="text-sm text-muted">personas · {money(porPersona)} c/u</span>
-            </div>
-            <p className="text-xs text-muted">
-              Solo cambia lo que imprime el comprobante, no afecta los medios de pago de arriba.
-            </p>
           </div>
-        )}
-
-        <div className="flex items-center gap-2 pt-1">
-          <button type="button" onClick={onClose} className="btn-ghost flex-1">
-            Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={confirmar}
-            disabled={saving || perdida || descuentoInvalido || (necesitaPin && !pin.trim())}
-            className="btn-primary flex-1"
-          >
-            {saving ? 'Procesando…' : courtesy ? 'Marcar como cortesía' : 'Pagar'}
-          </button>
         </div>
 
         {clickCount >= 3 && (
@@ -457,24 +823,6 @@ export default function CerrarCuentaModal({
           </div>
         )}
 
-        {totalClickCount >= 3 && puedeDescuento && (
-          <div className="flex items-center justify-between pt-1">
-            <span className="text-xs font-semibold text-muted">Descuento</span>
-            <button
-              type="button"
-              onClick={alternarDescuento}
-              className={`h-7 w-12 rounded-pill relative transition-colors ${
-                discountOpen ? 'bg-amber' : 'bg-raised border border-edge'
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
-                  discountOpen ? 'translate-x-5 bg-night' : 'bg-muted'
-                }`}
-              />
-            </button>
-          </div>
-        )}
       </div>
     </div>
   )
