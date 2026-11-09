@@ -14,6 +14,25 @@
   src: url('/fonts/archivo-variable.woff2') format('woff2-variations');
 }
 
+/* Tipografias del login (ver Login.jsx): self-hosteadas igual que Archivo.
+   Son variables (un solo archivo cubre todo el rango de pesos), y quedan
+   disponibles globalmente aunque solo el login las use. */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/plus-jakarta-sans-variable.woff2') format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-variable.woff2') format('woff2-variations');
+}
+
 @layer base {
   /* Oscuro (default) y sepia: mismos nombres de token, valores distintos.
      "night" y "amber" se declaran una sola vez aqui y nunca se repiten en el
@@ -137,6 +156,45 @@
   .label {
     @apply block text-sm text-muted mb-1.5;
   }
+}
+
+/* Login (ver Login.jsx): mundo visual propio, fuera de los tokens del POS.
+   El patron de puntos y el glow ambiental se quedan aqui y no como
+   utilidades genericas para no filtrar esta estetica al resto de la app. */
+.login-shell {
+  background-color: #090d16;
+}
+
+.login-shell.login-light {
+  background-color: #f7f9fc;
+  color: #0f172a;
+}
+
+.login-pos-pattern {
+  background-image: radial-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.login-light.login-pos-pattern {
+  background-image: radial-gradient(rgba(100, 116, 139, 0.11) 0.75px, transparent 0.75px);
+  background-size: 24px 24px;
+}
+
+.login-ambient-glow {
+  background: radial-gradient(circle, rgba(132, 204, 22, 0.12) 0%, rgba(15, 23, 42, 0) 70%);
+}
+
+.login-light-glow {
+  background: radial-gradient(circle, rgba(132, 204, 22, 0.1) 0%, rgba(247, 249, 252, 0) 70%);
+}
+
+.login-shell ::selection {
+  background-color: rgba(132, 204, 22, 0.3);
+}
+
+.login-light ::selection {
+  color: #0f172a;
+  background-color: rgba(132, 204, 22, 0.32);
 }
 
 @layer utilities {

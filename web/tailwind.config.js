@@ -19,6 +19,19 @@ export default {
         nav: '900px',
       },
       colors: {
+        // Paleta del login (ver Login.jsx): un mundo visual propio para la
+        // pantalla de acceso, separado de los tokens operativos de arriba.
+        // "lime" vive dentro de brand a proposito: Tailwind ya trae su
+        // propia escala lime (lime-400/500) y no conviene pisarla.
+        brand: {
+          navy: '#0F172A',
+          navyDark: '#090D16',
+          navyCard: '#131D31',
+          navyBorder: '#1E293B',
+          lime: '#84CC16',
+          limeHover: '#65A30D',
+          limeDim: '#4D7C0F',
+        },
         // "night" y "amber" quedan fijos en ambos temas a proposito: night
         // es el oscuro de contraste detras del acento (texto de boton,
         // chips sobre fondo oscuro); amber es el relleno audaz del acento.
@@ -59,6 +72,8 @@ export default {
       },
       fontFamily: {
         sans: ['Archivo', 'system-ui', 'sans-serif'],
+        jakarta: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+        jbmono: ['"JetBrains Mono"', 'monospace'],
       },
       fontSize: {
         // Los numeros de mesa son el heroe de la pantalla: se leen de lejos.
@@ -66,6 +81,9 @@ export default {
       },
       borderRadius: {
         pill: '999px',
+      },
+      boxShadow: {
+        'panel-card': '0 20px 40px -15px rgba(0, 0, 0, 0.7)',
       },
     },
   },
