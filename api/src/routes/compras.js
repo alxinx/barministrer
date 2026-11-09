@@ -18,6 +18,15 @@ export const comprasRoutes = Router()
 // en cajasBancos.js.
 const gate = [requireModule('moduloCompras'), requirePermission('cajeroGestionaInventario')]
 comprasRoutes.use('/compras', ...gate)
+
+function avisarTurnosAfectados(tenantId, pagos = []) {
+  const shiftIds = new Set(
+    pagos.filter((pago) => pago.metodo === 'EFECTIVO_TURNO' && pago.shiftId).map((pago) => pago.shiftId)
+  )
+  for (const shiftId of shiftIds) {
+    avisarTenant(tenantId, 'turno:actualizado', { shiftId })
+  }
+}
 comprasRoutes.use('/proveedores/:id', ...gate)
 
 function badRequest(message) {
@@ -770,6 +779,7 @@ comprasRoutes.post('/compras', async (req, res) => {
       })
     })
     avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
+    avisarTurnosAfectados(req.auth.tenantId, pagos)
     res.status(201).json({ ...resultado, saldoPendiente: Number(resultado.total) - Number(resultado.totalPagado) })
   } catch (err) {
     if (err.code === 'P2002') {
@@ -903,6 +913,7 @@ comprasRoutes.post('/compras/:id/recibir', async (req, res) => {
       })
     })
     avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
+    avisarTurnosAfectados(req.auth.tenantId, pagos)
     res.json({ ...resultado, saldoPendiente: Number(resultado.total) - Number(resultado.totalPagado) })
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message })
@@ -941,6 +952,7 @@ comprasRoutes.post('/compras/:id/pagos', async (req, res) => {
         include: { pagos: { orderBy: { createdAt: 'asc' }, include: { createdBy: { select: { name: true } } } } },
       })
     })
+    avisarTurnosAfectados(req.auth.tenantId, pagos)
     res.status(201).json({ ...actualizada, saldoPendiente: Number(actualizada.total) - Number(actualizada.totalPagado) })
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message })

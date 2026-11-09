@@ -2,7 +2,8 @@ import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { calcularCostos, costoDeReceta } from '../lib/costos.js'
-import { diaLocal, rangoUltimosDias, rangoEntreFechas, rangoValido } from '../lib/fechas.js'
+import { diaLocal, rangoUltimosDias, rangoEntreFechas, rangoValido, sumarDias } from '../lib/fechas.js'
+import { buscarTurnosDelRango } from '../lib/turnosRango.js'
 
 export const reportRoutes = Router()
 const soloAdmin = requireRole('ADMIN')
@@ -11,13 +12,14 @@ function clampDias(value) {
   return Math.min(365, Math.max(1, Number(value) || 30))
 }
 
-// El calendario de la UI manda un rango explicito (desde/hasta, YYYY-MM-DD)
-// cuando el dueno elige "fecha a fecha" en vez de un pill de dias; si no
-// viene un rango valido, se sigue calculando por cantidad de dias como
-// siempre. Ningun reporte necesita saber cual de los dos eligio el usuario.
+// El calendario manda desde/hasta; los presets mandan modo=ayer o days.
 function resolverRango(req, timezone) {
   const { desde, hasta } = req.query
   if (rangoValido(desde, hasta)) return rangoEntreFechas(desde, hasta)
+  if (req.query.modo === 'ayer') {
+    const ayer = sumarDias(diaLocal(new Date(), timezone), -1)
+    return rangoEntreFechas(ayer, ayer)
+  }
   return rangoUltimosDias(clampDias(req.query.days), timezone)
 }
 
@@ -27,22 +29,59 @@ function resolverRango(req, timezone) {
 reportRoutes.get('/reports/ventas', soloAdmin, async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth.tenantId }, select: { timezone: true } })
   const { etiquetas, desde, hasta } = resolverRango(req, tenant.timezone)
+  const turnos = await buscarTurnosDelRango(
+    req.auth.tenantId,
+    etiquetas[0],
+    etiquetas[etiquetas.length - 1],
+    tenant.timezone
+  )
+  const shiftIds = turnos.map((turno) => turno.id)
+  const fechaPorTurno = new Map(
+    turnos.map((turno) => [
+      turno.id,
+      etiquetas.includes(diaLocal(turno.openedAt, tenant.timezone))
+        ? diaLocal(turno.openedAt, tenant.timezone)
+        : diaLocal(turno.closedAt, tenant.timezone),
+    ])
+  )
+  const fechaMovimiento = (shiftId, fecha) =>
+    (shiftId && fechaPorTurno.get(shiftId)) || diaLocal(fecha, tenant.timezone)
 
   const [ordenes, pagos, abonos, egresos, cargosCredito, pagosCredito, productosStock] = await Promise.all([
     prisma.order.findMany({
-      where: { tenantId: req.auth.tenantId, status: 'CLOSED', closedAt: { gte: desde, lte: hasta } },
-      select: { id: true, closedAt: true, isCourtesy: true, discountAmount: true, items: true },
+      where: {
+        tenantId: req.auth.tenantId,
+        status: 'CLOSED',
+        OR: [
+          { shiftId: { in: shiftIds } },
+          { shiftId: null, closedAt: { gte: desde, lte: hasta } },
+        ],
+      },
+      select: { id: true, shiftId: true, closedAt: true, isCourtesy: true, discountAmount: true, items: true },
     }),
     prisma.orderPayment.findMany({
-      where: { tenantId: req.auth.tenantId, method: { not: 'CREDITO' }, createdAt: { gte: desde, lte: hasta } },
-      select: { amount: true, method: true, createdAt: true },
+      where: {
+        tenantId: req.auth.tenantId,
+        method: { not: 'CREDITO' },
+        OR: [
+          { order: { shiftId: { in: shiftIds } } },
+          { order: { shiftId: null }, createdAt: { gte: desde, lte: hasta } },
+        ],
+      },
+      select: { amount: true, method: true, createdAt: true, order: { select: { shiftId: true } } },
     }),
     prisma.customerPayment.findMany({
-      where: { tenantId: req.auth.tenantId, createdAt: { gte: desde, lte: hasta } },
-      select: { amount: true, method: true, createdAt: true },
+      where: {
+        tenantId: req.auth.tenantId,
+        OR: [
+          { shiftId: { in: shiftIds } },
+          { shiftId: null, createdAt: { gte: desde, lte: hasta } },
+        ],
+      },
+      select: { amount: true, method: true, createdAt: true, shiftId: true },
     }),
     prisma.shiftExpense.aggregate({
-      where: { tenantId: req.auth.tenantId, createdAt: { gte: desde, lte: hasta } },
+      where: { tenantId: req.auth.tenantId, shiftId: { in: shiftIds } },
       _sum: { amount: true },
     }),
     prisma.customerCharge.aggregate({ where: { tenantId: req.auth.tenantId }, _sum: { amount: true } }),
@@ -72,7 +111,7 @@ reportRoutes.get('/reports/ventas', soloAdmin, async (req, res) => {
   let vendidoTotal = 0
 
   for (const o of ordenes) {
-    const etiqueta = diaLocal(o.closedAt, tenant.timezone)
+    const etiqueta = fechaMovimiento(o.shiftId, o.closedAt)
     const bucket = porDia.get(etiqueta)
     if (!bucket || o.isCourtesy) continue // cortesia no es una venta real, ya queda como gasto
 
@@ -93,13 +132,13 @@ reportRoutes.get('/reports/ventas', soloAdmin, async (req, res) => {
   }
 
   for (const p of pagos) {
-    const bucket = porDia.get(diaLocal(p.createdAt, tenant.timezone))
+    const bucket = porDia.get(fechaMovimiento(p.order.shiftId, p.createdAt))
     if (!bucket) continue
     bucket.recaudado += Number(p.amount)
     bucket[bucket[p.method] !== undefined ? p.method : 'OTRO'] += Number(p.amount)
   }
   for (const a of abonos) {
-    const bucket = porDia.get(diaLocal(a.createdAt, tenant.timezone))
+    const bucket = porDia.get(fechaMovimiento(a.shiftId, a.createdAt))
     if (!bucket) continue
     bucket.recaudado += Number(a.amount)
     bucket[a.method && bucket[a.method] !== undefined ? a.method : 'OTRO'] += Number(a.amount)
@@ -150,6 +189,13 @@ reportRoutes.get('/reports/utilidad-producto', soloAdmin, async (req, res) => {
   const tenantId = req.auth.tenantId
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } })
   const { etiquetas, desde, hasta } = resolverRango(req, tenant.timezone)
+  const turnos = await buscarTurnosDelRango(
+    tenantId,
+    etiquetas[0],
+    etiquetas[etiquetas.length - 1],
+    tenant.timezone
+  )
+  const shiftIds = turnos.map((turno) => turno.id)
 
   const [variantes, preparados, ordenes] = await Promise.all([
     prisma.variant.findMany({
@@ -164,7 +210,15 @@ reportRoutes.get('/reports/utilidad-producto', soloAdmin, async (req, res) => {
       },
     }),
     prisma.order.findMany({
-      where: { tenantId, status: 'CLOSED', isCourtesy: false, closedAt: { gte: desde, lte: hasta } },
+      where: {
+        tenantId,
+        status: 'CLOSED',
+        isCourtesy: false,
+        OR: [
+          { shiftId: { in: shiftIds } },
+          { shiftId: null, closedAt: { gte: desde, lte: hasta } },
+        ],
+      },
       select: { items: true },
     }),
   ])

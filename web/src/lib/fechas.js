@@ -28,3 +28,9 @@ export function calcularRangoDias(dias) {
   const from = new Date(hasta.getTime() - (dias - 1) * 86400000)
   return { from, to: hasta }
 }
+
+export function fechaAyerEnZona(timezone) {
+  const hoy = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+  const [year, month, day] = hoy.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day) - 86400000).toISOString().slice(0, 10)
+}

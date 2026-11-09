@@ -5,7 +5,7 @@ import { Icon } from '../components/Icons'
 import TarjetaStat from '../components/TarjetaStat'
 import RangoFechas from '../components/RangoFechas'
 import { useAuth } from '../context/AuthContext'
-import { calcularRangoDias, formatCorto, parseISOLocal } from '../lib/fechas'
+import { calcularRangoDias, fechaAyerEnZona, formatCorto, parseISOLocal } from '../lib/fechas'
 import {
   nuevoLibro,
   escribirTitulo,
@@ -78,6 +78,11 @@ export default function UtilidadProducto() {
   const { session } = useAuth()
   const [days, setDays] = useState(30)
   const [rangoCustom, setRangoCustom] = useState(null) // { desde, hasta } (YYYY-MM-DD) | null = usar days
+  const [modoAyer, setModoAyer] = useState(false)
+  const fechaAyer = useMemo(
+    () => fechaAyerEnZona(session?.tenant?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone),
+    [session?.tenant?.timezone]
+  )
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -85,25 +90,33 @@ export default function UtilidadProducto() {
   const [conVentas, setConVentas] = useState('todos')
   const [sort, setSort] = useState({ key: 'utilidadPeriodo', dir: 'desc' })
 
-  const rango = useMemo(
-    () =>
-      rangoCustom
-        ? { from: parseISOLocal(rangoCustom.desde), to: parseISOLocal(rangoCustom.hasta) }
-        : calcularRangoDias(days),
-    [days, rangoCustom]
-  )
+  const rango = useMemo(() => {
+    if (modoAyer) return { from: parseISOLocal(fechaAyer), to: parseISOLocal(fechaAyer) }
+    if (rangoCustom) return { from: parseISOLocal(rangoCustom.desde), to: parseISOLocal(rangoCustom.hasta) }
+    return calcularRangoDias(days)
+  }, [days, rangoCustom, modoAyer, fechaAyer])
 
   useEffect(() => {
     setLoading(true)
-    const query = rangoCustom ? `desde=${rangoCustom.desde}&hasta=${rangoCustom.hasta}` : `days=${days}`
+    const query = modoAyer
+      ? 'modo=ayer'
+      : rangoCustom
+        ? `desde=${rangoCustom.desde}&hasta=${rangoCustom.hasta}`
+        : `days=${days}`
     api(`/reports/utilidad-producto?${query}`)
       .then(setData)
       .finally(() => setLoading(false))
-  }, [days, rangoCustom])
+  }, [days, rangoCustom, modoAyer])
 
   function elegirDias(r) {
+    setModoAyer(false)
     setRangoCustom(null)
     setDays(r)
+  }
+
+  function elegirRango(r) {
+    setModoAyer(false)
+    setRangoCustom(r)
   }
 
   const resumen = useMemo(() => {
@@ -149,7 +162,7 @@ export default function UtilidadProducto() {
     const sheet = workbook.addWorksheet('Utilidad de producto')
 
     const etiquetaPeriodo = `${formatCorto(rango.from)} – ${formatCorto(rango.to)}${
-      rangoCustom ? '' : ` (últimos ${days} días)`
+      rangoCustom ? '' : modoAyer ? ' (ayer)' : ` (últimos ${days} días)`
     }`
 
     escribirTitulo(
@@ -218,7 +231,7 @@ export default function UtilidadProducto() {
     filaTotales.getCell(8).numFmt = FORMATO_MONEDA
 
     autoAjustarColumnas(sheet, { desde: 3 })
-    const sufijoArchivo = rangoCustom ? `${rangoCustom.desde}_a_${rangoCustom.hasta}` : `${days}-dias`
+    const sufijoArchivo = rangoCustom ? `${rangoCustom.desde}_a_${rangoCustom.hasta}` : modoAyer ? 'ayer' : `${days}-dias`
     await descargarLibro(workbook, `utilidad-producto-${sufijoArchivo}.xlsx`)
   }
 
@@ -240,12 +253,25 @@ export default function UtilidadProducto() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => {
+              setModoAyer(true)
+              setRangoCustom(null)
+            }}
+            className={`h-9 px-3.5 rounded-xl text-sm font-semibold border transition-colors ${
+              modoAyer
+                ? 'bg-amber text-night border-amber'
+                : 'bg-surface text-muted border-edge hover:text-ink'
+            }`}
+          >
+            Ayer
+          </button>
           {RANGOS.map((r) => (
             <button
               key={r}
               onClick={() => elegirDias(r)}
               className={`h-9 px-3.5 rounded-xl text-sm font-semibold border transition-colors ${
-                !rangoCustom && days === r
+                !modoAyer && !rangoCustom && days === r
                   ? 'bg-amber text-night border-amber'
                   : 'bg-surface text-muted border-edge hover:text-ink'
               }`}
@@ -261,7 +287,7 @@ export default function UtilidadProducto() {
             onChange={(e) => elegirDias(Math.min(365, Math.max(1, Number(e.target.value) || 1)))}
             className="field h-9 w-20 text-center"
           />
-          <RangoFechas rango={rango} onElegir={setRangoCustom} activo={Boolean(rangoCustom)} />
+          <RangoFechas rango={rango} onElegir={elegirRango} activo={Boolean(rangoCustom)} />
         </div>
       </header>
 

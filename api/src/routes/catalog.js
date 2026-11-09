@@ -104,7 +104,12 @@ catalogRoutes.get('/products', async (req, res) => {
       tenantId: req.auth.tenantId,
       deletedAt: null,
       ...(categoryId && { categoryId: String(categoryId) }),
-      ...(search && { name: { contains: String(search) } }),
+      ...(search && {
+        OR: [
+          { name: { contains: String(search) } },
+          { category: { name: { contains: String(search) } } },
+        ],
+      }),
     },
     include: {
       category: { select: { id: true, name: true, color: true, allowsPour: true, active: true } },

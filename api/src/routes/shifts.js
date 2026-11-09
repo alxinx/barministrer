@@ -3,8 +3,10 @@ import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPin } from '../lib/pin.js'
-import { diaLocal, rangoEntreFechas, rangoValido } from '../lib/fechas.js'
+import { diaLocal, rangoValido, sumarDias } from '../lib/fechas.js'
 import { crearShiftExpense } from '../lib/shiftExpense.js'
+import { buscarTurnosDelRango } from '../lib/turnosRango.js'
+import { avisarTenant } from '../lib/realtime.js'
 
 export const shiftRoutes = Router()
 const cajero = requireRole('ADMIN', 'CAJERO')
@@ -81,10 +83,6 @@ async function resumenVentas(tenantId, shiftId) {
   }
 }
 
-function sumarDias(fechaStr, delta) {
-  return new Date(Date.parse(`${fechaStr}T00:00:00Z`) + delta * 86400000).toISOString().slice(0, 10)
-}
-
 function calcularVariacion(actual, anterior) {
   if (!anterior) return null
   return ((actual - anterior) / anterior) * 100
@@ -96,23 +94,23 @@ function calcularVariacion(actual, anterior) {
 // sigue siendo por turno, con conteo ciego, en /shifts/:id/close).
 //
 // El turno no es el dia calendario (un viernes puede cerrar a las 3am del
-// sabado): un turno que abrio a las 5pm y cerro a las 2am es TODO de ayer,
-// no mitad y mitad por el corte de medianoche. Por eso el filtro de fechas va
-// sobre shift.openedAt (que dia de negocio es este turno), nunca sobre el
-// momento exacto de cada pago o devolucion suelta -- filtrar asi partiria un
-// mismo turno entre dos dias y daria un total mentiroso para cualquiera de
-// los dos. Las cifras salen de sales.byMethod, el mismo snapshot que ya usa
-// el cuadre del turno (resumenVentas/Shift.sales), para que nunca se desvien
-// entre esta vista y el historial de turnos.
+// sabado): tambien se incluye el turno abierto el dia anterior al rango si
+// cierra antes de las 6am durante el periodo consultado. No filtrar por el
+// momento de cada pago o devolucion: partiria un mismo turno entre dos dias.
+// Las cifras salen de sales.byMethod, el mismo snapshot que usa el cuadre.
 async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
-  const { etiquetas, desde, hasta } = rangoEntreFechas(desdeStr, hastaStr)
-  const enRango = (fecha) => etiquetas.includes(diaLocal(fecha, timezone))
-
-  const turnosCandidatos = await prisma.shift.findMany({
-    where: { tenantId, openedAt: { gte: desde, lte: hasta } },
-    select: { id: true, status: true, sales: true, openedAt: true },
-  })
-  const turnos = turnosCandidatos.filter((s) => enRango(s.openedAt))
+  const turnos = await buscarTurnosDelRango(tenantId, desdeStr, hastaStr, timezone)
+  const numerosTurno = await Promise.all(
+    turnos.map((turno) =>
+      prisma.shift.count({ where: { tenantId, openedAt: { lte: turno.openedAt } } })
+    )
+  )
+  const turnosConNumero = turnos.map((turno, index) => ({ ...turno, numero: numerosTurno[index] }))
+  const turnoPorId = new Map(turnosConNumero.map((turno) => [turno.id, turno]))
+  const datosTurno = (shiftId) => {
+    const turno = turnoPorId.get(shiftId)
+    return turno ? { turnoId: turno.id, turnoNumero: turno.numero, turnoAbiertoAt: turno.openedAt } : {}
+  }
 
   // El turno todavia abierto no tiene snapshot congelado (eso pasa al
   // cerrar): se calcula en vivo, igual que en GET /shifts/current.
@@ -136,7 +134,11 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
 
   const shiftIds = turnos.map((s) => s.id)
   if (shiftIds.length === 0) {
-    return { totales: { totalVentas: 0, efectivo: 0, tarjetaTransferencia: 0, devoluciones: 0 }, movimientos: [] }
+    return {
+      totales: { totalVentas: 0, efectivo: 0, tarjetaTransferencia: 0, devoluciones: 0 },
+      movimientos: [],
+      turnos: [],
+    }
   }
 
   // El detalle linea por linea si necesita las ordenes y devoluciones reales
@@ -148,6 +150,7 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
       select: {
         id: true,
         closedAt: true,
+        shiftId: true,
         table: { select: { number: true } },
         items: { where: { status: 'ACTIVE' }, select: { name: true, variantName: true, qty: true, price: true } },
         payments: { select: { method: true } },
@@ -164,7 +167,7 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
         price: true,
         voidedAt: true,
         orderId: true,
-        order: { select: { table: { select: { number: true } } } },
+        order: { select: { shiftId: true, table: { select: { number: true } } } },
       },
       orderBy: { voidedAt: 'desc' },
     }),
@@ -179,6 +182,7 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
       orderId: i.orderId,
       hora: i.voidedAt,
       tipo: 'DEVOLUCION',
+      ...datosTurno(i.order.shiftId),
       descripcion: `Mesa ${i.order.table.number}`,
       detalle: `${i.qty} × ${i.name}${i.variantName ? ` · ${i.variantName}` : ''}`,
       // Una devolucion pasa antes de cobrar: nunca tuvo un medio de pago
@@ -197,6 +201,7 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
       orderId: o.id,
       hora: o.closedAt,
       tipo: 'VENTA',
+      ...datosTurno(o.shiftId),
       descripcion: `Mesa ${o.table.number}`,
       detalle: detalle || 'Sin productos',
       metodo: metodos.length ? metodos.join(' + ') : 'Crédito',
@@ -211,6 +216,14 @@ async function calcularMovimientos(tenantId, desdeStr, hastaStr, timezone) {
   return {
     totales: { totalVentas: efectivo + tarjetaTransferencia, efectivo, tarjetaTransferencia, devoluciones },
     movimientos,
+    turnos: turnosConNumero.map((turno) => ({
+      id: turno.id,
+      numero: turno.numero,
+      openedAt: turno.openedAt,
+      closedAt: turno.closedAt,
+      openedByName: turno.openedBy.name,
+      closedByName: turno.closedBy?.name || null,
+    })),
   }
 }
 
@@ -329,6 +342,7 @@ shiftRoutes.get('/shifts/movimientos', cajero, async (req, res) => {
       variacion: calcularVariacion(actual.totales.totalVentas, anterior.totales.totalVentas),
     },
     movimientos: actual.movimientos,
+    turnos: actual.turnos,
   })
 })
 
@@ -395,6 +409,7 @@ shiftRoutes.post('/shifts', cajero, async (req, res) => {
       expenses: true,
     },
   })
+  avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId: shift.id })
   res.status(201).json(shift)
 })
 
@@ -418,6 +433,7 @@ shiftRoutes.post('/shifts/:id/expenses', cajero, async (req, res) => {
       where: { id: expense.id },
       include: { authorizedBy: { select: { id: true, name: true } } },
     })
+    avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId: req.params.id })
     res.status(201).json(conAutor)
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message })
@@ -489,5 +505,6 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
       expenses: { include: { authorizedBy: { select: { id: true, name: true } } } },
     },
   })
+  avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId: shift.id })
   res.json(updated)
 })

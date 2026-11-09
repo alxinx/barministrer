@@ -415,6 +415,10 @@
     transition-duration: 0.01ms !important;
   }
 
+  .transition-\[transform\] {
+    transition: none !important;
+  }
+
   /* Las de arriba son "infinite": forzar su duracion a 0.01ms las deja
      parpadeando sin parar en vez de quietas. Se apagan del todo; el resaltado
      estatico (borde/fondo ambar) que ya tienen se queda como aviso. */

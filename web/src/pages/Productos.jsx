@@ -34,7 +34,7 @@ export default function Productos() {
     const term = search.trim().toLowerCase()
     return products
       .filter((p) => !filter || p.categoryId === filter)
-      .filter((p) => !term || p.name.toLowerCase().includes(term))
+      .filter((p) => !term || p.name.toLowerCase().includes(term) || p.category?.name.toLowerCase().includes(term))
   }, [products, filter, search])
 
   // El catalogo se distribuye por categoria (2 niveles: padre > hija), en el

@@ -76,7 +76,7 @@ export default function Recetas() {
     const term = search.trim().toLowerCase()
     return products
       .filter((p) => p.kind === 'PREPARED')
-      .filter((p) => !term || p.name.toLowerCase().includes(term))
+      .filter((p) => !term || p.name.toLowerCase().includes(term) || p.category?.name.toLowerCase().includes(term))
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [products, search])
 

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { resolverCuentaPago } from '../lib/cuentaPago.js'
+import { avisarTenant } from '../lib/realtime.js'
 
 export const customerRoutes = Router()
 const puedeGestionar = requireRole('ADMIN', 'CAJERO')
@@ -207,5 +208,6 @@ customerRoutes.post('/customers/:id/payments', puedeGestionar, async (req, res) 
     }
     return payment
   })
+  avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId: shift.id })
   res.status(201).json(payment)
 })

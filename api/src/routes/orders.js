@@ -594,6 +594,7 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
     })
   })
   avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
+  if (order.shiftId) avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId: order.shiftId })
   res.json(updated)
 })
 
@@ -861,6 +862,7 @@ orderRoutes.post('/orders/:id/close', puedeCerrar, async (req, res) => {
   }
 
   avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
+  avisarTenant(req.auth.tenantId, 'turno:actualizado', { shiftId })
 
   const cerrada = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   res.json({ ...cerrada, total: total(cerrada) })

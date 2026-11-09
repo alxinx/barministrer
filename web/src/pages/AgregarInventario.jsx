@@ -148,7 +148,11 @@ export default function AgregarInventario() {
     if (categoriaActiva === 'criticos') base = criticos
     else if (categoriaActiva !== 'todas') base = presentaciones.filter((o) => (o.product.category?.name || 'Sin categoría') === categoriaActiva)
     return base.filter(
-      (o) => !term || o.product.name.toLowerCase().includes(term) || o.variant.name.toLowerCase().includes(term)
+      (o) =>
+        !term ||
+        o.product.name.toLowerCase().includes(term) ||
+        o.variant.name.toLowerCase().includes(term) ||
+        o.product.category?.name.toLowerCase().includes(term)
     )
   }, [presentaciones, criticos, search, categoriaActiva])
 

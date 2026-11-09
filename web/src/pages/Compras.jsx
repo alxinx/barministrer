@@ -1219,7 +1219,7 @@ function CompraForm({
     for (const producto of productosStock) {
       for (const v of producto.variants || []) {
         if (!v.active || variantesAgregadas.has(v.id)) continue
-        if (!`${producto.name} ${v.name}`.toLowerCase().includes(term)) continue
+        if (!`${producto.name} ${v.name} ${producto.category?.name || ''}`.toLowerCase().includes(term)) continue
         variantesMatch.push({ insumo: null, variant: { ...v, product: producto } })
         if (variantesMatch.length >= 5) break
       }
