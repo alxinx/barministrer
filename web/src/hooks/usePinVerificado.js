@@ -12,6 +12,7 @@ export function usePinVerificado() {
   const [pin, setPin] = useState('')
   const [verificando, setVerificando] = useState(false)
   const [valido, setValido] = useState(false)
+  const [nombre, setNombre] = useState('') // nombre del encargado que el PIN identifico, para mostrarlo (ver "codigo recordado")
   const [error, setError] = useState('')
   // Momento (epoch ms) en el que se levanta el bloqueo por intentos
   // agotados. Vive aparte de `error` porque mientras este activo la UI
@@ -37,6 +38,7 @@ export function usePinVerificado() {
 
   useEffect(() => {
     setValido(false)
+    setNombre('')
     setError('')
     if (pin.length !== PIN_LENGTH || bloqueadoHasta) return
 
@@ -47,8 +49,11 @@ export function usePinVerificado() {
     // intento intermedio.
     const timer = setTimeout(async () => {
       try {
-        await api('/auth/verify-pin', { method: 'POST', body: { pin } })
-        if (!cancelado) setValido(true)
+        const res = await api('/auth/verify-pin', { method: 'POST', body: { pin } })
+        if (!cancelado) {
+          setValido(true)
+          setNombre(res.name || '')
+        }
       } catch (err) {
         if (cancelado) return
         if (err.status === 429 && typeof err.segundosRestantes === 'number') {
@@ -70,6 +75,7 @@ export function usePinVerificado() {
   function reset() {
     setPin('')
     setValido(false)
+    setNombre('')
     setError('')
     setBloqueadoHasta(null)
   }
@@ -78,6 +84,7 @@ export function usePinVerificado() {
     pin,
     setPin,
     valido,
+    nombre,
     verificando,
     error,
     bloqueado: Boolean(bloqueadoHasta),

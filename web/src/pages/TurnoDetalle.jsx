@@ -5,9 +5,8 @@ import { useAuth } from '../context/AuthContext'
 import { Icon } from '../components/Icons'
 import ReciboModal from '../components/ReciboModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
+import TirillaTurnoModal from '../components/TirillaTurnoModal'
 import FacturasDelDia from '../components/FacturasDelDia'
-import ReciboEncabezado from '../components/ReciboEncabezado'
-import ReciboPie from '../components/ReciboPie'
 import { METHODS, METHOD_LABEL } from '../lib/paymentMethods'
 
 export default function TurnoDetalle() {
@@ -368,6 +367,9 @@ function ConciliacionCard({ counts, baseCash }) {
                   {c.method === 'EFECTIVO' && (
                     <p className="text-[11px] text-muted ml-3.5">Incluye base de apertura ({money(baseCash)})</p>
                   )}
+                  {c.method === 'EGRESOS' && (
+                    <p className="text-[11px] text-muted ml-3.5">Recibos de gastos y retiros, no es un medio de pago</p>
+                  )}
                 </td>
                 <td className="px-3 py-3 text-right align-top">{money(c.expected)}</td>
                 <td className="px-3 py-3 text-right align-top font-semibold">{money(c.counted)}</td>
@@ -459,112 +461,6 @@ function EgresosCard({ egresos, totalEgresos, shiftId, onVerTicket }) {
         </span>
       </div>
     </section>
-  )
-}
-
-// Ticket termico con el cierre del turno, para que el cajero se lo lleve
-// impreso en la entrega de caja -- mismo patron que la tirilla de venta
-// (ReciboModal) y el comprobante de egreso (TicketEgresoModal): id fijo
-// "receipt-print-root" que el CSS de impresion ya sabe mostrar solo.
-function TirillaTurnoModal({ shift, sales, counts, egresos, totalEgresos, tenant, onClose }) {
-  const mismaPersona = shift.closedBy && shift.closedBy.id === shift.openedBy.id
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="flex flex-col items-center gap-3 my-auto">
-        <div
-          id="receipt-print-root"
-          className="bg-white text-[#111] w-[310px] p-4 text-xs rounded shadow-xl max-h-[70vh] overflow-y-auto"
-          style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
-        >
-          <ReciboEncabezado tenant={tenant} />
-          <div className="text-center space-y-0.5 mt-1">
-            <p>Resumen de turno #{String(shift.numero).padStart(4, '0')}</p>
-            <p>{formatFechaCorta(shift.openedAt)}</p>
-          </div>
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-
-          <p>{mismaPersona ? `Responsable: ${shift.openedBy.name}` : `Abrió: ${shift.openedBy.name}`}</p>
-          {!mismaPersona && shift.closedBy && <p>Cerró: {shift.closedBy.name}</p>}
-          <p>Apertura: {formatHora(shift.openedAt)}</p>
-          <p>{shift.closedAt ? `Cierre: ${formatHora(shift.closedAt)}` : 'Turno todavía abierto'}</p>
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-
-          <p className="font-bold">Ventas por medio de pago</p>
-          <div className="space-y-0.5 mt-1">
-            {METHODS.map((m) => (
-              <div key={m.key} className="flex justify-between">
-                <span>{m.label}</span>
-                <span>{money(sales.byMethod[m.key] || 0)}</span>
-              </div>
-            ))}
-            <div className="flex justify-between">
-              <span>Fiado</span>
-              <span>{money(sales.fiado || 0)}</span>
-            </div>
-          </div>
-          <div className="flex justify-between font-bold text-sm mt-1.5">
-            <span>TOTAL VENDIDO</span>
-            <span>{money(sales.totalVentas)}</span>
-          </div>
-
-          {counts.length > 0 && (
-            <>
-              <div className="my-2 border-t border-dashed border-black/40" />
-              <p className="font-bold">Cuadre de caja</p>
-              <div className="space-y-1 mt-1">
-                {counts.map((c) => (
-                  <div key={c.method}>
-                    <div className="flex justify-between">
-                      <span>{METHOD_LABEL[c.method] || c.method}</span>
-                      <span>{money(c.counted)}</span>
-                    </div>
-                    <div className="flex justify-between text-black/60">
-                      <span>Esperado {money(c.expected)}</span>
-                      <span>{c.difference === 0 ? 'Sin dif.' : `${c.difference > 0 ? '+' : ''}${money(c.difference)}`}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-          <div className="flex justify-between font-bold">
-            <span>Egresos y retiros</span>
-            <span>-{money(totalEgresos)}</span>
-          </div>
-          {egresos.length > 0 && (
-            <div className="mt-1 space-y-0.5">
-              {egresos.map((e) => (
-                <div key={e.id} className="flex justify-between text-black/70">
-                  <span className="truncate pr-2">{e.reason}</span>
-                  <span className="shrink-0">-{money(e.amount)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="my-2 border-t border-dashed border-black/40" />
-          <p className="text-center">
-            {sales.tickets} {sales.tickets === 1 ? 'cuenta cerrada' : 'cuentas cerradas'}
-          </p>
-          <ReciboPie tenant={tenant} />
-        </div>
-
-        <div className="flex gap-2 shrink-0 flex-wrap justify-center">
-          <button type="button" onClick={onClose} className="btn-ghost">
-            Cerrar
-          </button>
-          <button type="button" onClick={() => window.print()} className="btn-primary flex items-center gap-2">
-            <Icon.printer width={16} height={16} />
-            Imprimir
-          </button>
-        </div>
-      </div>
-    </div>
   )
 }
 

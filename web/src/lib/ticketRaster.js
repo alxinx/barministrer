@@ -145,15 +145,26 @@ async function armarTrazos(tenant, lineas, ancho) {
   y += 6
   trazos.push({ tipo: 'raya', y })
   y += 16
-  // Pie propio del negocio (opcional) + la linea de marca, que sale SIEMPRE
-  // sin importar que el tenant haya escrito algo o no (ver brand.js: fija en
-  // el codigo, no editable desde ningun tenant).
-  const pies = [tenant?.receiptFooter, PIE_PAGINA_SISTEMA].filter(Boolean)
-  for (const pie of pies) {
-    for (const fila of envolver(medidor, pie, 11, false, anchoUtil)) {
+  // Pie propio del negocio (opcional), antes de la linea de marca de abajo.
+  if (tenant?.receiptFooter) {
+    for (const fila of envolver(medidor, tenant.receiptFooter, 11, false, anchoUtil)) {
       trazos.push({ tipo: 'texto', texto: fila, y, fontPx: 11, centro: true, atenuado: true })
       y += 15
     }
+  }
+  // Linea de marca, que sale SIEMPRE sin importar que el tenant haya escrito
+  // algo o no (ver brand.js: fija en el codigo, no editable desde ningun
+  // tenant), con el isotipo de Barminister al lado -- es un activo fijo del
+  // sistema, no algo que el tenant suba, por eso se carga aparte del logo.
+  const isotipo = await cargarImagen('/img/isotipo.webp')
+  if (isotipo) {
+    const lado = 20
+    trazos.push({ tipo: 'logo', img: isotipo, x: ancho / 2 - lado / 2, y, w: lado, h: lado })
+    y += lado + 4
+  }
+  for (const fila of envolver(medidor, PIE_PAGINA_SISTEMA, 11, false, anchoUtil)) {
+    trazos.push({ tipo: 'texto', texto: fila, y, fontPx: 11, centro: true, atenuado: true })
+    y += 15
   }
   y += 12
 

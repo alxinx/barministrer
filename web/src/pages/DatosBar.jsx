@@ -109,6 +109,8 @@ export default function DatosBar() {
           taxRegime: tenant.taxRegime,
           receiptFooter: tenant.receiptFooter,
           theme: tenant.theme,
+          propinaPorcentaje: tenant.propinaPorcentaje,
+          propinaPorDefecto: tenant.propinaPorDefecto,
         },
       })
       await refreshSession()
@@ -154,13 +156,11 @@ export default function DatosBar() {
           <p className="text-xs text-muted mb-2">Máximo 200×70 px. Se convierte a webp automáticamente.</p>
           <div className="flex items-center gap-4">
             <span className="w-[100px] h-[70px] rounded-xl bg-raised border border-edge grid place-items-center overflow-hidden shrink-0">
-              {tenant.logoUrl ? (
-                <img src={tenant.logoUrl} alt="" className="max-w-full max-h-full object-contain" />
-              ) : (
-                <span className="w-9 h-9 rounded-lg bg-amber grid place-items-center text-night font-extrabold text-sm">
-                  {tenant.name.slice(0, 2).toUpperCase()}
-                </span>
-              )}
+              <img
+                src={tenant.logoUrl || '/img/isotipo.webp'}
+                alt=""
+                className="max-w-full max-h-full object-contain"
+              />
             </span>
             <label className="btn-ghost cursor-pointer">
               {subiendoLogo ? 'Subiendo…' : 'Subir logo'}
@@ -327,6 +327,53 @@ export default function DatosBar() {
               onChange={(e) => set('taxRegime', e.target.value)}
               placeholder="Ej: régimen simple"
             />
+          </div>
+        </div>
+      </div>
+
+      <div className="card p-5 space-y-4">
+        <div>
+          <label className="label">Propina sugerida</label>
+          <p className="text-xs text-muted mb-3">
+            Opcional. Si la pones, al cerrar una cuenta aparece un switch para sumarla al total a cobrar. Vacío =
+            el switch ni aparece.
+          </p>
+          <div className="flex items-center gap-4">
+            <div className="w-28">
+              <label className="label text-xs">Porcentaje</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                className="field"
+                value={tenant.propinaPorcentaje ?? ''}
+                onChange={(e) => set('propinaPorcentaje', e.target.value === '' ? null : e.target.value)}
+                placeholder="Ej: 10"
+              />
+            </div>
+            <label className="flex items-center justify-between gap-3 cursor-pointer flex-1">
+              <span className="text-sm">
+                Va activada por defecto
+                <span className="block text-xs text-muted font-normal mt-0.5">
+                  El operador siempre la puede prender o apagar antes de cobrar.
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => set('propinaPorDefecto', !tenant.propinaPorDefecto)}
+                disabled={!tenant.propinaPorcentaje}
+                className={`h-7 w-12 rounded-pill relative transition-colors shrink-0 disabled:opacity-40 ${
+                  tenant.propinaPorDefecto ? 'bg-amber' : 'bg-raised border border-edge'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
+                    tenant.propinaPorDefecto ? 'translate-x-5 bg-night' : 'bg-muted'
+                  }`}
+                />
+              </button>
+            </label>
           </div>
         </div>
       </div>

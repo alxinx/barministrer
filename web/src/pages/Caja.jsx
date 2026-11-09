@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { useShift } from '../context/ShiftContext'
 import { Icon } from '../components/Icons'
 import MoneyInput from '../components/MoneyInput'
+import BigMoneyInput from '../components/BigMoneyInput'
 import PinField from '../components/PinField'
 import { usePinVerificado } from '../hooks/usePinVerificado'
 import ReciboModal from '../components/ReciboModal'
@@ -12,9 +13,11 @@ import CerrarCuentaModal from '../components/CerrarCuentaModal'
 import TicketEgresoModal from '../components/TicketEgresoModal'
 import ConsumoDetalleModal from '../components/ConsumoDetalleModal'
 import CuadreResumen from '../components/CuadreResumen'
+import { olvidarCodigoRecordado } from '../lib/codigoRecordado'
 import RangoFechas from '../components/RangoFechas'
+import TirillaTurnoModal from '../components/TirillaTurnoModal'
 import { parseISOLocal } from '../lib/fechas'
-import { METHODS } from '../lib/paymentMethods'
+import { METHODS, esperadoPorMetodo } from '../lib/paymentMethods'
 
 const PERIODOS = [
   { key: 'hoy', label: 'Hoy' },
@@ -38,6 +41,12 @@ export default function Caja() {
   const [history, setHistory] = useState([])
   const [error, setError] = useState('')
   const [closing, setClosing] = useState(false)
+  // Cuadre en dos pasos: primero se cuenta a ciegas (closing), despues se
+  // confirma viendo esperado vs. contado y se pide el PIN (confirmando). El
+  // conteo ya escrito se guarda en countsDraft para no perderlo si vuelve
+  // atras desde la confirmacion.
+  const [countsDraft, setCountsDraft] = useState(null)
+  const [confirmando, setConfirmando] = useState(false)
   const [closedResult, setClosedResult] = useState(null)
   // Flujo de "cerrar turno" con cuentas todavia abiertas: primero se pregunta
   // que hacer con ellas (cobrarlas ya o dejarlas pasar), y si elige cobrarlas
@@ -70,13 +79,13 @@ export default function Caja() {
   }, [])
 
   // Sin turno abierto no hay nada que vender, asi que el modal de apertura
-  // se muestra solo: aparece al cargar la pagina si nunca se abrio ninguno,
-  // y de nuevo justo despues de cerrar uno (ver cerrarTurno). Si el operador
-  // lo cancela para ir a mirar el historial, se queda cerrado hasta que lo
-  // vuelva a pedir con el boton de la tarjeta.
+  // se muestra solo: aparece al cargar la pagina si nunca se abrio ninguno.
+  // Justo despues de cerrar uno no se dispara aqui (closedResult de por
+  // medio): primero se ve el voucher, y de ahi se pasa a /venta, donde
+  // NuevaVenta tiene su propio aviso para abrir el siguiente turno.
   useEffect(() => {
-    if (shift === null) setAbriendoTurno(true)
-  }, [shift])
+    if (shift === null && !closedResult) setAbriendoTurno(true)
+  }, [shift, closedResult])
 
   useEffect(() => {
     if (!shift) return
@@ -134,13 +143,34 @@ export default function Caja() {
   async function cerrarTurno(counts, pin) {
     try {
       const cerrado = await api(`/shifts/${shift.id}/close`, { method: 'POST', body: { counts, pin } })
-      setClosing(false)
+      setConfirmando(false)
       setShift(null)
       setClosedResult(cerrado)
-      load()
+      // Un turno nuevo nunca hereda el codigo recordado del anterior: vuelve
+      // a pedirse en la primera cuenta que se cierre del turno que sigue.
+      olvidarCodigoRecordado()
     } catch (err) {
       show(err)
     }
+  }
+
+  // Del cuadre (conteo ciego) a la confirmacion (esperado vs. contado + PIN).
+  function continuarAConfirmar(counts) {
+    setCountsDraft(counts)
+    setClosing(false)
+    setConfirmando(true)
+  }
+
+  // De vuelta al cuadre sin perder lo ya contado.
+  function volverAContar() {
+    setConfirmando(false)
+    setClosing(true)
+  }
+
+  function cerrarVoucherYSeguir() {
+    setClosedResult(null)
+    load()
+    navigate('/venta')
   }
 
   // Antes de dejar cuadrar el turno, hay que saber si quedan cuentas sin
@@ -149,6 +179,7 @@ export default function Caja() {
   async function iniciarCierreTurno() {
     try {
       const abiertas = await api('/orders/open')
+      setCountsDraft(null)
       if (abiertas.length === 0) return setClosing(true)
       setEligiendoCierre(abiertas)
     } catch (err) {
@@ -479,7 +510,16 @@ export default function Caja() {
       </div>
 
       {closedResult && (
-        <ResumenCierreModal resultado={closedResult} onCerrar={() => setClosedResult(null)} />
+        <TirillaTurnoModal
+          shift={closedResult}
+          sales={closedResult.sales}
+          counts={closedResult.counts || []}
+          egresos={closedResult.expenses || []}
+          totalEgresos={(closedResult.expenses || []).reduce((s, e) => s + Number(e.amount), 0)}
+          tenant={session?.tenant}
+          autoPrint
+          onClose={cerrarVoucherYSeguir}
+        />
       )}
 
       {eligiendoCierre && (
@@ -508,13 +548,37 @@ export default function Caja() {
             puedeDescuento={isAdmin || (session?.user.role === 'CAJERO' && session?.tenant.cajeroAplicaDescuentos)}
             tableLabel={`Mesa ${colaCuentas[0].table?.number}`}
             items={colaCuentas[0].items}
+            tenant={session?.tenant}
             onClose={() => setColaCuentas(null)}
             onConfirm={confirmarCuentaDeLaCola}
           />
         </>
       )}
 
-      {closing && <CuadreModal onCancel={() => setClosing(false)} onConfirm={cerrarTurno} />}
+      {closing && (
+        <CuadreModal
+          initial={countsDraft}
+          onCancel={() => setClosing(false)}
+          onContinuar={continuarAConfirmar}
+          onAgregarEgreso={() => setAgregandoEgreso(true)}
+        />
+      )}
+
+      {confirmando && (
+        <ConfirmarCierreModal
+          counts={countsDraft}
+          baseCash={shift.baseCash}
+          sales={sales}
+          totalEgresos={totalEgresos}
+          onAtras={volverAContar}
+          onCancel={() => {
+            setConfirmando(false)
+            setCountsDraft(null)
+          }}
+          onConfirm={cerrarTurno}
+          onAgregarEgreso={() => setAgregandoEgreso(true)}
+        />
+      )}
 
       {abriendoTurno && (
         <AbrirTurnoModal onCancel={() => setAbriendoTurno(false)} onAbrir={abrirTurno} />
@@ -727,15 +791,15 @@ function AbrirTurnoModal({ onCancel, onAbrir }) {
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
         <div>
-          <h2 className="text-lg font-bold mb-1">Abrir turno</h2>
+          <h2 className="text-lg font-bold mb-1">Abrir caja</h2>
           <p className="text-sm text-muted">
             Declara la base inicial en efectivo con la que arranca la caja y el PIN de quien la abre, para que quede
             registrado.
           </p>
         </div>
         <div>
-          <label className="label">Base inicial (efectivo)</label>
-          <MoneyInput className="field" value={base} onChange={setBase} />
+          <label className="label text-center">Base inicial (efectivo)</label>
+          <BigMoneyInput value={base} onChange={setBase} />
         </div>
         <PinField
           pin={pin}
@@ -880,8 +944,69 @@ function ElegirCierreModal({ cantidad, onCobrarlas, onPasarlas, onCancel }) {
   )
 }
 
-function CuadreModal({ onCancel, onConfirm }) {
-  const [counts, setCounts] = useState({ EFECTIVO: '', NEQUI: '', TRANSFERENCIA: '', DATAFONO: '' })
+// Paso 1 del cierre: conteo ciego, el cajero cuenta sin ver lo esperado (eso
+// solo aparece despues, al confirmar -- ver ConfirmarCierreModal). Los inputs
+// nacen en 0, nunca vacios, para que "no toque nada" se lea como "esta
+// vacio de verdad", no como un campo que el cajero se saltó por error.
+function CuadreModal({ initial, onCancel, onContinuar, onAgregarEgreso }) {
+  const [counts, setCounts] = useState(
+    initial || Object.fromEntries([...METHODS.map((m) => [m.key, '0']), ['EGRESOS', '0']])
+  )
+
+  function actualizar(key, v) {
+    setCounts((prev) => ({ ...prev, [key]: v === '' ? '0' : v }))
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-md p-5 space-y-4">
+        <h2 className="text-lg font-bold">Cuadre de caja</h2>
+        <p className="text-sm text-muted">
+          Cuenta cada medio de pago tal cual lo tienes, sin mirar lo esperado. El sistema te muestra la diferencia en
+          el siguiente paso, antes de cerrar.
+        </p>
+        <div className="space-y-3">
+          {METHODS.map((m) => (
+            <div key={m.key}>
+              <label className="label">{m.label}</label>
+              <MoneyInput className="field" value={counts[m.key]} onChange={(v) => actualizar(m.key, v)} />
+            </div>
+          ))}
+        </div>
+        <div className="pt-3 border-t border-edge">
+          <label className="label">Egresos (recibos en mano)</label>
+          <p className="text-xs text-muted mb-2">
+            Suma los recibos de gastos y retiros que tengas físicamente. El sistema la cruza contra lo que quedó
+            registrado en el turno.
+          </p>
+          <MoneyInput className="field" value={counts.EGRESOS} onChange={(v) => actualizar('EGRESOS', v)} />
+        </div>
+        <button
+          type="button"
+          onClick={onAgregarEgreso}
+          className="text-xs font-semibold text-muted hover:text-amberText flex items-center gap-1.5"
+        >
+          <Icon.plus width={13} height={13} />
+          ¿Falta un gasto o retiro por registrar? Agrégalo aquí
+        </button>
+        <div className="flex gap-3 pt-1">
+          <button onClick={onCancel} className="btn-ghost flex-1">
+            Cancelar
+          </button>
+          <button onClick={() => onContinuar(counts)} className="btn-primary flex-1">
+            Revisar cierre
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Paso 2: ahora si se ve esperado vs. contado (CuadreResumen), con los
+// descuadres resaltados si los hay, y aqui se pide el PIN que de verdad
+// cierra el turno. Volver atras no borra lo contado (ver countsDraft en
+// Caja()).
+function ConfirmarCierreModal({ counts, baseCash, sales, totalEgresos, onAtras, onCancel, onConfirm, onAgregarEgreso }) {
   const {
     pin,
     setPin,
@@ -892,12 +1017,32 @@ function CuadreModal({ onCancel, onConfirm }) {
     segundosRestantes: pinSegundosRestantes,
   } = usePinVerificado()
   const [saving, setSaving] = useState(false)
-  const completo = METHODS.every((m) => counts[m.key] !== '') && pinValido
+
+  // Guarda defensiva: entre el click en "Cerrar turno" y que el padre
+  // desmonte este modal (ver cerrarTurno en Caja()), puede colarse un render
+  // con counts/sales ya en su valor post-cierre. No hay nada util que mostrar
+  // ahi, mejor no reventar. Va despues de los hooks: nunca se saltan.
+  if (!counts || !sales) return null
+
+  const comparacion = [
+    ...METHODS.map((m) => {
+      const expected = esperadoPorMetodo(m.key, { baseCash, sales, totalEgresos })
+      const counted = Number(counts[m.key]) || 0
+      return { method: m.key, expected, counted, difference: counted - expected }
+    }),
+    {
+      method: 'EGRESOS',
+      expected: totalEgresos,
+      counted: Number(counts.EGRESOS) || 0,
+      difference: (Number(counts.EGRESOS) || 0) - totalEgresos,
+    },
+  ]
+  const hayDescuadre = comparacion.some((c) => c.difference !== 0)
 
   async function confirmar() {
     setSaving(true)
     try {
-      await onConfirm(Object.fromEntries(METHODS.map((m) => [m.key, Number(counts[m.key]) || 0])), pin)
+      await onConfirm(Object.fromEntries(comparacion.map((c) => [c.method, c.counted])), pin)
     } finally {
       setSaving(false)
     }
@@ -906,23 +1051,25 @@ function CuadreModal({ onCancel, onConfirm }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-md p-5 space-y-4">
-        <h2 className="text-lg font-bold">Cuadre de caja</h2>
-        <p className="text-sm text-muted">
-          Cuenta cada medio de pago tal cual lo tienes, sin mirar lo esperado. El sistema calcula la diferencia después
-          de que confirmes.
-        </p>
-        <div className="space-y-3">
-          {METHODS.map((m) => (
-            <div key={m.key}>
-              <label className="label">{m.label}</label>
-              <MoneyInput
-                className="field"
-                value={counts[m.key]}
-                onChange={(v) => setCounts((prev) => ({ ...prev, [m.key]: v }))}
-              />
-            </div>
-          ))}
-        </div>
+        <h2 className="text-lg font-bold">Confirmar cierre de turno</h2>
+        {hayDescuadre ? (
+          <p className="text-sm font-semibold text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+            Hay descuadres entre lo esperado y lo contado. Revísalos antes de cerrar.
+          </p>
+        ) : (
+          <p className="text-sm font-semibold text-libre border border-libre/30 bg-libre/10 rounded-xl px-3 py-2.5">
+            Todo cuadrado, sin diferencias.
+          </p>
+        )}
+        <CuadreResumen counts={comparacion} />
+        <button
+          type="button"
+          onClick={onAgregarEgreso}
+          className="text-xs font-semibold text-muted hover:text-amberText flex items-center gap-1.5"
+        >
+          <Icon.plus width={13} height={13} />
+          ¿Falta un gasto o retiro por registrar? Agrégalo aquí
+        </button>
         <PinField
           pin={pin}
           onChange={setPin}
@@ -933,38 +1080,14 @@ function CuadreModal({ onCancel, onConfirm }) {
           label="PIN de quien cierra"
         />
         <div className="flex gap-3 pt-1">
-          <button onClick={onCancel} className="btn-ghost flex-1">
-            Cancelar
+          <button onClick={onAtras} className="btn-ghost flex-1">
+            Atrás
           </button>
-          <button onClick={confirmar} disabled={!completo || saving} className="btn-primary flex-1">
+          <button onClick={confirmar} disabled={!pinValido || saving} className="btn-primary flex-1">
             {saving ? 'Cerrando…' : 'Cerrar turno'}
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-function ResumenCierreModal({ resultado, onCerrar }) {
-  const counts = resultado.counts || []
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <section className="card w-full max-w-md p-5 space-y-4">
-        <div>
-          <h2 className="font-semibold mb-1">Turno cerrado</h2>
-          <p className="text-sm text-muted">
-            Cerró {resultado.closedBy?.name} · {formatFechaCorta(resultado.closedAt)} {formatHora(resultado.closedAt)}
-          </p>
-        </div>
-        <div className="flex items-center justify-between pb-1 border-b border-edge">
-          <span className="text-sm text-muted">Total vendido</span>
-          <span className="text-lg font-bold text-amberText">{money(resultado.sales?.totalVentas || 0)}</span>
-        </div>
-        <CuadreResumen counts={counts} />
-        <button onClick={onCerrar} className="btn-primary w-full">
-          Entendido
-        </button>
-      </section>
     </div>
   )
 }

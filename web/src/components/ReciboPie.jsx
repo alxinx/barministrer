@@ -9,7 +9,10 @@ export default function ReciboPie({ tenant }) {
     <>
       <div className="my-2 border-t border-dashed border-black/40" />
       {tenant?.receiptFooter && <p className="text-center text-[10px] text-black/60">{tenant.receiptFooter}</p>}
-      <p className="text-center text-[10px] text-black/60">{PIE_PAGINA_SISTEMA}</p>
+      <div className="flex items-center justify-center gap-1.5 mt-1">
+        <img src="/img/isotipo.webp" alt="" className="w-4 h-4 shrink-0" />
+        <p className="text-center text-[10px] text-black/60">{PIE_PAGINA_SISTEMA}</p>
+      </div>
     </>
   )
 }

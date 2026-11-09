@@ -415,9 +415,10 @@ function RecetaEditor({
     return ''
   }
   function errorIngredientes() {
-    // Una receta de un solo ingrediente a cantidad 1 es indistinguible de
-    // vender el insumo suelto: si no hay nada que mezclar, no es una receta.
-    if (items.length < 2) return 'La receta necesita al menos dos ingredientes'
+    // Un shot SI es una receta de un solo ingrediente (Shot Antioqueño =
+    // {Antioqueño: 30 ml}, ver CLAUDE.md): lo que hace falta es al menos uno,
+    // no dos. Un cóctel o un cubetazo usan el mismo mecanismo con mas lineas.
+    if (items.length < 1) return 'La receta necesita al menos un ingrediente'
     if (items.some((it) => !it.qty || Number(it.qty) <= 0)) return 'Ningún ingrediente puede tener cantidad cero o negativa'
     return ''
   }
@@ -793,7 +794,7 @@ function RecetaEditor({
 
           {items.length === 0 ? (
             <p className="text-sm text-muted text-center py-8 border border-dashed border-edge rounded-xl">
-              Todavía no hay ingredientes. Búscalos arriba y agrega al menos dos a la receta.
+              Todavía no hay ingredientes. Búscalos arriba y agrega al menos uno a la receta.
             </p>
           ) : (
             <div className="rounded-xl border border-edge overflow-hidden">
@@ -880,10 +881,6 @@ function RecetaEditor({
               El costo de los ingredientes supera el precio de venta: esta receta se vendería a pérdida.
             </p>
           )}
-          {items.length === 1 && (
-            <p className="text-xs text-muted">Falta al menos un ingrediente más: una receta necesita mínimo dos.</p>
-          )}
-
           <div className="flex justify-end">
             <button type="button" onClick={siguienteDesdeReceta} className="btn-ghost">
               Siguiente: Variantes y complementos <Icon.chevronRight width={16} height={16} />

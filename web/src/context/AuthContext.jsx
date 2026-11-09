@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { api, token } from '../lib/api'
 import { getSocket } from '../lib/socket'
+import { olvidarCodigoRecordado } from '../lib/codigoRecordado'
 
 const AuthContext = createContext(null)
 
@@ -25,6 +26,10 @@ export function AuthProvider({ children }) {
   function logout() {
     token.clear()
     setSession(null)
+    // Cerrar sesion siempre vuelve a pedir el codigo de empleado la proxima
+    // vez, aunque entre el mismo usuario y no se haya cerrado la pestana
+    // (sessionStorage por si solo no distingue eso).
+    olvidarCodigoRecordado()
   }
 
   // Tras editar nombre/logo del bar en /configuracion, la sesion en memoria

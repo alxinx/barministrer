@@ -753,21 +753,26 @@ export default function Distribucion() {
       </div>
 
       <div className="grid lg:grid-cols-[1fr_320px] gap-5 items-start">
-        <FloorPlan
-          zone={zone}
-          editable
-          blockMode={blockMode}
-          selectedId={selected?.item.id}
-          onSelect={(kind, item) => setSelected({ kind, item })}
-          onMove={move}
-          onResize={resize}
-          onRotate={rotateElemento}
-          onBlockCell={setBlockedCell}
-          onGestureStart={iniciarGesto}
-          onGestureEnd={terminarGesto}
-          onElementContextMenu={fusionarElemento}
-          onTableContextMenu={fusionarMesa}
-        />
+        {/* min-w-0: mismo fix que NuevaVenta.jsx -- sin esto el plano (con su
+            aspect-ratio) no encoge y empuja el panel de la derecha fuera de
+            la pantalla en vez de achicarse. */}
+        <div className="min-w-0">
+          <FloorPlan
+            zone={zone}
+            editable
+            blockMode={blockMode}
+            selectedId={selected?.item.id}
+            onSelect={(kind, item) => setSelected({ kind, item })}
+            onMove={move}
+            onResize={resize}
+            onRotate={rotateElemento}
+            onBlockCell={setBlockedCell}
+            onGestureStart={iniciarGesto}
+            onGestureEnd={terminarGesto}
+            onElementContextMenu={fusionarElemento}
+            onTableContextMenu={fusionarMesa}
+          />
+        </div>
 
         <div className="space-y-5">
           <section className="card p-4">

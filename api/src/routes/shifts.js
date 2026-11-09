@@ -439,9 +439,12 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
   if (!counts || typeof counts !== 'object') {
     return res.status(400).json({ error: 'Contá cada medio de pago para cerrar el turno' })
   }
-  for (const m of METHODS) {
+  // EGRESOS no es un medio de pago: es la suma de los recibos de gastos y
+  // retiros que el cajero tiene en mano, para cruzarla contra lo que
+  // realmente quedo registrado en el sistema durante el turno.
+  for (const m of [...METHODS, 'EGRESOS']) {
     if (counts[m] === undefined || counts[m] === null || Number(counts[m]) < 0) {
-      return res.status(400).json({ error: `Falta el conteo de ${m.toLowerCase()}` })
+      return res.status(400).json({ error: `Falta el conteo de ${m === 'EGRESOS' ? 'egresos' : m.toLowerCase()}` })
     }
   }
   if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN de quien cierra la caja' })
@@ -456,12 +459,20 @@ shiftRoutes.post('/shifts/:id/close', cajero, async (req, res) => {
   const sales = await resumenVentas(req.auth.tenantId, shift.id)
   const egresosEfectivo = shift.expenses.reduce((sum, e) => sum + Number(e.amount), 0)
 
-  const resultado = METHODS.map((method) => {
-    const recibido = sales.byMethod[method] + sales.abonos.byMethod[method]
-    const expected = method === 'EFECTIVO' ? Number(shift.baseCash) + recibido - egresosEfectivo : recibido
-    const counted = Number(counts[method])
-    return { method, expected, counted, difference: counted - expected }
-  })
+  const resultado = [
+    ...METHODS.map((method) => {
+      const recibido = sales.byMethod[method] + sales.abonos.byMethod[method]
+      const expected = method === 'EFECTIVO' ? Number(shift.baseCash) + recibido - egresosEfectivo : recibido
+      const counted = Number(counts[method])
+      return { method, expected, counted, difference: counted - expected }
+    }),
+    {
+      method: 'EGRESOS',
+      expected: egresosEfectivo,
+      counted: Number(counts.EGRESOS),
+      difference: Number(counts.EGRESOS) - egresosEfectivo,
+    },
+  ]
 
   const updated = await prisma.shift.update({
     where: { id: shift.id },

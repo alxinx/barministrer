@@ -3,13 +3,24 @@ import { api } from '../lib/api'
 import PinField from './PinField'
 import { usePinVerificado } from '../hooks/usePinVerificado'
 
+const GRACIA_MS = 60_000
+
 /**
- * Devolver un producto ya pedido: necesita motivo y el PIN de un encargado.
- * Si la linea tiene mas de una unidad, tambien se puede elegir cuantas
- * devolver -- "se pidieron 3, llegaron 4" se corrige devolviendo 1, sin
- * tener que anular las 4 y volver a mandar 3.
+ * Devolver un producto ya pedido. Dentro del minuto de gracia (desde que el
+ * item llego a la cuenta -- orderedAt) es corregir un toque reciente, no
+ * devolver algo que ya se sirvio: sin motivo, sin PIN, cualquier rol. Pasado
+ * ese minuto hace falta justificar: el admin nunca necesita PIN (ya tiene
+ * autoridad plena), cajero y mesero si, con su PROPIO PIN -- no el de un
+ * encargado -- para que quede registrado quien lo autorizo sin depender de
+ * que haya un admin presente. El servidor vuelve a validar todo esto por su
+ * cuenta (ver POST /orders/:id/items/:itemId/void); esto solo decide que
+ * pedirle al operador.
  */
-export default function DevolverModal({ item, onCancel, onDevuelto }) {
+export default function DevolverModal({ item, role, onCancel, onDevuelto }) {
+  const dentroDeGracia = Date.now() - new Date(item.orderedAt).getTime() < GRACIA_MS
+  const necesitaPin = !dentroDeGracia && role !== 'ADMIN'
+  const necesitaMotivo = !dentroDeGracia
+
   const {
     pin,
     setPin,
@@ -28,15 +39,17 @@ export default function DevolverModal({ item, onCancel, onDevuelto }) {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const completo = (!necesitaMotivo || reason.trim()) && (!necesitaPin || pinValido)
+
   async function confirmar() {
-    if (!pinValido || !reason.trim()) return
+    if (!completo) return
     setSaving(true)
     setError('')
     try {
-      const updated = await api(`/orders/${item.orderId}/items/${item.id}/void`, {
-        method: 'PATCH',
-        body: { pin, reason: reason.trim(), qty },
-      })
+      const body = { qty }
+      if (necesitaMotivo) body.reason = reason.trim()
+      if (necesitaPin) body.pin = pin
+      const updated = await api(`/orders/${item.orderId}/items/${item.id}/void`, { method: 'PATCH', body })
       onDevuelto(updated)
     } catch (err) {
       setError(err.message)
@@ -51,7 +64,12 @@ export default function DevolverModal({ item, onCancel, onDevuelto }) {
         <h2 className="text-lg font-bold">Devolver producto</h2>
         <p className="text-sm text-muted">
           {item.name}
-          {item.variantName ? ` · ${item.variantName}` : ''} — necesita el PIN del encargado.
+          {item.variantName ? ` · ${item.variantName}` : ''}
+          {dentroDeGracia
+            ? ' — todavía estás a tiempo de corregirlo sin justificar.'
+            : necesitaPin
+              ? ' — necesita tu PIN y el motivo.'
+              : ' — necesita el motivo.'}
         </p>
 
         {error && (
@@ -86,34 +104,35 @@ export default function DevolverModal({ item, onCancel, onDevuelto }) {
           </div>
         )}
 
-        <div>
-          <label className="label">Motivo</label>
-          <input
-            className="field"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="El cliente no lo pidió"
-            autoFocus
+        {necesitaMotivo && (
+          <div>
+            <label className="label">Motivo</label>
+            <input
+              className="field"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="El cliente no lo pidió"
+              autoFocus
+            />
+          </div>
+        )}
+        {necesitaPin && (
+          <PinField
+            pin={pin}
+            onChange={setPin}
+            verificando={verificandoPin}
+            error={pinError}
+            bloqueado={pinBloqueado}
+            segundosRestantes={pinSegundosRestantes}
+            label="Tu PIN"
           />
-        </div>
-        <PinField
-          pin={pin}
-          onChange={setPin}
-          verificando={verificandoPin}
-          error={pinError}
-          bloqueado={pinBloqueado}
-          segundosRestantes={pinSegundosRestantes}
-        />
+        )}
 
         <div className="flex gap-3">
           <button onClick={onCancel} className="btn-ghost flex-1">
             Cancelar
           </button>
-          <button
-            onClick={confirmar}
-            disabled={saving || !pinValido || !reason.trim()}
-            className="btn-danger flex-1"
-          >
+          <button onClick={confirmar} disabled={saving || !completo} className="btn-danger flex-1">
             {saving ? 'Devolviendo…' : item.qty > 1 ? `Devolver ${qty}` : 'Devolver'}
           </button>
         </div>

@@ -8,6 +8,19 @@ export const METHODS = [
 ]
 
 export const METHOD_LABEL = Object.fromEntries(METHODS.map((m) => [m.key, m.label]))
+// No es un medio de pago (por eso no vive en METHODS: rompería las tarjetas
+// de ventas por medio, el selector de cierre de cuenta, etc.), pero
+// comparte el mismo renglón "esperado vs. contado" del cuadre de caja --
+// ver ConfirmarCierreModal en Caja.jsx y POST /shifts/:id/close.
+METHOD_LABEL.EGRESOS = 'Egresos (recibos)'
+
+// Mismo calculo que el servidor al cerrar turno (POST /shifts/:id/close): solo
+// para mostrarle al operador un preview antes de cerrar -- el valor que manda
+// es el que recalcula el servidor en la misma transaccion del cierre.
+export function esperadoPorMetodo(method, { baseCash, sales, totalEgresos }) {
+  const recibido = (sales.byMethod?.[method] || 0) + (sales.abonos?.byMethod?.[method] || 0)
+  return method === 'EFECTIVO' ? Number(baseCash) + recibido - totalEgresos : recibido
+}
 
 const TIPO_METODO = { BANCO: 'TRANSFERENCIA', BILLETERA: 'NEQUI' }
 

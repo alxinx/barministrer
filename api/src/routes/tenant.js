@@ -21,7 +21,7 @@ const CAMPOS_PERMISOS = [
   'cajeroGestionaUsuarios',
   'cajeroAplicaDescuentos',
 ]
-const CAMPOS_BOOLEANOS = [...CAMPOS_PERMISOS, 'autoEnviarPedido']
+const CAMPOS_BOOLEANOS = [...CAMPOS_PERMISOS, 'propinaPorDefecto']
 
 tenantRoutes.get('/tenant', soloAdmin, async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth.tenantId } })
@@ -49,6 +49,19 @@ tenantRoutes.patch('/tenant', soloAdmin, async (req, res) => {
   if (req.body.theme !== undefined) {
     if (!TEMAS.includes(req.body.theme)) return res.status(400).json({ error: 'Ese tema no existe' })
     data.theme = req.body.theme
+  }
+  if (req.body.propinaPorcentaje !== undefined) {
+    // Vacio/null apaga la propina del todo (el switch ni aparece en el
+    // cierre de cuenta), no solo la deja en 0 -- distinguir "no configurada"
+    // de "configurada en 0%" no tiene ningun uso real.
+    const valor = req.body.propinaPorcentaje
+    if (valor === null || valor === '') {
+      data.propinaPorcentaje = null
+    } else if (Number.isNaN(Number(valor)) || Number(valor) < 0 || Number(valor) > 100) {
+      return res.status(400).json({ error: 'La propina debe ser un porcentaje entre 0 y 100' })
+    } else {
+      data.propinaPorcentaje = Number(valor)
+    }
   }
 
   const tenant = await prisma.tenant.update({ where: { id: req.auth.tenantId }, data })

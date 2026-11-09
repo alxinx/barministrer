@@ -281,6 +281,27 @@
     animation: pre-pedido-estroboscopico 0.5s steps(1, end) infinite;
   }
 
+  /* Minuto de gracia para devolver sin justificar (ver DevolverModal): una
+     barrita que se achica de llena a vacia en 60s, mismo truco del
+     animation-delay negativo que el crawl de pre-pedido -- el navegador
+     sigue el conteo solo, sin que React tenga que re-renderizar cada
+     segundo. forwards la deja en 0 (invisible) una vez se acaba el minuto,
+     y si el item ya nacio con mas de 60s de antiguedad (delay mas negativo
+     que la duracion), arranca directo en ese final: nunca "reaparece" llena
+     por error. */
+  @keyframes devolucion-gracia {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+  .animate-devolucion-gracia {
+    animation: devolucion-gracia 60s linear forwards;
+    transform-origin: left;
+  }
+
   /* Vuelo del producto tocado hasta la tarjeta de "Cuenta de la mesa": los
      puntos de salida y llegada cambian en cada toque (posicion real en
      pantalla), asi que van como variables inline en vez de keyframes fijos;
@@ -354,6 +375,14 @@
     background-color: rgba(224, 82, 82, 0.55) !important;
     border-color: #e05252 !important;
     box-shadow: none !important;
+  }
+
+  /* No hay forma correcta de "congelar" esto en su punto exacto sin el
+     reloj animado (daria una lectura falsa, llena o vacia, segun cuando se
+     haya montado la pagina): se oculta del todo. El boton "Devolver" sigue
+     ahi iguales; el servidor decide igual si hace falta PIN y motivo. */
+  .animate-devolucion-gracia {
+    display: none !important;
   }
 }
 

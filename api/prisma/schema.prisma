@@ -96,6 +96,15 @@ model Tenant {
   // /configuracion/datos.
   receiptFooter String?
 
+  // Propina sugerida al cerrar cuenta (ver CerrarCuentaModal): null/0 = el
+  // bar no la usa, el switch ni aparece. propinaPorDefecto solo decide si ese
+  // switch nace prendido o apagado -- el operador lo puede cambiar siempre
+  // antes de cobrar. Pendiente de implementar: impuestos (cada tenant podra
+  // configurar el que le aplique por ley) -- la tirilla ya deja el espacio
+  // listo, pero el campo todavia no existe.
+  propinaPorcentaje Decimal? @db.Decimal(5, 2)
+  propinaPorDefecto Boolean  @default(false)
+
   // Permisos especiales: por defecto todo sigue como esta (solo ADMIN). El
   // dueno del bar los prende si quiere delegarle algo puntual al cajero.
   // Cada flag es una frontera real que ya existe en el codigo, no un mock.
@@ -119,11 +128,6 @@ model Tenant {
   /// plataforma puede restaurarlo, ver /plataforma/tenants/:id), asi que no
   /// todos los bares lo necesitan prendido de entrada.
   permiteEliminarProductos Boolean @default(false)
-
-  /// Si al agregar el ultimo producto de un pedido directo (admin) pasan 5s
-  /// sin que de clic en "Enviar pedido a la barra", se envia solo. No aplica
-  /// al pre-pedido de mesera/cajero, que siempre necesita aprobacion de otro.
-  autoEnviarPedido Boolean @default(true)
 
   users      User[]
   categories Category[]
@@ -1021,6 +1025,11 @@ model Order {
   /// mostrar valor original, descuento y valor pagado por separado.
   discountAmount     Decimal @db.Decimal(12, 2) @default(0)
   discountAppliedById String?
+
+  /// Propina sumada al total a cobrar (pesos, foto del momento del cierre --
+  /// igual que discountAmount, el % del tenant puede cambiar despues sin
+  /// alterar facturas ya cerradas). 0 = no hubo.
+  tipAmount Decimal @db.Decimal(12, 2) @default(0)
 
   openedById String
   closedById String?

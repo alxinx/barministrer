@@ -227,9 +227,7 @@ export default function Shell({ children }) {
               </div>
             ) : (
               <div className="flex items-center gap-2.5">
-                <span className="w-8 h-8 rounded-lg bg-amber grid place-items-center text-night font-extrabold shrink-0">
-                  B
-                </span>
+                <img src="/img/isotipo.webp" alt="" className="w-8 h-8 rounded-lg shrink-0" />
                 <div>
                   <p className="font-bold leading-none">Barminister</p>
                   <p className="text-xs text-sidebarMuted mt-1">{session?.tenant.name}</p>

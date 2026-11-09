@@ -4,7 +4,7 @@ import { getSocket } from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
 import { useShift } from '../context/ShiftContext'
 import FloorPlan from '../components/FloorPlan'
-import MoneyInput from '../components/MoneyInput'
+import BigMoneyInput from '../components/BigMoneyInput'
 import PinField from '../components/PinField'
 import { usePinVerificado } from '../hooks/usePinVerificado'
 import CerrarCuentaModal from '../components/CerrarCuentaModal'
@@ -26,16 +26,16 @@ const estados = [
 ]
 
 export default function NuevaVenta() {
-  const { session, refreshSession } = useAuth()
+  const { session } = useAuth()
   const [zones, setZones] = useState([])
   const [activeZone, setActiveZone] = useState(null)
   const [table, setTable] = useState(null)
   const [order, setOrder] = useState(null) // cuenta abierta de la mesa, si hay
   const [products, setProducts] = useState([])
   const [search, setSearch] = useState('')
-  const [lines, setLines] = useState([]) // nueva ronda, aun no enviada
   const { shift, setShift } = useShift() // compartido con Caja: un solo fetch por sesion
   const [avisoVisto, setAvisoVisto] = useState(false)
+  const [abriendoTurno, setAbriendoTurno] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [cerrando, setCerrando] = useState(false)
   const [devolviendo, setDevolviendo] = useState(null) // item a devolver
@@ -58,16 +58,8 @@ export default function NuevaVenta() {
   const [enviandoPrePedido, setEnviandoPrePedido] = useState(false)
   const [ahora, setAhora] = useState(() => Date.now()) // tick para refrescar "hace Xm" sin recargar nada
   const [vuelos, setVuelos] = useState([]) // clones animados "volando" del producto tocado a la cuenta
-  // "Ya enviado" (lo facturado) y "Por enviar" (la ronda nueva) en pestanas
-  // separadas cuando hay de los dos: apiladas, las dos listas empujan
-  // productos sugeridos fuera de pantalla igual que pasaba antes del tope de
-  // 3 filas. Arranca en "enviados" (lo que ya tiene la mesa al abrirla) y
-  // salta sola a "porEnviar" en cuanto se toca el primer producto nuevo.
-  const [pestanaCuenta, setPestanaCuenta] = useState('enviados')
-  const [hayMasPorEnviar, setHayMasPorEnviar] = useState(false) // "por enviar" desbordo sus 3 filas visibles, hay mas abajo
-  const [hayMasArribaPorEnviar, setHayMasArribaPorEnviar] = useState(false) // se hizo scroll: quedaron productos tapados arriba
-  const [hayMasEnviados, setHayMasEnviados] = useState(false) // mismo tope de 3 filas, pero para "ya enviado"
-  const [hayMasArribaEnviados, setHayMasArribaEnviados] = useState(false)
+  const [hayMasEnviados, setHayMasEnviados] = useState(false) // la cuenta desbordo sus 3 filas visibles, hay mas abajo
+  const [hayMasArribaEnviados, setHayMasArribaEnviados] = useState(false) // se hizo scroll: quedaron productos tapados arriba
 
   // abrirVincular crea la cuenta antes de saber si el usuario de verdad va a
   // asociar un cliente; si en ese tiempo ya cambio de mesa, esta referencia es
@@ -77,26 +69,14 @@ export default function NuevaVenta() {
     tableRef.current = table
   }, [table])
 
-  // Con pocas lineas "por enviar" cabe todo; con muchas, empuja productos
-  // sugeridos fuera de pantalla y toca bajar para seguir agregando. Se tapa
-  // la lista a 3 filas (ver abajo) y esto detecta si quedo algo mas abajo sin
-  // ver, para mostrar la flecha de scroll.
-  const porEnviarRef = useRef(null)
+  // Mismo truco que tableRef: agregarProducto encola sus llamadas (ver mas
+  // abajo) y necesita leer la cuenta MAS RECIENTE en cada paso de la cola,
+  // no la que habia cuando se definio el closure.
+  const ordenRef = useRef(null)
   useEffect(() => {
-    const el = porEnviarRef.current
-    if (!el) {
-      setHayMasPorEnviar(false)
-      setHayMasArribaPorEnviar(false)
-      return
-    }
-    const check = () => {
-      setHayMasPorEnviar(el.scrollHeight - el.scrollTop - el.clientHeight > 1)
-      setHayMasArribaPorEnviar(el.scrollTop > 1)
-    }
-    check()
-    el.addEventListener('scroll', check)
-    return () => el.removeEventListener('scroll', check)
-  }, [lines])
+    ordenRef.current = order
+  }, [order])
+  const colaAgregarRef = useRef(Promise.resolve())
 
   const enviadosRef = useRef(null)
 
@@ -191,53 +171,12 @@ export default function NuevaVenta() {
   }, [esEncargado, prePedidos.length])
 
   // Cambiar de mesa o de zona es cambiar de contexto: la busqueda de la mesa
-  // anterior no tiene por que seguir filtrando la de esta. Pero si todavia no
-  // habia mesa (se estaban cargando productos antes de elegir una), esos
-  // productos son para la mesa que se seleccione ahora, no se botan.
-  const mesaAnteriorRef = useRef('__sin_elegir__')
+  // anterior no tiene por que seguir filtrando la de esta.
   useEffect(() => {
-    const anteriorId = mesaAnteriorRef.current
-    const actualId = table?.id ?? null
-    if (anteriorId !== '__sin_elegir__' && anteriorId !== null && anteriorId !== actualId) {
-      setLines([])
-    }
-    mesaAnteriorRef.current = actualId
     setSearch('')
-    setPestanaCuenta('enviados')
     if (table) api(`/orders/by-table/${table.id}`).then(setOrder)
     else setOrder(null)
   }, [table?.id])
-
-  // Primer producto de una ronda nueva: salta a la pestana "Por enviar" para
-  // que el vuelo del producto aterrice en algo visible, en vez de quedar
-  // detras de "Ya enviado" sin que se note que se agrego.
-  const lineasPreviasRef = useRef(0)
-  useEffect(() => {
-    if (lineasPreviasRef.current === 0 && lines.length > 0) setPestanaCuenta('porEnviar')
-    lineasPreviasRef.current = lines.length
-  }, [lines.length])
-
-  // Pedido directo del admin: si no le da clic a "Enviar pedido a la barra"
-  // a los 5s de agregar el ultimo producto, se envia solo. El pre-pedido de
-  // mesera/cajero necesita que alguien mas lo apruebe, por eso nunca se
-  // auto-envia (solo aplica cuando el que carga el pedido es quien lo activa
-  // de una, es decir, el admin). El dueno puede apagar esto desde
-  // /configuracion/operacion; por defecto esta prendido.
-  const autoEnviarPedido = session?.tenant.autoEnviarPedido ?? true
-  useEffect(() => {
-    if (!esAdmin || !autoEnviarPedido || !table || lines.length === 0 || enviando) return
-    const id = setTimeout(() => enviarPedido(), 5000)
-    return () => clearTimeout(id)
-  }, [esAdmin, autoEnviarPedido, table, lines, enviando])
-
-  async function alternarAutoEnviarPedido() {
-    try {
-      await api('/tenant', { method: 'PATCH', body: { autoEnviarPedido: !autoEnviarPedido } })
-      await refreshSession()
-    } catch (err) {
-      show(err)
-    }
-  }
 
   useEffect(() => {
     setSearch('')
@@ -285,12 +224,11 @@ export default function NuevaVenta() {
       .slice(0, 8)
   }, [products, search, popular])
 
-  const total = lines.reduce((sum, l) => sum + Number(l.price) * l.qty, 0)
   const itemsActivos = order?.items?.filter((i) => i.status === 'ACTIVE') || []
   const itemsPendientes = order?.items?.filter((i) => i.status === 'PENDING') || []
   // Al operador le importa lo ultimo que mando a la barra, no lo primero: la
   // API devuelve order.items en orden cronologico (lo necesita el recibo y el
-  // historial), asi que aca se invierte solo para esta pestana.
+  // historial), asi que aca se invierte solo para esta lista.
   const itemsEnviados = (order?.items?.filter((i) => i.status !== 'PENDING') || []).slice().reverse()
 
   // Mismo tope de 3 filas que "por enviar": "ya enviado" puede ser toda la
@@ -371,86 +309,65 @@ export default function NuevaVenta() {
     setTimeout(() => setVuelos((prev) => prev.filter((v) => v.id !== id)), 550)
   }
 
-  function agregar(product, sourceEl) {
-    lanzarVuelo(product, sourceEl)
-    if (product.kind === 'PREPARED') {
-      if (!product.recipe) return
-      const key = `product:${product.id}`
-      setLines((prev) =>
-        prev.find((l) => l.key === key)
-          ? prev.map((l) => (l.key === key ? { ...l, qty: l.qty + 1 } : l))
-          : [
-              ...prev,
-              {
-                key,
-                productId: product.id,
-                variantId: null,
-                name: product.name,
-                variantName: null,
-                color: product.category.color,
-                imageUrl: product.imageUrl,
-                price: product.recipe.price,
-                qty: 1,
-              },
-            ]
-      )
-      return
-    }
-
-    const variant = product.variants.find((v) => v.active)
-    if (!variant) return
-    const key = `variant:${variant.id}`
-    setLines((prev) =>
-      prev.find((l) => l.key === key)
-        ? prev.map((l) => (l.key === key ? { ...l, qty: l.qty + 1 } : l))
-        : [
-            ...prev,
-            {
-              key,
-              productId: product.id,
-              variantId: variant.id,
-              name: product.name,
-              variantName: variant.name,
-              color: product.category.color,
-              imageUrl: product.imageUrl,
-              price: variant.price,
-              qty: 1,
-            },
-          ]
-    )
-  }
-
-  function cambiarCantidad(key, delta) {
-    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, qty: l.qty + delta } : l)).filter((l) => l.qty > 0))
-  }
-
   async function abrirTurnoInline(baseCash, pin) {
     const nuevo = await api('/shifts', { method: 'POST', body: { baseCash, pin } })
     setShift(nuevo)
   }
 
-  // Enviar pedido a la barra: si la mesa no tiene cuenta abierta se crea una;
-  // si ya tiene, esta ronda se suma a la misma cuenta, no abre otra.
-  async function enviarPedido() {
-    setEnviando(true)
-    setError('')
-    try {
-      let actual = order
-      if (!actual) {
-        actual = await api('/orders', { method: 'POST', body: { tableId: table.id } })
-      }
-      const items = lines.map((l) => (l.variantId ? { variantId: l.variantId, qty: l.qty } : { productId: l.productId, qty: l.qty }))
-      const actualizada = await api(`/orders/${actual.id}/items`, { method: 'POST', body: { items } })
-      setOrder(actualizada)
-      setLines([])
-      setJustSent(true)
-      setTimeout(() => setJustSent(false), 1300)
-      recargarZonas()
-    } catch (err) {
-      show(err)
-    } finally {
-      setEnviando(false)
+  // Tocar un producto lo manda a la cuenta de una, sin paso intermedio: si la
+  // mesa no tiene cuenta abierta se crea, si ya tiene se suma. Cada toque
+  // queda como su propia linea (nunca se fusiona con un toque anterior del
+  // mismo producto) para que "devolver sin justificar" (ver DevolverModal)
+  // corrija ese toque puntual sin arrastrar los demas. Los toques se
+  // encolan: si llegan varios seguidos antes de que el primero responda, se
+  // procesan en orden en vez de competir por crear la cuenta dos veces.
+  function agregarProducto(product, sourceEl) {
+    lanzarVuelo(product, sourceEl)
+    if (!tableRef.current) return
+
+    // Sin turno abierto no hay a donde mandar el pedido: se ofrece abrir
+    // caja en vez de intentar y fallar (igual que el candado de
+    // SinTurnoOverlay, pero disparado por el primer toque de un producto).
+    if (!turnoAbierto) {
+      if (puedeAbrirTurno) setAbriendoTurno(true)
+      else show({ message: 'No hay un turno abierto. Avísale al cajero que abra caja.' })
+      return
     }
+
+    let item
+    if (product.kind === 'PREPARED') {
+      if (!product.recipe) return
+      item = { productId: product.id, qty: 1 }
+    } else {
+      const variant = product.variants.find((v) => v.active)
+      if (!variant) return
+      item = { variantId: variant.id, qty: 1 }
+    }
+
+    const mesaId = tableRef.current.id
+    colaAgregarRef.current = colaAgregarRef.current.then(async () => {
+      if (tableRef.current?.id !== mesaId) return // cambio de mesa mientras esperaba su turno en la cola
+      setEnviando(true)
+      setError('')
+      try {
+        let actual = ordenRef.current
+        if (!actual) {
+          actual = await api('/orders', { method: 'POST', body: { tableId: mesaId } })
+          ordenRef.current = actual
+          setOrder(actual)
+        }
+        const actualizada = await api(`/orders/${actual.id}/items`, { method: 'POST', body: { items: [item] } })
+        ordenRef.current = actualizada
+        setOrder(actualizada)
+        setJustSent(true)
+        setTimeout(() => setJustSent(false), 1300)
+        recargarZonas()
+      } catch (err) {
+        show(err)
+      } finally {
+        setEnviando(false)
+      }
+    })
   }
 
   // El admin aprueba el pre-pedido que dejo la mesera: recien ahi los items
@@ -713,95 +630,6 @@ export default function NuevaVenta() {
       ]
     : []
 
-  // Contenido de "Por enviar": se usa tal cual con o sin pestanas (cuando no
-  // hay nada ya facturado, no hace falta separar nada y esto va directo).
-  const listaPorEnviar =
-    lines.length === 0 ? (
-      <p className="text-sm text-muted">Nada agregado todavía. Toca un producto de abajo para empezar una ronda nueva.</p>
-    ) : (
-      <>
-        <div className="relative">
-          <ul ref={porEnviarRef} className="space-y-2.5 max-h-32 overflow-y-auto scroll-smooth pr-1">
-            {lines.map((l) => (
-              <li key={l.key} className="flex items-center gap-3">
-                <span
-                  className="w-9 h-9 rounded-lg shrink-0 grid place-items-center overflow-hidden text-[11px] font-bold text-night"
-                  style={!l.imageUrl ? { background: l.color } : undefined}
-                >
-                  {l.imageUrl ? (
-                    <img src={l.imageUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
-                  ) : (
-                    l.name.slice(0, 2).toUpperCase()
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{l.name}</p>
-                  <p className="text-xs text-muted">
-                    {l.variantName || 'Shot'} · {money(l.price)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => cambiarCantidad(l.key, -1)}
-                    className="w-8 h-8 rounded-lg bg-raised border border-edge text-muted hover:text-ink"
-                    aria-label={`Quitar uno de ${l.name}`}
-                  >
-                    −
-                  </button>
-                  <span className="w-6 text-center text-sm font-semibold">{l.qty}</span>
-                  <button
-                    onClick={() => cambiarCantidad(l.key, 1)}
-                    className="w-8 h-8 rounded-lg bg-raised border border-edge text-muted hover:text-ink"
-                    aria-label={`Agregar uno de ${l.name}`}
-                  >
-                    +
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          {/* Degradado de continuidad (no clicable) + una insignia ambar
-              rellena encima, centrada para no taparle los botones +/-
-              a la fila del borde: un icono suelto sin fondo se pierde
-              contra el plano en una noche llena. Arriba o abajo segun
-              de que lado quedo tapado algo al hacer scroll. */}
-          {hayMasArribaPorEnviar && (
-            <div className="pointer-events-none absolute top-0 inset-x-0 h-7 bg-gradient-to-b from-surface to-transparent rounded-t-xl" />
-          )}
-          {hayMasPorEnviar && (
-            <div className="pointer-events-none absolute bottom-0 inset-x-0 h-7 bg-gradient-to-t from-surface to-transparent rounded-b-xl" />
-          )}
-          {hayMasArribaPorEnviar && (
-            <button
-              type="button"
-              onClick={() => porEnviarRef.current?.scrollBy({ top: -100, behavior: 'smooth' })}
-              aria-label="Ver productos anteriores"
-              className="absolute top-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
-                         shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
-            >
-              <Icon.chevronDown width={16} height={16} className="rotate-180" />
-            </button>
-          )}
-          {hayMasPorEnviar && (
-            <button
-              type="button"
-              onClick={() => porEnviarRef.current?.scrollBy({ top: 100, behavior: 'smooth' })}
-              aria-label="Ver más productos por enviar"
-              className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
-                         shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
-            >
-              <Icon.chevronDown width={16} height={16} />
-            </button>
-          )}
-        </div>
-        <div className="flex items-baseline justify-between mt-4 pt-4 border-t border-edge">
-          <span className="text-muted text-sm">Nuevo</span>
-          <span className="text-xl font-bold">{money(total)}</span>
-        </div>
-      </>
-    )
-
   return (
     <div className="p-5 md:p-7 max-w-[1500px] mx-auto">
       {vuelos.map((v) => (
@@ -843,8 +671,16 @@ export default function NuevaVenta() {
         />
       )}
 
+      {abriendoTurno && (
+        <AbrirTurnoModal onCancel={() => setAbriendoTurno(false)} onAbrir={abrirTurnoInline} />
+      )}
+
       <div className="grid xl:grid-cols-[1fr_380px] gap-5 items-start">
-        <section>
+        {/* min-w-0: sin esto, un grid item no encoge por debajo del ancho
+            intrinseco de su contenido (el plano, con su aspect-ratio), y en
+            pantallas anchas eso empuja la columna derecha fuera de la
+            pantalla en vez de dejar que el plano se achique. */}
+        <section className="min-w-0">
           <div className="flex gap-2 flex-wrap mb-4">
             {zones.map((z) => {
               const I = zoneIcon[z.icon] || Icon.tables
@@ -992,40 +828,18 @@ export default function NuevaVenta() {
               Volver al plano
             </button>
 
-          <div
-            className={`card select-none sticky top-0 z-10 transition-[padding] duration-200 ${
-              panelCompacto ? 'p-2' : 'p-4'
-            }`}
-            onDoubleClick={abrirVincular}
-          >
-            {table ? (
-              <div className="flex items-baseline gap-3">
-                <span
-                  className={`font-extrabold text-amberText transition-all duration-200 ${
-                    panelCompacto ? 'text-xl' : 'text-mesa'
-                  }`}
-                >
-                  {table.number}
-                </span>
-                <div className="min-w-0">
-                  <p className="font-semibold truncate">{zone?.name}</p>
-                  {!panelCompacto && (
-                    <>
-                      <p className="text-sm text-muted">{table.seats} puestos</p>
-                      {!mesaCerrada && (
-                        <p className="text-xs text-muted/70 mt-0.5">Doble clic para asociar un cliente</p>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            ) : (
+          {!table && (
+            <div className="card p-4">
               <p className="text-sm text-muted">Toca una mesa del plano para abrir su cuenta.</p>
-            )}
-          </div>
+            </div>
+          )}
 
-          {mesaCerrada ? (
-            <div className="card p-4 text-center space-y-3">
+          {table && mesaCerrada && (
+            <div className="card p-4 text-center space-y-3" onDoubleClick={abrirVincular}>
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="font-semibold truncate">{zone?.name}</p>
+                <span className="font-extrabold text-amberText text-mesa shrink-0">{table.number}</span>
+              </div>
               <p className="text-sm text-muted">
                 Esta mesa está cerrada. Ábrela para poder agregar pedidos.
               </p>
@@ -1033,62 +847,63 @@ export default function NuevaVenta() {
                 Abrir mesa
               </button>
             </div>
-          ) : (
-          <>
-          <div ref={cuentaCardRef} className={`card p-4 ${justSent ? 'animate-card-confirm' : ''}`}>
-            <h2 className="font-semibold mb-3 flex items-center justify-between gap-2">
-              <span className="flex items-center gap-2">
-                Cuenta de la mesa
-                {justSent && (
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-libre/15 animate-check-pop">
-                    <svg viewBox="0 0 24 24" className="w-3 h-3">
-                      <path
-                        d="M5 13l4 4L19 7"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        pathLength="1"
-                        strokeDasharray="1"
-                        strokeDashoffset="1"
-                        className="text-libre animate-check-draw"
-                      />
-                    </svg>
-                  </span>
-                )}
-              </span>
-              {esAdmin && (
-                <span className="flex items-center gap-1.5 text-xs font-normal text-muted shrink-0">
-                  Envío automático
-                  <button
-                    type="button"
-                    onClick={alternarAutoEnviarPedido}
-                    title={
-                      autoEnviarPedido
-                        ? 'Envío automático activado: si no le das clic a "Enviar pedido a la barra" en 5s, se envía solo'
-                        : 'Envío automático desactivado: el pedido solo se envía cuando le das clic'
-                    }
-                    aria-label="Envío automático del pedido"
-                    className={`h-5 w-9 rounded-pill relative transition-colors shrink-0 ${
-                      autoEnviarPedido ? 'bg-amber' : 'bg-raised border border-edge'
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-transform ${
-                        autoEnviarPedido ? 'translate-x-4 bg-night' : 'bg-muted'
-                      }`}
-                    />
-                  </button>
-                </span>
-              )}
-            </h2>
+          )}
 
-            {order?.openedBy && (
-              <p className="text-xs text-muted mb-3">
-                Abrió {order.openedBy.name} · {formatHora(order.openedAt)}
-              </p>
-            )}
+          {table && !mesaCerrada && (
+          <>
+          <div
+            ref={cuentaCardRef}
+            className={`card select-none sticky top-0 z-10 transition-[padding] duration-200 ${
+              panelCompacto ? 'p-2' : 'p-4'
+            } ${justSent ? 'animate-card-confirm' : ''}`}
+            onDoubleClick={abrirVincular}
+          >
+            {/* Una sola tarjeta: titulo + numero de mesa fusionados en el
+                encabezado (antes eran dos tarjetas separadas, desperdiciaban
+                espacio vertical). El numero sigue siendo el heroe -- se
+                encoge igual que antes al hacer scroll con contenido largo. */}
+            <div className="flex items-baseline justify-between gap-3 mb-3">
+              <div className="min-w-0">
+                <h2 className="font-semibold flex items-center gap-2 truncate">
+                  Cuenta de la mesa
+                  {justSent && (
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-libre/15 animate-check-pop shrink-0">
+                      <svg viewBox="0 0 24 24" className="w-3 h-3">
+                        <path
+                          d="M5 13l4 4L19 7"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          pathLength="1"
+                          strokeDasharray="1"
+                          strokeDashoffset="1"
+                          className="text-libre animate-check-draw"
+                        />
+                      </svg>
+                    </span>
+                  )}
+                </h2>
+                {!panelCompacto &&
+                  (order?.openedBy ? (
+                    <p className="text-xs text-muted mt-0.5">
+                      Abrió {order.openedBy.name} · {formatHora(order.openedAt)}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted mt-0.5">
+                      {table.seats} puestos · Doble clic para asociar un cliente
+                    </p>
+                  ))}
+              </div>
+              <span
+                className={`font-extrabold text-amberText transition-all duration-200 shrink-0 ${
+                  panelCompacto ? 'text-xl' : 'text-mesa'
+                }`}
+              >
+                {table.number}
+              </span>
+            </div>
 
             {order?.customer && (
               <p className="text-sm text-muted mb-3">
@@ -1108,7 +923,7 @@ export default function NuevaVenta() {
               </p>
             )}
 
-            {!order && lines.length === 0 && (
+            {!order && (
               <p className="text-sm text-muted">
                 Nada agregado todavía. Toca un producto de abajo para empezar el pedido.
               </p>
@@ -1157,148 +972,93 @@ export default function NuevaVenta() {
               </div>
             )}
 
-            {itemsEnviados.length > 0 ? (
+            {itemsEnviados.length > 0 && (
               <div className="mb-4">
-                {/* Ya facturado + ronda nueva en pestanas: apiladas, las dos
-                    listas empujan productos sugeridos fuera de pantalla con
-                    cuentas largas. Sin nada enviado todavia no hay que
-                    separar de nada, asi que "Por enviar" va directo abajo. */}
-                <div className="flex gap-1 mb-3 p-1 rounded-lg bg-raised border border-edge">
-                  <button
-                    type="button"
-                    onClick={() => setPestanaCuenta('enviados')}
-                    className={`flex-1 h-8 rounded-md text-xs font-semibold transition-colors ${
-                      pestanaCuenta === 'enviados' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
-                    }`}
-                  >
-                    Ya enviado
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPestanaCuenta('porEnviar')}
-                    className={`flex-1 h-8 rounded-md text-xs font-semibold transition-colors ${
-                      pestanaCuenta === 'porEnviar' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
-                    }`}
-                  >
-                    Por enviar{lines.length > 0 ? ` (${lines.length})` : ''}
-                  </button>
-                </div>
-
-                {pestanaCuenta === 'enviados' ? (
-                  <div>
-                    <div className="relative">
-                      <ul ref={enviadosRef} className="space-y-2.5 max-h-32 overflow-y-auto scroll-smooth pr-1">
-                        {itemsEnviados.map((it) => (
-                          <li key={it.id} className="flex items-center gap-3">
-                            <ItemThumb item={it} />
-                            <div className="min-w-0 flex-1">
-                              <p className={`text-sm font-medium truncate ${it.status === 'VOIDED' ? 'line-through text-muted' : ''}`}>
-                                {it.name}
-                                {it.variantName ? ` · ${it.variantName}` : ''}
-                                {it.qty > 1 ? ` ×${it.qty}` : ''}
-                              </p>
-                              <p className="text-xs text-muted">
-                                {formatHora(it.orderedAt)} · {money(it.price)}
-                                {it.status === 'VOIDED' && ` · Devuelto: ${it.voidReason}`}
-                              </p>
+                <div className="relative">
+                  <ul ref={enviadosRef} className="space-y-2.5 max-h-32 overflow-y-auto scroll-smooth pr-1">
+                    {itemsEnviados.map((it) => (
+                      <li key={it.id} className="flex items-center gap-3">
+                        <ItemThumb item={it} />
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-sm font-medium truncate ${it.status === 'VOIDED' ? 'line-through text-muted' : ''}`}>
+                            {it.name}
+                            {it.variantName ? ` · ${it.variantName}` : ''}
+                            {it.qty > 1 ? ` ×${it.qty}` : ''}
+                          </p>
+                          <p className="text-xs text-muted">
+                            {formatHora(it.orderedAt)} · {money(it.price)}
+                            {it.status === 'VOIDED' && ` · Devuelto: ${it.voidReason}`}
+                          </p>
+                          {it.status === 'ACTIVE' && (
+                            // Se achica de llena a vacia en 60s: mientras se
+                            // vea, el operador todavia puede devolver este
+                            // item sin PIN ni motivo (ver DevolverModal).
+                            <div className="h-1 rounded-full bg-raised overflow-hidden mt-1.5 max-w-24">
+                              <div
+                                className="h-full bg-libre animate-devolucion-gracia"
+                                style={{ animationDelay: `-${Date.now() - new Date(it.orderedAt).getTime()}ms` }}
+                              />
                             </div>
-                            {it.status === 'ACTIVE' && (
-                              <button
-                                onClick={() => setDevolviendo(it)}
-                                className="text-xs font-semibold text-ocupada hover:underline shrink-0"
-                              >
-                                Devolver
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
+                          )}
+                        </div>
+                        {it.status === 'ACTIVE' && (
+                          <button
+                            onClick={() => setDevolviendo(it)}
+                            className="text-xs font-semibold text-ocupada hover:underline shrink-0"
+                          >
+                            Devolver
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
 
-                      {hayMasArribaEnviados && (
-                        <div className="pointer-events-none absolute top-0 inset-x-0 h-7 bg-gradient-to-b from-surface to-transparent rounded-t-xl" />
-                      )}
-                      {hayMasEnviados && (
-                        <div className="pointer-events-none absolute bottom-0 inset-x-0 h-7 bg-gradient-to-t from-surface to-transparent rounded-b-xl" />
-                      )}
-                      {hayMasArribaEnviados && (
-                        <button
-                          type="button"
-                          onClick={() => enviadosRef.current?.scrollBy({ top: -100, behavior: 'smooth' })}
-                          aria-label="Ver productos anteriores"
-                          className="absolute top-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
-                                     shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
-                        >
-                          <Icon.chevronDown width={16} height={16} className="rotate-180" />
-                        </button>
-                      )}
-                      {hayMasEnviados && (
-                        <button
-                          type="button"
-                          onClick={() => enviadosRef.current?.scrollBy({ top: 100, behavior: 'smooth' })}
-                          aria-label="Ver más productos enviados"
-                          className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
-                                     shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
-                        >
-                          <Icon.chevronDown width={16} height={16} />
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex items-baseline justify-between mt-4 pt-4 border-t border-edge">
-                      <span className="text-muted text-sm">Ya enviado</span>
-                      <span className="font-semibold">{money(order.total)}</span>
-                    </div>
-                  </div>
-                ) : (
-                  listaPorEnviar
-                )}
+                  {hayMasArribaEnviados && (
+                    <div className="pointer-events-none absolute top-0 inset-x-0 h-7 bg-gradient-to-b from-surface to-transparent rounded-t-xl" />
+                  )}
+                  {hayMasEnviados && (
+                    <div className="pointer-events-none absolute bottom-0 inset-x-0 h-7 bg-gradient-to-t from-surface to-transparent rounded-b-xl" />
+                  )}
+                  {hayMasArribaEnviados && (
+                    <button
+                      type="button"
+                      onClick={() => enviadosRef.current?.scrollBy({ top: -100, behavior: 'smooth' })}
+                      aria-label="Ver productos anteriores"
+                      className="absolute top-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
+                                 shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
+                    >
+                      <Icon.chevronDown width={16} height={16} className="rotate-180" />
+                    </button>
+                  )}
+                  {hayMasEnviados && (
+                    <button
+                      type="button"
+                      onClick={() => enviadosRef.current?.scrollBy({ top: 100, behavior: 'smooth' })}
+                      aria-label="Ver más productos enviados"
+                      className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-amber text-night
+                                 shadow-lg shadow-amber/50 grid place-items-center animate-bounce"
+                    >
+                      <Icon.chevronDown width={16} height={16} />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-baseline justify-between mt-4 pt-4 border-t border-edge">
+                  <span className="text-muted text-sm">Total</span>
+                  <span className="font-semibold">{money(order.total)}</span>
+                </div>
               </div>
-            ) : (
-              lines.length > 0 && (
-                <>
-                  <p className="label">Por enviar</p>
-                  {listaPorEnviar}
-                </>
-              )
             )}
 
-            {(() => {
-              const puedeEnviar = lines.length > 0
-              const puedeCerrarCuenta = puedeCobrar && order && itemsActivos.length > 0
-              if (!puedeEnviar && !puedeCerrarCuenta) return null
-              const unidadesPorEnviar = lines.reduce((s, l) => s + l.qty, 0)
-              return (
-                <div className={`grid gap-3 mt-4 ${puedeEnviar && puedeCerrarCuenta ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                  {puedeEnviar && (
-                    <button
-                      onClick={enviarPedido}
-                      disabled={!table || !turnoAbierto || enviando}
-                      title={!turnoAbierto ? 'No hay un turno abierto' : undefined}
-                      className="rounded-2xl border-2 border-amber bg-amber text-night p-2.5 flex flex-col items-center
-                                 gap-0.5 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <Icon.send width={16} height={16} />
-                      <span className="font-bold text-sm text-center leading-tight">
-                        {enviando ? 'Enviando…' : esAdmin ? 'Enviar pedido' : 'Enviar pre-pedido'}
-                      </span>
-                      <span className="text-xs opacity-80 leading-tight">
-                        {unidadesPorEnviar} pendiente{unidadesPorEnviar === 1 ? '' : 's'}
-                      </span>
-                    </button>
-                  )}
-                  {puedeCerrarCuenta && (
-                    <button
-                      onClick={() => setCerrando(true)}
-                      className="rounded-2xl border-2 border-ocupada/60 bg-transparent p-2.5 flex flex-col items-center
-                                 gap-0.5 hover:bg-ocupada/10 transition-colors"
-                    >
-                      <Icon.receipt width={16} height={16} className="text-ocupada" />
-                      <span className="font-bold text-sm text-ink leading-tight">Cerrar cuenta</span>
-                      <span className="text-xs text-ocupada leading-tight">{money(order.total)}</span>
-                    </button>
-                  )}
-                </div>
-              )
-            })()}
+            {puedeCobrar && order && itemsActivos.length > 0 && (
+              <button
+                onClick={() => setCerrando(true)}
+                className="btn-ghost h-14 w-full mt-2 border-ocupada/60 hover:bg-ocupada/10"
+              >
+                <Icon.receipt width={18} height={18} className="text-ocupada" />
+                <span className="font-bold text-ink">Cerrar cuenta</span>
+                <span className="text-ocupada font-semibold ml-1">{money(order.total)}</span>
+              </button>
+            )}
           </div>
 
           <div className="card p-4">
@@ -1329,7 +1089,7 @@ export default function NuevaVenta() {
                 return (
                   <button
                     key={p.id}
-                    onClick={(e) => agregar(p, e.currentTarget)}
+                    onClick={(e) => agregarProducto(p, e.currentTarget)}
                     style={{ borderColor: agotado ? undefined : p.category.color }}
                     className={`grupo-cenefa flex items-center gap-2.5 text-left p-2.5 rounded-xl border
                                hover:bg-surface transition-colors ${
@@ -1384,6 +1144,7 @@ export default function NuevaVenta() {
           puedeDescuento={puedeDescuento}
           tableLabel={tableLabel}
           items={order.items}
+          tenant={session?.tenant}
           onClose={() => setCerrando(false)}
           onConfirm={cerrarCuenta}
         />
@@ -1394,7 +1155,12 @@ export default function NuevaVenta() {
       )}
 
       {devolviendo && (
-        <DevolverModal item={devolviendo} onCancel={() => setDevolviendo(null)} onDevuelto={manejarDevuelto} />
+        <DevolverModal
+          item={devolviendo}
+          role={session?.user.role}
+          onCancel={() => setDevolviendo(null)}
+          onDevuelto={manejarDevuelto}
+        />
       )}
 
       {eliminandoPrePedido && (
@@ -1451,9 +1217,8 @@ export default function NuevaVenta() {
 }
 
 // Miniatura de un item ya en el pedido (pendiente o enviado): la foto real
-// del producto si existe, o las iniciales si no. A diferencia de "lines"
-// (la ronda nueva), el item congelado no guarda el color de la categoria,
-// asi que el respaldo es neutro en vez de ese color.
+// del producto si existe, o las iniciales si no. El item congelado no
+// guarda el color de la categoria, asi que el respaldo es neutro.
 function ItemThumb({ item }) {
   return (
     <span className="w-9 h-9 rounded-lg shrink-0 grid place-items-center overflow-hidden bg-raised border border-edge text-[11px] font-bold text-muted">
@@ -1610,8 +1375,8 @@ function AbrirTurnoModal({ onCancel, onAbrir }) {
         )}
 
         <div>
-          <label className="label">Base inicial (efectivo)</label>
-          <MoneyInput className="field" value={base} onChange={setBase} autoFocus />
+          <label className="label text-center">Base inicial (efectivo)</label>
+          <BigMoneyInput value={base} onChange={setBase} autoFocus />
         </div>
         <PinField
           pin={pin}

@@ -32,8 +32,10 @@ function etiquetaPago(p) {
 export default function ReciboModal({ order, splitCount, tenant, onClose, autoPrint = true }) {
   const items = order.items.filter((i) => i.status === 'ACTIVE')
   const descuento = Number(order.discountAmount) || 0
-  const totalPagado = order.total - descuento
+  const propina = Number(order.tipAmount) || 0
+  const totalPagado = order.total - descuento + propina
   const porPersona = splitCount > 1 ? totalPagado / splitCount : null
+  const mesero = order.openedBy?.name
   const montoCredito = order.payments.filter((p) => p.method === 'CREDITO').reduce((s, p) => s + Number(p.amount), 0)
   const cambioTotal = order.payments
     .filter((p) => p.method === 'EFECTIVO' && Number(p.change) > 0)
@@ -46,7 +48,7 @@ export default function ReciboModal({ order, splitCount, tenant, onClose, autoPr
       { texto: (tenant?.legalName || tenant?.name || 'Barminister').toUpperCase(), centro: true, negrita: true },
     ]
     if (order.invoiceNumber) l.push({ texto: `Factura #${String(order.invoiceNumber).padStart(4, '0')}`, centro: true })
-    l.push({ texto: `Mesa ${order.table?.number}`, centro: true })
+    l.push({ cols: [`Mesa ${order.table?.number}`, mesero || ''] })
     l.push({
       texto: new Date(order.closedAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }),
       centro: true,
@@ -60,19 +62,24 @@ export default function ReciboModal({ order, splitCount, tenant, onClose, autoPr
     if (order.customer?.alias) l.push({ texto: `Alias: ${order.customer.alias}` })
     if (order.customer?.idNumber) l.push({ texto: `Cédula: ${order.customer.idNumber}` })
     l.push({ raya: true })
+    // Una linea por producto (cantidad x nombre -> total de esa linea), no
+    // una por unidad: mas facil de leer con cantidades altas, y es el mismo
+    // formato que ya usa el mensaje de WhatsApp (ver mensajeWhatsapp abajo).
     items.forEach((it) => {
-      for (let unidad = 0; unidad < it.qty; unidad++) {
-        l.push({ cols: [`${it.name}${it.variantName ? ` · ${it.variantName}` : ''}`, money(Number(it.price))] })
-      }
+      l.push({
+        cols: [`${it.qty} x ${it.name}${it.variantName ? ` · ${it.variantName}` : ''}`, money(Number(it.price) * it.qty)],
+      })
     })
     l.push({ raya: true })
-    if (descuento > 0) {
+    // Impuestos: pendiente (cada tenant podra configurar el que le aplique
+    // por ley, ver CLAUDE.md). Cuando exista, su linea va aqui, entre
+    // Subtotal y Descuento/Propina.
+    if (descuento > 0 || propina > 0) {
       l.push({ cols: ['Subtotal', money(order.total)] })
-      l.push({ cols: ['Descuento', `-${money(descuento)}`] })
-      l.push({ cols: ['TOTAL PAGADO', money(totalPagado)], negrita: true })
-    } else {
-      l.push({ cols: ['TOTAL', money(order.total)], negrita: true })
+      if (descuento > 0) l.push({ cols: ['Descuento', `-${money(descuento)}`] })
+      if (propina > 0) l.push({ cols: ['Propina', `+${money(propina)}`] })
     }
+    l.push({ cols: ['TOTAL A PAGAR', money(totalPagado)], negrita: true })
     if (order.isCourtesy) {
       l.push({ feed: 1 }, { texto: 'CORTESÍA', centro: true, negrita: true, grande: true }, { feed: 1 })
     } else {
@@ -134,11 +141,12 @@ export default function ReciboModal({ order, splitCount, tenant, onClose, autoPr
       ),
       '',
     ]
-    if (descuento > 0) {
-      lineas.push(`Subtotal: ${money(order.total)}`, `Descuento: -${money(descuento)}`, `*TOTAL PAGADO: ${money(totalPagado)}*`)
-    } else {
-      lineas.push(`*TOTAL: ${money(order.total)}*`)
+    if (descuento > 0 || propina > 0) {
+      lineas.push(`Subtotal: ${money(order.total)}`)
+      if (descuento > 0) lineas.push(`Descuento: -${money(descuento)}`)
+      if (propina > 0) lineas.push(`Propina: +${money(propina)}`)
     }
+    lineas.push(`*TOTAL A PAGAR: ${money(totalPagado)}*`)
     if (porPersona) lineas.push('', `Dividido entre ${splitCount}: ${money(porPersona)} c/u`)
     lineas.push('', 'Gracias por su visita')
     return lineas.join('\n')
@@ -163,8 +171,11 @@ export default function ReciboModal({ order, splitCount, tenant, onClose, autoPr
           <ReciboEncabezado tenant={tenant} />
           <div className="text-center space-y-0.5 mt-1">
             {order.invoiceNumber && <p>Factura #{String(order.invoiceNumber).padStart(4, '0')}</p>}
-            <p>Mesa {order.table?.number}</p>
             <p>{new Date(order.closedAt).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}</p>
+          </div>
+          <div className="flex justify-between mt-1">
+            <span>Mesa {order.table?.number}</span>
+            {mesero && <span>{mesero}</span>}
           </div>
 
           <div className="my-2 border-t border-dashed border-black/40" />
@@ -179,42 +190,46 @@ export default function ReciboModal({ order, splitCount, tenant, onClose, autoPr
           <div className="my-2 border-t border-dashed border-black/40" />
 
           <div className="space-y-1">
-            {items.flatMap((it) =>
-              Array.from({ length: it.qty }, (_, unidad) => (
-                <div key={`${it.id}-${unidad}`} className="flex justify-between gap-2">
-                  <span className="flex-1">
-                    {it.name}
-                    {it.variantName ? ` · ${it.variantName}` : ''}
-                  </span>
-                  <span className="shrink-0">{money(Number(it.price))}</span>
-                </div>
-              ))
-            )}
+            {items.map((it) => (
+              <div key={it.id} className="flex justify-between gap-2">
+                <span className="flex-1">
+                  {it.qty} x {it.name}
+                  {it.variantName ? ` · ${it.variantName}` : ''}
+                </span>
+                <span className="shrink-0">{money(Number(it.price) * it.qty)}</span>
+              </div>
+            ))}
           </div>
 
           <div className="my-2 border-t border-dashed border-black/40" />
 
-          {descuento > 0 ? (
+          {/* Impuestos: pendiente (cada tenant podra configurar el que le
+              aplique por ley, ver CLAUDE.md). Cuando exista, su linea va
+              aqui, entre Subtotal y Descuento/Propina. */}
+          {(descuento > 0 || propina > 0) && (
             <>
               <div className="flex justify-between">
                 <span>Subtotal</span>
                 <span>{money(order.total)}</span>
               </div>
-              <div className="flex justify-between">
-                <span>Descuento</span>
-                <span>-{money(descuento)}</span>
-              </div>
-              <div className="flex justify-between font-bold text-sm">
-                <span>TOTAL PAGADO</span>
-                <span>{money(totalPagado)}</span>
-              </div>
+              {descuento > 0 && (
+                <div className="flex justify-between">
+                  <span>Descuento</span>
+                  <span>-{money(descuento)}</span>
+                </div>
+              )}
+              {propina > 0 && (
+                <div className="flex justify-between">
+                  <span>Propina</span>
+                  <span>+{money(propina)}</span>
+                </div>
+              )}
             </>
-          ) : (
-            <div className="flex justify-between font-bold text-sm">
-              <span>TOTAL</span>
-              <span>{money(order.total)}</span>
-            </div>
           )}
+          <div className="flex justify-between font-bold text-sm">
+            <span>TOTAL A PAGAR</span>
+            <span>{money(totalPagado)}</span>
+          </div>
 
           {order.isCourtesy ? (
             <p className="text-center font-bold text-lg my-3 tracking-wide">CORTESÍA</p>
