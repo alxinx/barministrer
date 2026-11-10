@@ -20,15 +20,22 @@ export function signToken(user) {
 
 // Mismo verify que requireAuth, para autenticar la conexion de websocket con
 // el mismo token de sesion en vez de inventar un segundo mecanismo de login.
-export function verifyToken(token) {
+export async function verifyToken(token) {
   const payload = jwt.verify(token, SECRET)
-  return { userId: payload.sub, tenantId: payload.tenantId, role: payload.role, name: payload.name }
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    select: { id: true, tenantId: true, role: true, name: true, active: true, tenant: { select: { active: true } } },
+  })
+  if (!user?.active || !user.tenant.active || user.tenantId !== payload.tenantId) {
+    throw new Error('La sesion expiro. Vuelve a entrar.')
+  }
+  return { userId: user.id, tenantId: user.tenantId, role: user.role, name: user.name }
 }
 
 /**
- * Inyecta req.auth = { userId, tenantId, role }.
- * El tenantId SIEMPRE sale del token, nunca del body ni del query. Esa es la
- * unica barrera que impide que un bar lea los datos de otro.
+ * Inyecta req.auth = { userId, tenantId, role } desde el estado actual de la
+ * cuenta. El tenant del token debe coincidir; ni el cliente ni un claim viejo
+ * pueden cambiar el tenant o conservar un rol que ya fue retirado.
  *
  * Tambien revisa que el usuario (y su tenant) sigan activos: el token dura
  * hasta 12h, y desactivar a alguien (empleado que sale, sospecha de PIN)
@@ -40,24 +47,37 @@ export async function requireAuth(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return res.status(401).json({ error: 'Falta el token de sesion' })
 
+  let payload
   try {
-    const payload = jwt.verify(token, SECRET)
+    payload = jwt.verify(token, SECRET)
+  } catch {
+    return res.status(401).json({ error: 'La sesion expiro. Vuelve a entrar.' })
+  }
+
+  try {
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { active: true, tenant: { select: { active: true } } },
+      select: {
+        id: true,
+        tenantId: true,
+        role: true,
+        name: true,
+        active: true,
+        tenant: { select: { active: true } },
+      },
     })
-    if (!user?.active || !user.tenant.active) {
+    if (!user?.active || !user.tenant.active || user.tenantId !== payload.tenantId) {
       return res.status(401).json({ error: 'La sesion expiro. Vuelve a entrar.' })
     }
     req.auth = {
-      userId: payload.sub,
-      tenantId: payload.tenantId,
-      role: payload.role,
-      name: payload.name,
+      userId: user.id,
+      tenantId: user.tenantId,
+      role: user.role,
+      name: user.name,
     }
     next()
-  } catch {
-    res.status(401).json({ error: 'La sesion expiro. Vuelve a entrar.' })
+  } catch (error) {
+    next(error)
   }
 }
 

@@ -142,6 +142,7 @@ export default function ProductoForm({ categories, product, initialName, onClose
   const options = useMemo(() => flattenCategories(categoryTree(categories)), [categories])
   const category = categories.find((c) => c.id === categoryId)
   const allowsPour = Boolean(category?.allowsPour)
+  const tieneStockInicial = !isEdit && !esPrepared && variants.some((variant) => Number(variant.stock) > 0)
 
   function setVariant(i, patch) {
     setVariants((prev) => prev.map((v, idx) => (idx === i ? { ...v, ...patch } : v)))
@@ -153,9 +154,10 @@ export default function ProductoForm({ categories, product, initialName, onClose
     if (!name.trim()) return setError('El producto necesita un nombre')
     if (!categoryId) return setError('Elige una categoría')
     if (esPrepared && !pinValido) return setError('Escribe el PIN del encargado para guardar cambios en una receta')
+    if (tieneStockInicial && !pinValido) return setError('Escribe el PIN del encargado para registrar el stock inicial')
 
     const body = { name: name.trim(), categoryId, imageUrl: imageUrl || null }
-    if (esPrepared) body.pin = pin
+    if (esPrepared || tieneStockInicial) body.pin = pin
     if (!esPrepared) {
       const clean = variants.filter((v) => v.name.trim())
       if (!clean.length) return setError('Agrega al menos una presentación')
@@ -481,7 +483,7 @@ export default function ProductoForm({ categories, product, initialName, onClose
                     placeholder="Sin avisar"
                   />
                 </div>
-                {!isEdit && (
+                {!isEdit && esAdminReal && (
                   <div className="w-20">
                     <label className="label text-xs">Stock</label>
                     <input
@@ -503,6 +505,21 @@ export default function ProductoForm({ categories, product, initialName, onClose
                 )}
               </div>
             ))}
+            {tieneStockInicial && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted">
+                  El stock inicial quedará en el historial como ajuste y requiere autorización de un encargado.
+                </p>
+                <PinField
+                  pin={pin}
+                  onChange={setPin}
+                  verificando={verificandoPin}
+                  error={pinError}
+                  bloqueado={pinBloqueado}
+                  segundosRestantes={pinSegundosRestantes}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -605,7 +622,11 @@ export default function ProductoForm({ categories, product, initialName, onClose
           <button type="button" onClick={onClose} className="btn-ghost flex-1">
             Cancelar
           </button>
-          <button type="submit" disabled={saving || (esPrepared && !pinValido)} className="btn-primary flex-1">
+          <button
+            type="submit"
+            disabled={saving || ((esPrepared || tieneStockInicial) && !pinValido)}
+            className="btn-primary flex-1"
+          >
             {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear producto'}
           </button>
         </div>

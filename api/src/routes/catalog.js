@@ -9,6 +9,7 @@ import { costoDeReceta } from '../lib/costos.js'
 import { tituloInteligente } from '../lib/texto.js'
 import { calcularRotacionSemanal, rangoSemanasCompletas } from '../lib/rotacion.js'
 import { sumarDias } from '../lib/fechas.js'
+import { avisarTenant } from '../lib/realtime.js'
 
 export const catalogRoutes = Router()
 const adminOnly = requirePermission('cajeroEditaCatalogo')
@@ -340,6 +341,26 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
     return res.status(201).json({ ...product, costoReceta: costoDeReceta(product.recipe?.items) })
   }
 
+  if (!Array.isArray(variants)) {
+    return res.status(400).json({ error: 'Las presentaciones del producto no son válidas' })
+  }
+  const stocksIniciales = variants.map((variant) => Number(variant.stock ?? 0))
+  if (stocksIniciales.some((stock) => !Number.isSafeInteger(stock) || stock < 0 || stock > 2147483647)) {
+    return res.status(400).json({ error: 'El stock inicial debe ser un número entero igual o mayor a cero' })
+  }
+  const tieneStockInicial = stocksIniciales.some((stock) => stock > 0)
+  let responsableStockInicialId = null
+  if (tieneStockInicial) {
+    if (req.auth.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Solo un administrador puede registrar el stock inicial del producto' })
+    }
+    if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN del encargado para registrar el stock inicial' })
+    if (await pinLimitExcedido(req, res)) return
+    const encargado = await verificarPin(req.auth.tenantId, pin)
+    if (!encargado) return pinIncorrecto(req, res)
+    responsableStockInicialId = encargado.id
+  }
+
   // Si la categoria permite venta por ml, cada presentacion debe declarar su
   // volumen: sin eso el sistema no sabe cuantos shots salen al abrirla.
   if (category.allowsPour) {
@@ -351,27 +372,42 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
     }
   }
 
-  const product = await prisma.product.create({
-    data: {
-      tenantId: req.auth.tenantId,
-      categoryId,
-      name: tituloInteligente(name.trim()),
-      kind,
-      imageUrl: imageUrl || null,
-      variants: {
-        create: variants.map((v, i) => ({
-          name: v.name,
-          price: v.price ?? 0,
-          cost: v.cost ?? 0,
-          volumeMl: v.volumeMl ?? null,
-          stock: v.stock ?? 0,
-          stockMinimo: v.stockMinimo ? Number(v.stockMinimo) : null,
-          sortOrder: i,
-        })),
+  const product = await prisma.$transaction(async (tx) => {
+    const created = await tx.product.create({
+      data: {
+        tenantId: req.auth.tenantId,
+        categoryId,
+        name: tituloInteligente(name.trim()),
+        kind,
+        imageUrl: imageUrl || null,
+        variants: {
+          create: variants.map((v, i) => ({
+            name: v.name,
+            price: v.price ?? 0,
+            cost: v.cost ?? 0,
+            volumeMl: v.volumeMl ?? null,
+            stock: stocksIniciales[i],
+            stockMinimo: v.stockMinimo ? Number(v.stockMinimo) : null,
+            sortOrder: i,
+          })),
+        },
       },
-    },
-    include: { variants: true, category: true },
+      include: { variants: true, category: true },
+    })
+    const movimientos = created.variants
+      .filter((variant) => variant.stock > 0)
+      .map((variant) => ({
+        tenantId: req.auth.tenantId,
+        variantId: variant.id,
+        type: 'ADJUSTMENT',
+        qty: variant.stock,
+        note: 'Stock inicial registrado al crear el producto',
+        createdById: responsableStockInicialId,
+      }))
+    if (movimientos.length) await tx.stockMovement.createMany({ data: movimientos })
+    return created
   })
+  if (tieneStockInicial) avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   res.status(201).json(product)
 })
 

@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { signToken, signPlatformToken, requirePlatformAuth } from '../middleware/auth.js'
 import { loginLimiter, pinLimiter, estadoPin, bloquearPinManual } from '../middleware/rateLimit.js'
-import { avisarTenant } from '../lib/realtime.js'
+import { avisarTenant, desconectarTenant, desconectarUsuario } from '../lib/realtime.js'
 import { formatearTodo, formatearMovimientos, previsualizarFormateoProductos, ejecutarFormateoProductos } from '../lib/formateoTenant.js'
 
 export const platformAuthRoutes = Router()
@@ -201,6 +201,7 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
   if (permiteEliminarProductos !== undefined) data.permiteEliminarProductos = Boolean(permiteEliminarProductos)
 
   const updated = await prisma.tenant.update({ where: { id: tenant.id }, data, include: { rentalPlan: true } })
+  if (active === false && tenant.active) desconectarTenant(tenant.id)
 
   // Avisa en vivo a quien tenga sesion abierta en ese bar: un modulo que se
   // apaga mientras alguien lo esta mirando tiene que desaparecer del menu y
@@ -379,6 +380,7 @@ platformRoutes.patch('/tenants/:tenantId/users/:userId', requirePlatformAuth, as
   }
 
   const updated = await prisma.user.update({ where: { id: user.id }, data: { active } })
+  if (active !== user.active) await desconectarUsuario(user.tenantId, user.id)
   res.json(userPublic(updated))
 })
 

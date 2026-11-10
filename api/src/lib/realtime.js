@@ -25,9 +25,9 @@ export function initRealtime(httpServer, corsOrigins) {
   // el token de sesion para conectar.
   io = new Server(httpServer, { cors: { origin: corsOrigins } })
 
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     try {
-      const auth = verifyToken(socket.handshake.auth?.token)
+      const auth = await verifyToken(socket.handshake.auth?.token)
       socket.data.auth = auth
       next()
     } catch {
@@ -42,6 +42,16 @@ export function initRealtime(httpServer, corsOrigins) {
   })
 
   return io
+}
+
+export async function desconectarUsuario(tenantId, userId) {
+  if (!io) return
+  const sockets = await io.in(salaTenant(tenantId)).fetchSockets()
+  await Promise.all(sockets.filter((socket) => socket.data.auth?.userId === userId).map((socket) => socket.disconnect(true)))
+}
+
+export function desconectarTenant(tenantId) {
+  io?.in(salaTenant(tenantId)).disconnectSockets(true)
 }
 
 export function avisarEncargados(tenantId, event, payload) {

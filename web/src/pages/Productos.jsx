@@ -8,6 +8,8 @@ import ProductoForm from '../components/ProductoForm'
 import CategoriaForm from '../components/CategoriaForm'
 import { unidadesDisponibles } from '../lib/recetas'
 
+const CLAVE_VISTA = 'licorplus:productosVista'
+
 export default function Productos() {
   const { session } = useAuth()
   const isAdmin =
@@ -19,6 +21,13 @@ export default function Productos() {
   const [search, setSearch] = useState('')
   const [target, setTarget] = useState(undefined) // undefined = cerrado, null = nuevo, producto = editar
   const [categoryTarget, setCategoryTarget] = useState(undefined) // idem, para categorias
+  const [vista, setVista] = useState(() => {
+    try {
+      return localStorage.getItem(CLAVE_VISTA) === 'list' ? 'list' : 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
 
   useEffect(() => {
     load()
@@ -73,6 +82,15 @@ export default function Productos() {
     load()
   }
 
+  function cambiarVista(nuevaVista) {
+    setVista(nuevaVista)
+    try {
+      localStorage.setItem(CLAVE_VISTA, nuevaVista)
+    } catch {
+      // La vista sigue funcionando aunque el navegador no permita guardar preferencias.
+    }
+  }
+
   return (
     <div className="p-5 md:p-7 max-w-[1500px] mx-auto">
       <header className="flex items-end justify-between gap-4 flex-wrap mb-6">
@@ -89,7 +107,7 @@ export default function Productos() {
         </button>
       </header>
 
-      <div className="flex gap-3 flex-wrap mb-5">
+      <div className="flex gap-3 flex-wrap items-center mb-5">
         <div className="relative flex-1 min-w-[220px] max-w-sm">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">
             <Icon.search />
@@ -100,6 +118,34 @@ export default function Productos() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+        </div>
+        <div
+          className="ml-auto flex items-center gap-0.5 border border-edge rounded-lg p-0.5 shrink-0"
+          role="group"
+          aria-label="Forma de ver los productos"
+        >
+          <button
+            type="button"
+            onClick={() => cambiarVista('grid')}
+            aria-label="Ver en cuadros"
+            aria-pressed={vista === 'grid'}
+            className={`w-9 h-9 rounded-md grid place-items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber ${
+              vista === 'grid' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+            }`}
+          >
+            <Icon.grid width={16} height={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => cambiarVista('list')}
+            aria-label="Ver en lista"
+            aria-pressed={vista === 'list'}
+            className={`w-9 h-9 rounded-md grid place-items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber ${
+              vista === 'list' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+            }`}
+          >
+            <Icon.list width={16} height={16} />
+          </button>
         </div>
       </div>
 
@@ -170,7 +216,8 @@ export default function Productos() {
               {!c.active && <span className="text-xs text-muted">· categoría desactivada</span>}
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {vista === 'grid' ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
               {cards.map(({ product: p, variant: v }) => {
                 const available = v ? p.available && v.active : p.available
                 const price = v ? v.price : p.recipe?.price
@@ -245,7 +292,76 @@ export default function Productos() {
                   </button>
                 )
               })}
-            </div>
+              </div>
+            ) : (
+              <div className="border-y border-edge overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-muted uppercase tracking-wide">
+                      <th className="py-3 px-3 font-semibold">Producto</th>
+                      <th className="py-3 px-3 font-semibold">Presentación o receta</th>
+                      <th className="py-3 px-3 font-semibold text-right">Precio</th>
+                      <th className="py-3 px-3 font-semibold">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cards.map(({ product: p, variant: v }) => {
+                      const available = v ? p.available && v.active : p.available
+                      const quedan = !v ? unidadesDisponibles(p.recipe?.items) : null
+                      const subtitle = v
+                        ? `${v.name}${v.volumeMl ? ` · ${v.volumeMl} ml` : ''}`
+                        : p.recipe?.items
+                            .map((i) =>
+                              i.insumoId
+                                ? `${i.qty} x ${i.insumo?.name}`
+                                : i.variantId
+                                  ? `${i.qty} x ${i.variant?.product?.name} (${i.variant?.name})`
+                                  : `${i.ml} ml de ${i.sourceProduct?.name}`
+                            )
+                            .join(' + ')
+                      const estado = quedan !== null
+                        ? !available
+                          ? { label: p.active ? 'Categoría apagada' : 'Desactivado', className: 'text-muted border-edge bg-raised' }
+                          : quedan > 0
+                            ? { label: `Quedan ${quedan}`, className: 'text-libre border-libre/40 bg-libre/10' }
+                            : { label: 'Agotado', className: 'text-ocupada border-ocupada/40 bg-ocupada/10' }
+                        : available
+                          ? { label: 'Disponible', className: 'text-libre border-libre/40 bg-libre/10' }
+                          : { label: p.active ? 'Categoría apagada' : 'Desactivado', className: 'text-muted border-edge bg-raised' }
+
+                      return (
+                        <tr key={v ? v.id : p.id} className="border-t border-edge hover:bg-raised/50 transition-colors">
+                          <td className="py-2.5 px-3">
+                            <button
+                              type="button"
+                              onClick={() => setTarget(p)}
+                              aria-label={`Editar ${p.name}`}
+                              className="flex items-center gap-3 text-left rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber"
+                            >
+                              <span className="w-10 h-10 rounded-lg overflow-hidden grid place-items-center text-xs font-bold text-night shrink-0" style={{ background: c.color }}>
+                                {p.imageUrl ? (
+                                  <img src={p.imageUrl} alt="" className="w-full h-full object-cover" />
+                                ) : (
+                                  p.name.slice(0, 2).toUpperCase()
+                                )}
+                              </span>
+                              <span className="font-medium text-ink">{p.name}</span>
+                            </button>
+                          </td>
+                          <td className="py-2.5 px-3 text-muted">{subtitle || '—'}</td>
+                          <td className="py-2.5 px-3 text-right font-medium tabular-nums">{money(v ? v.price : p.recipe?.price)}</td>
+                          <td className="py-2.5 px-3">
+                            <span className={`text-[10px] font-semibold px-2 py-1 rounded-pill border shrink-0 ${estado.className}`}>
+                              {estado.label}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         ))}
 

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
+import { desconectarUsuario } from '../lib/realtime.js'
 
 export const userRoutes = Router()
 
@@ -110,6 +111,9 @@ userRoutes.patch('/users/:id', adminOnly, async (req, res) => {
 
   try {
     const updated = await prisma.user.update({ where: { id: user.id }, data })
+    if ((active !== undefined && active !== user.active) || (role !== undefined && role !== user.role)) {
+      await desconectarUsuario(user.tenantId, user.id)
+    }
     res.json(toPublic(updated))
   } catch (e) {
     if (e.code === 'P2002') return res.status(409).json({ error: 'Ya existe un usuario con ese correo' })
