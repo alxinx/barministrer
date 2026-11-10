@@ -54,6 +54,8 @@ model RentalPlan {
 enum Theme {
   OSCURO
   SEPIA
+  CLARO_LIMA
+  OSCURO_OBSIDIANA
 }
 
 model Tenant {
@@ -65,9 +67,9 @@ model Tenant {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  /// Presentacion de la interfaz para todo el que entre a este tenant. OSCURO
-  /// por defecto: el bar opera de noche con poca luz. SEPIA es la alternativa
-  /// clara para quien opere de dia o con mas luz ambiente.
+  /// Presentacion de la interfaz para todo el que entre a este tenant.
+  /// OSCURO es la opcion por defecto para operar de noche; SEPIA, CLARO_LIMA
+  /// y OSCURO_OBSIDIANA son alternativas visuales.
   theme Theme @default(OSCURO)
   /// Ultimo numero de factura asignado. Una sola secuencia por bar, nunca se
   /// reinicia por turno ni por dia: es lo que pide un control contable serio.

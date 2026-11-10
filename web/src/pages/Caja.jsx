@@ -29,7 +29,7 @@ const PERIODOS = [
 
 const TONOS_TURNO = [
   { fila: 'bg-raised/40 hover:bg-raised', etiqueta: 'text-muted border-edge bg-surface' },
-  { fila: 'bg-amber/5 hover:bg-amber/10', etiqueta: 'text-amberText border-amber/40 bg-amber/10' },
+  { fila: 'bg-warning/5 hover:bg-warning/10', etiqueta: 'text-warningText border-warning/40 bg-warning/10' },
   { fila: 'bg-libre/5 hover:bg-libre/10', etiqueta: 'text-libre border-libre/40 bg-libre/10' },
   { fila: 'bg-ocupada/5 hover:bg-ocupada/10', etiqueta: 'text-ocupada border-ocupada/40 bg-ocupada/10' },
   { fila: 'bg-reservada/5 hover:bg-reservada/10', etiqueta: 'text-reservada border-reservada/40 bg-reservada/10' },
@@ -783,7 +783,7 @@ function TurnoActualCard({ shift, onPedirCierre }) {
               Turno actual
             </p>
             <p className="text-sm font-semibold truncate">{shift.openedBy?.name}</p>
-            <p className="text-xs text-muted">{formatHora(shift.openedAt)} - ahora</p>
+            <p className="text-xs text-muted">{formatFechaHora(shift.openedAt)} - ahora</p>
           </div>
         </div>
         <button onClick={onPedirCierre} className="btn-primary h-9 px-3.5 text-xs shrink-0">

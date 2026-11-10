@@ -34,15 +34,16 @@
 }
 
 @layer base {
-  /* Oscuro (default) y sepia: mismos nombres de token, valores distintos.
-     "night" y "amber" se declaran una sola vez aqui y nunca se repiten en el
-     bloque [data-theme='sepia']: al no pisarse, quedan fijos en ambos temas
-     (ver tailwind.config.js). El resto cambia cuando el tenant elige sepia
-     desde Configuracion > Datos del negocio (AuthContext pone data-theme en
-     <html> segun tenant.theme). */
+  /* OSCURO es el default; los cuatro temas comparten los mismos tokens.
+     En los temas lima, amber es el acento de marca y warning conserva el
+     amarillo/naranja semantico para alertas y estados de inventario. */
   :root {
     --color-night: 14 12 19; /* #0E0C13, fijo en ambos temas */
-    --color-amber: 232 163 61; /* #E8A33D, fijo en ambos temas */
+    --color-amber: 232 163 61; /* #E8A33D */
+    --color-amber-hover: 242 178 85; /* #F2B255 */
+    --color-focus: 232 163 61;
+    --color-warning: 232 163 61;
+    --color-warning-text: 232 163 61;
     --color-canvas: 14 12 19; /* #0E0C13 */
     --color-surface: 23 20 32; /* #171420 */
     --color-raised: 33 29 44; /* #211D2C */
@@ -76,6 +77,8 @@
        original no llega a 4.5:1 como texto sobre el crema de este tema. */
     --color-amber-text: 138 78 16; /* #8A4E10 */
     --color-amber-dim: 107 67 16; /* #6B4310 */
+    --color-warning-text: 138 78 16;
+    --color-focus: 138 78 16;
     --color-libre: 31 92 49; /* #1F5C31 */
     --color-ocupada: 166 50 31; /* #A6321F */
     --color-reservada: 138 78 16; /* #8A4E10, igual al amber-text */
@@ -91,6 +94,56 @@
     --color-sidebar-ocupada: 224 82 82; /* #E05252, la vivida de oscuro, no la opaca de sepia */
   }
 
+  :root[data-theme='lime'] {
+    --color-amber: 132 204 22; /* #84CC16 */
+    --color-amber-hover: 101 163 13; /* #65A30D */
+    --color-amber-text: 77 124 15; /* #4D7C0F */
+    --color-amber-dim: 101 163 13; /* #65A30D */
+    --color-focus: 77 124 15;
+    --color-warning: 217 119 6; /* #D97706 */
+    --color-warning-text: 180 83 9; /* #B45309 */
+    --color-canvas: 248 250 252; /* #F8FAFC */
+    --color-surface: 255 255 255;
+    --color-raised: 241 245 249; /* #F1F5F9 */
+    --color-edge: 226 232 240; /* #E2E8F0 */
+    --color-ink: 15 23 42; /* #0F172A */
+    --color-muted: 71 85 105; /* #475569 */
+    --color-libre: 5 150 105; /* #059669 */
+    --color-ocupada: 220 38 38; /* #DC2626 */
+    --color-reservada: 180 83 9; /* #B45309 */
+    --color-sidebar: 255 255 255;
+    --color-sidebar-raised: 241 245 249;
+    --color-sidebar-edge: 226 232 240;
+    --color-sidebar-ink: 15 23 42;
+    --color-sidebar-muted: 71 85 105;
+    --color-sidebar-ocupada: 220 38 38;
+  }
+
+  :root[data-theme='obsidiana'] {
+    --color-amber: 132 204 22; /* #84CC16 */
+    --color-amber-hover: 101 163 13; /* #65A30D */
+    --color-amber-text: 163 230 53; /* #A3E635 */
+    --color-amber-dim: 77 124 15; /* #4D7C0F */
+    --color-focus: 132 204 22;
+    --color-warning: 245 158 11; /* #F59E0B */
+    --color-warning-text: 251 191 36; /* #FBBF24 */
+    --color-canvas: 10 14 23; /* #0A0E17 */
+    --color-surface: 15 19 28; /* #0F131C */
+    --color-raised: 30 34 48; /* #1E2230 */
+    --color-edge: 51 58 80; /* #333A50 */
+    --color-ink: 248 250 252; /* #F8FAFC */
+    --color-muted: 148 163 184; /* #94A3B8 */
+    --color-libre: 52 211 153; /* #34D399 */
+    --color-ocupada: 248 113 113; /* #F87171 */
+    --color-reservada: 251 191 36; /* #FBBF24 */
+    --color-sidebar: 15 19 28;
+    --color-sidebar-raised: 30 34 48;
+    --color-sidebar-edge: 35 40 56; /* #232838 */
+    --color-sidebar-ink: 248 250 252;
+    --color-sidebar-muted: 148 163 184;
+    --color-sidebar-ocupada: 248 113 113;
+  }
+
   html,
   body,
   #root {
@@ -103,9 +156,24 @@
     font-variant-numeric: tabular-nums;
   }
 
+  :root[data-theme='lime'] body,
+  :root[data-theme='obsidiana'] body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
   /* Foco visible siempre: el POS se opera con teclado en la caja */
   :focus-visible {
-    @apply outline-none ring-2 ring-amber ring-offset-2 ring-offset-night;
+    @apply outline-none ring-2 ring-focus ring-offset-2 ring-offset-canvas;
+  }
+
+  ::selection {
+    color: rgb(var(--color-night));
+    background: rgb(var(--color-amber) / 0.35);
+  }
+
+  input,
+  textarea {
+    caret-color: rgb(var(--color-amber-text));
   }
 
   ::-webkit-scrollbar {
@@ -129,6 +197,10 @@
       10px 0 24px -6px rgb(33 32 29 / 0.25);
   }
 
+  :root[data-theme='lime'] .sidebar-panel {
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.08);
+  }
+
   .card {
     @apply bg-surface border border-edge rounded-2xl;
   }
@@ -139,7 +211,7 @@
            disabled:cursor-not-allowed;
   }
   .btn-primary {
-    @apply btn bg-amber text-night hover:bg-[#F2B255];
+    @apply btn bg-amber text-night hover:bg-amberHover;
   }
   .btn-ghost {
     @apply btn bg-raised text-ink border border-edge hover:border-muted;

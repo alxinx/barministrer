@@ -210,6 +210,24 @@ export default function DatosBar() {
               dotClase="bg-[#8A4E10]"
               textoClase="text-[#241A0E]"
             />
+            <TemaOpcion
+              activo={tenant.theme === 'CLARO_LIMA'}
+              onClick={() => set('theme', 'CLARO_LIMA')}
+              titulo="Clara lima"
+              descripcion="Superficies claras y acento lima para ambientes iluminados."
+              swatchClase="bg-[#F8FAFC]"
+              dotClase="bg-[#84CC16]"
+              textoClase="text-[#0F172A]"
+            />
+            <TemaOpcion
+              activo={tenant.theme === 'OSCURO_OBSIDIANA'}
+              onClick={() => set('theme', 'OSCURO_OBSIDIANA')}
+              titulo="Oscura obsidiana"
+              descripcion="Fondos profundos y acento lima para operar de noche."
+              swatchClase="bg-[#0A0E17]"
+              dotClase="bg-[#84CC16]"
+              textoClase="text-[#F8FAFC]"
+            />
           </div>
         </div>
       </div>
@@ -420,7 +438,7 @@ function TemaOpcion({ activo, onClick, titulo, descripcion, swatchClase, dotClas
       </span>
       <p className="text-sm font-semibold flex items-center gap-1.5">
         {titulo}
-        {activo && <Icon.check width={14} height={14} className="text-amber" />}
+        {activo && <Icon.check width={14} height={14} className="text-amberText" />}
       </p>
       <p className="text-xs text-muted mt-0.5">{descripcion}</p>
     </button>

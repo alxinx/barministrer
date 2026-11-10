@@ -20,15 +20,13 @@ import {
 
 const RANGOS = [7, 15, 30, 60, 90]
 
-// Recharts pinta SVG con props, no con clases de Tailwind: no lee las CSS
-// vars del tema solo, asi que cada serie necesita su par oscuro/sepia a
-// mano. Mismos tonos que libre/ocupada en ambos temas para que la grafica
-// combine con el resto de la app; el azul de "recaudado" es independiente
-// del acento y tambien se oscurece en sepia, si no pierde contraste contra
-// el fondo claro de la tarjeta.
+// Recharts pinta SVG con props, no con clases de Tailwind: necesita una
+// paleta explicita para cada tema y suficiente contraste en sus superficies.
 const COLORES_SERIE = {
   dark: { recaudado: '#4C9BD6', utilidad: '#5FD18C', costo: '#E05252', grid: '#2E2939', eje: '#9A93A8' },
   sepia: { recaudado: '#1A5E8A', utilidad: '#1F5C31', costo: '#A6321F', grid: '#B9A378', eje: '#6B5A42' },
+  lime: { recaudado: '#2563EB', utilidad: '#059669', costo: '#DC2626', grid: '#E2E8F0', eje: '#475569' },
+  obsidiana: { recaudado: '#60A5FA', utilidad: '#34D399', costo: '#F87171', grid: '#333A50', eje: '#94A3B8' },
 }
 
 const ETIQUETAS_SERIE = { recaudado: 'Recaudado', utilidad: 'Utilidad', costo: 'Costo' }
@@ -55,7 +53,12 @@ function ChartTooltip({ active, payload, label }) {
 export default function ReporteVentas() {
   const navigate = useNavigate()
   const { session } = useAuth()
-  const colores = COLORES_SERIE[session?.tenant?.theme === 'SEPIA' ? 'sepia' : 'dark']
+  const claveTema = {
+    SEPIA: 'sepia',
+    CLARO_LIMA: 'lime',
+    OSCURO_OBSIDIANA: 'obsidiana',
+  }[session?.tenant?.theme] || 'dark'
+  const colores = COLORES_SERIE[claveTema]
   const [days, setDays] = useState(30)
   const [rangoCustom, setRangoCustom] = useState(null) // { desde, hasta } (YYYY-MM-DD) | null = usar days
   const [modoAyer, setModoAyer] = useState(false)

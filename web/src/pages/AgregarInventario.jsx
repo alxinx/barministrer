@@ -406,7 +406,7 @@ function TarjetaProducto({ product, variant, estado, enLista, onToggleLista }) {
           </span>
         )}
         {estado === 'bajo' && (
-          <span className="absolute top-2 left-2 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-pill bg-amber text-night">
+          <span className="absolute top-2 left-2 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-pill bg-warning text-night">
             Stock bajo · {variant.stock} un.
           </span>
         )}
@@ -419,7 +419,7 @@ function TarjetaProducto({ product, variant, estado, enLista, onToggleLista }) {
         <div className="flex items-center justify-between text-xs">
           <div>
             <p className="text-muted">Stock actual</p>
-            <p className={`font-semibold ${estado === 'critico' ? 'text-ocupada' : estado === 'bajo' ? 'text-amberText' : ''}`}>
+            <p className={`font-semibold ${estado === 'critico' ? 'text-ocupada' : estado === 'bajo' ? 'text-warningText' : ''}`}>
               {variant.stock} un.
             </p>
           </div>
@@ -470,11 +470,11 @@ function FilaProducto({ product, variant, estado, enLista, onToggleLista }) {
           </span>
         )}
         {estado === 'bajo' && (
-          <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-pill bg-amber text-night">Bajo</span>
+          <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-pill bg-warning text-night">Bajo</span>
         )}
         {!estado && <span className="text-xs text-muted">—</span>}
       </td>
-      <td className={`py-2 px-3 font-semibold ${estado === 'critico' ? 'text-ocupada' : estado === 'bajo' ? 'text-amberText' : ''}`}>
+      <td className={`py-2 px-3 font-semibold ${estado === 'critico' ? 'text-ocupada' : estado === 'bajo' ? 'text-warningText' : ''}`}>
         {variant.stock} un.
       </td>
       <td className="py-2 px-3 text-muted">{variant.stockMinimo != null ? `${variant.stockMinimo} un.` : 'Sin configurar'}</td>

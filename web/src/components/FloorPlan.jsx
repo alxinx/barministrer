@@ -227,7 +227,7 @@ export default function FloorPlan({
         }`}
       >
         {pendiente && (
-          <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-amber border-2 border-night animate-pulse" />
+          <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-warning border-2 border-night animate-pulse" />
         )}
         {vinculada && !pendiente && (
           <span
@@ -241,7 +241,7 @@ export default function FloorPlan({
         {lista ? (
           <>
             <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusDot[t.status]}`} />
-            <span className={`text-2xl font-extrabold leading-none shrink-0 ${pendiente ? 'text-amber' : ''}`}>
+            <span className={`text-2xl font-extrabold leading-none shrink-0 ${pendiente ? 'text-warningText' : ''}`}>
               {t.number}
             </span>
             <div className="min-w-0 flex-1">
@@ -256,7 +256,7 @@ export default function FloorPlan({
         ) : (
           <>
             <span className={`w-2 h-2 rounded-full ${statusDot[t.status]}`} />
-            <span className={`text-xl font-extrabold leading-none ${pendiente ? 'text-amber' : ''}`}>{t.number}</span>
+            <span className={`text-xl font-extrabold leading-none ${pendiente ? 'text-warningText' : ''}`}>{t.number}</span>
             <span className="text-[11px] text-muted leading-tight text-center">
               {t.seats} pers.
               {t.customer && ` · ${nombreCliente(t.customer)}`}
@@ -683,7 +683,7 @@ export default function FloorPlan({
               ${editable ? 'cursor-grab active:cursor-grabbing' : 'hover:border-amber'}`}
           >
             {pendiente && (
-              <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-amber border-2 border-night animate-pulse" />
+              <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-warning border-2 border-night animate-pulse" />
             )}
             {vinculada && !pendiente && (
               <span
@@ -696,7 +696,7 @@ export default function FloorPlan({
             )}
             <span className={`w-2 h-2 rounded-full justify-self-center ${statusDot[t.status]}`} />
             <div className={`flex flex-col items-center gap-0.5 ${vertical ? '-rotate-90' : ''}`}>
-              <span className={`text-mesa whitespace-nowrap ${pendiente ? 'text-amber' : ''}`}>{t.number}</span>
+              <span className={`text-mesa whitespace-nowrap ${pendiente ? 'text-warningText' : ''}`}>{t.number}</span>
               <span className="text-[11px] text-muted whitespace-nowrap">{t.seats} pers.</span>
               {elapsed && (
                 <span className="text-[11px] font-semibold text-reservada whitespace-nowrap">{elapsed}</span>
@@ -727,7 +727,7 @@ function ClienteTag({ left, top, nombre }) {
   return (
     <div
       className="absolute z-30 -translate-x-1/2 -translate-y-full -mt-1.5 px-2.5 py-1 rounded-lg
-                 bg-night border border-amber/60 text-amber text-[11px] font-semibold
+                 bg-night border border-amber/60 text-amberText text-[11px] font-semibold
                  whitespace-nowrap pointer-events-none"
       style={{ left: `${left}%`, top: `${top}%` }}
     >

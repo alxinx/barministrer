@@ -759,9 +759,9 @@ export default function NuevaVenta() {
 
         <aside className="space-y-4">
           {esEncargado && prePedidos.length > 0 && (
-            <section className="card p-4 space-y-2.5 border-amber/40 animate-pre-pedido-buzz">
+            <section className="card p-4 space-y-2.5 border-warning/40 animate-pre-pedido-buzz">
               <h2 className="font-semibold flex items-center gap-2">
-                <Icon.bell width={18} height={18} className="text-amberText" />
+                <Icon.bell width={18} height={18} className="text-warningText" />
                 Pre-pedidos esperando envío
               </h2>
               {prePedidos.map((p) => {
@@ -782,17 +782,17 @@ export default function NuevaVenta() {
                                 ${
                                   esCritico
                                     ? 'border-ocupada animate-pre-pedido-critico'
-                                    : 'bg-amber/10 border-amber/40 hover:border-amber animate-pre-pedido-urgencia'
+                                    : 'bg-warning/10 border-warning/40 hover:border-warning animate-pre-pedido-urgencia'
                                 }`}
                   >
-                    <span className="w-10 h-10 rounded-xl bg-night border border-amber/40 grid place-items-center text-amber font-bold shrink-0">
+                    <span className="w-10 h-10 rounded-xl bg-night border border-warning/40 grid place-items-center text-warningText font-bold shrink-0">
                       {p.tableNumber}
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium truncate">
                         {p.zoneName} · {p.meseras.join(', ') || 'Sin registrar'}
                       </p>
-                      <p className="text-xs text-amber/80">hace {minutosDesde(p.since, ahora)}m</p>
+                      <p className="text-xs text-warningText/80">hace {minutosDesde(p.since, ahora)}m</p>
                     </div>
                   </button>
                 )
@@ -930,8 +930,8 @@ export default function NuevaVenta() {
             )}
 
             {itemsPendientes.length > 0 && (
-              <div className="space-y-2.5 mb-4 bg-amber/10 border border-amber/40 rounded-xl p-3">
-                <p className="text-xs font-semibold text-amberText flex items-center gap-1.5">
+              <div className="space-y-2.5 mb-4 bg-warning/10 border border-warning/40 rounded-xl p-3">
+                <p className="text-xs font-semibold text-warningText flex items-center gap-1.5">
                   <Icon.bell width={14} height={14} />
                   Pre-pedido de {[...new Set(itemsPendientes.map((i) => i.createdBy?.name).filter(Boolean))].join(', ') || 'la mesera'}
                 </p>
@@ -967,7 +967,7 @@ export default function NuevaVenta() {
                     {enviandoPrePedido ? 'Enviando…' : 'Enviar pre-pedido a la barra'}
                   </button>
                 ) : (
-                  <p className="text-xs text-amberText/80">Esperando que el administrador o cajero lo envíe a la barra.</p>
+                  <p className="text-xs text-warningText/80">Esperando que el administrador o cajero lo envíe a la barra.</p>
                 )}
               </div>
             )}
@@ -1116,7 +1116,7 @@ export default function NuevaVenta() {
                         {agotado ? (
                           <span className="text-ocupada font-semibold"> · Agotado</span>
                         ) : quedanReceta !== null ? (
-                          <span className={quedanReceta <= 3 ? 'text-amberText font-semibold' : ''}>
+                          <span className={quedanReceta <= 3 ? 'text-warningText font-semibold' : ''}>
                             {' '}
                             · {quedanReceta} und.
                           </span>

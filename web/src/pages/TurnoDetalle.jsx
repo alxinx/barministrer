@@ -221,7 +221,7 @@ export default function TurnoDetalle() {
 function EstadoPill({ tono, label }) {
   const tonos = {
     libre: 'text-libre border-libre/30 bg-libre/10',
-    amber: 'text-amberText border-amber/30 bg-amber/10',
+    amber: 'text-warningText border-warning/30 bg-warning/10',
   }
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-pill px-2.5 py-1 border ${tonos[tono]}`}>

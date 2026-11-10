@@ -274,7 +274,7 @@ export default function ProveedorDetalle() {
           {proveedor.saldoPendiente > 0.009 ? (
             <span
               className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-pill border mt-1 ${
-                vencidas > 0 ? 'text-ocupada border-ocupada/40 bg-ocupada/10' : 'text-amberText border-amber/40 bg-amber/10'
+                vencidas > 0 ? 'text-ocupada border-ocupada/40 bg-ocupada/10' : 'text-warningText border-warning/40 bg-warning/10'
               }`}
             >
               {vencidas > 0 ? `${vencidas} vencida(s)` : 'Dentro del plazo'}
@@ -429,7 +429,7 @@ export default function ProveedorDetalle() {
                               ? 'text-libre border-libre/40 bg-libre/10'
                               : c.estado === 'ANULADA'
                                 ? 'text-muted border-edge bg-raised'
-                                : 'text-amberText border-amber/40 bg-amber/10'
+                                : 'text-warningText border-warning/40 bg-warning/10'
                           }`}
                         >
                           {ESTADO_LABEL[c.estado]}
@@ -598,7 +598,7 @@ function CompraVistaModal({ id, onClose, onPagado }) {
                       ? 'text-libre border-libre/40 bg-libre/10'
                       : compra.estado === 'ANULADA'
                         ? 'text-muted border-edge bg-raised'
-                        : 'text-amberText border-amber/40 bg-amber/10'
+                        : 'text-warningText border-warning/40 bg-warning/10'
                   }`}
                 >
                   {ESTADO_LABEL[compra.estado]}

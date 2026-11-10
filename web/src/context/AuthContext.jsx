@@ -65,7 +65,13 @@ export function AuthProvider({ children }) {
   // los tokens de color de web/src/index.css cambien de una. Sin sesion
   // (login, plataforma) siempre queda oscuro.
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', session?.tenant?.theme === 'SEPIA' ? 'sepia' : 'dark')
+    const temas = {
+      OSCURO: 'dark',
+      SEPIA: 'sepia',
+      CLARO_LIMA: 'lime',
+      OSCURO_OBSIDIANA: 'obsidiana',
+    }
+    document.documentElement.setAttribute('data-theme', temas[session?.tenant?.theme] || 'dark')
   }, [session])
 
   const isAdmin = session?.user.role === 'ADMIN'

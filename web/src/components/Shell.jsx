@@ -356,7 +356,7 @@ function NavGroup({ item, active, colapsado, tenant }) {
         title={item.label}
         className={`w-full flex items-center justify-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
           colapsado ? '' : 'nav:justify-start'
-        } ${active && !expandido ? 'text-amber' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'}`}
+        } ${active && !expandido ? 'text-amberText' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'}`}
       >
         <span className="relative shrink-0">
           <item.icon />
@@ -483,7 +483,7 @@ function NavGroupMovil({ item, active, tenant, onNavigate }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={`w-full flex items-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors ${
-          active && !open ? 'text-amber' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'
+          active && !open ? 'text-amberText' : 'text-sidebarMuted hover:text-sidebarInk hover:bg-sidebarRaised'
         }`}
       >
         <item.icon />

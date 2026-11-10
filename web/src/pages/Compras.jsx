@@ -437,7 +437,7 @@ export default function Compras() {
               const badge = (() => {
                 if (c.estado === 'BORRADOR') {
                   return seleccionada
-                    ? { label: 'Editando recepción', cls: 'text-amberText border-amber/40 bg-amber/10' }
+                    ? { label: 'Editando recepción', cls: 'text-warningText border-warning/40 bg-warning/10' }
                     : { label: 'Borrador guardado', cls: 'text-muted border-edge bg-raised' }
                 }
                 if (c.estado === 'ANULADA') return { label: 'Anulada', cls: 'text-muted border-edge bg-raised' }
@@ -447,7 +447,7 @@ export default function Compras() {
               const dias = c.estado === 'RECIBIDA' && c.saldoPendiente > 0 ? diasParaVencer(c.fechaVencimiento) : null
               const tagDerecha =
                 c.estado === 'BORRADOR'
-                  ? { label: 'Sin confirmar', cls: 'text-amberText' }
+                  ? { label: 'Sin confirmar', cls: 'text-warningText' }
                   : c.estado === 'RECIBIDA' && c.saldoPendiente > 0
                     ? { label: dias === null ? 'Saldo pendiente' : dias < 0 ? 'Vencida' : `Vence en ${dias}d`, cls: 'text-ocupada' }
                     : c.estado === 'RECIBIDA'
@@ -930,7 +930,14 @@ function filasParaBody(filas) {
 // inline al activarla, con su propio monto y los atajos "Cubrir resto" /
 // "Saldo total" -- ese ultimo solo existe si la tarjeta trae un saldo real
 // (CuentaFinanciera; "Efectivo del turno" y "Otro" no tienen uno).
-function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
+function SelectorMediosPago({
+  total,
+  shift,
+  cuentasPago,
+  filas,
+  onChange,
+  gridClassName = 'grid-cols-1 sm:grid-cols-2',
+}) {
   const tarjetas = useMemo(() => tarjetasPago(shift, cuentasPago), [shift, cuentasPago])
   const suma = filas.reduce((s, f) => s + (Number(f.monto) || 0), 0)
   const restante = Math.max(total - suma, 0)
@@ -969,7 +976,7 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
 
   return (
     <div className="space-y-3">
-      <div className="bg-canvas border border-edge rounded-xl p-3 grid grid-cols-3 gap-3">
+      <div className="bg-canvas border border-edge rounded-xl p-3 grid grid-cols-1 min-[460px]:grid-cols-3 gap-3">
         <div>
           <p className="text-[10px] font-bold tracking-wide text-muted uppercase">Total a pagar</p>
           <p className="text-base font-bold mt-0.5">{money(total)}</p>
@@ -982,7 +989,7 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
           <p className="text-[10px] font-bold tracking-wide text-muted uppercase">{sobra > 0.01 ? 'De más' : 'Pendiente'}</p>
           <p
             className={`text-base font-bold mt-0.5 ${
-              sobra > 0.01 ? 'text-ocupada' : restante > 0.01 ? 'text-amberText' : 'text-libre'
+              sobra > 0.01 ? 'text-ocupada' : restante > 0.01 ? 'text-warningText' : 'text-libre'
             }`}
           >
             {money(sobra > 0.01 ? sobra : restante)}
@@ -990,7 +997,7 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+      <div className={`grid ${gridClassName} gap-3`}>
         {tarjetas.map((card) => {
           const CardIcon = Icon[card.icon]
           const fila = filas.find((f) => f.key === card.key)
@@ -1001,16 +1008,16 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
               key={card.key}
               className={`rounded-xl border-2 transition-colors ${activa ? 'border-amber bg-amber/5' : 'border-edge bg-raised'}`}
             >
-              <button type="button" onClick={() => alternar(card)} className="w-full flex items-center gap-2.5 p-2.5 text-left">
+              <button type="button" onClick={() => alternar(card)} className="w-full flex items-center gap-3 p-3 text-left">
                 <span
-                  className={`w-8 h-8 rounded-lg grid place-items-center shrink-0 ${
+                  className={`w-9 h-9 rounded-lg grid place-items-center shrink-0 ${
                     activa ? 'bg-amber text-night' : 'bg-canvas text-muted'
                   }`}
                 >
                   <CardIcon width={16} height={16} />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold truncate">{card.label}</span>
+                  <span className="block text-sm font-semibold leading-snug">{card.label}</span>
                   {card.saldo != null && <span className="block text-xs text-muted">{money(card.saldo)} disponible</span>}
                 </span>
                 <span
@@ -1023,7 +1030,7 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
               </button>
 
               {activa && (
-                <div className="px-2.5 pb-2.5 pt-2 border-t border-edge/60 space-y-2" onClick={(e) => e.stopPropagation()}>
+                <div className="px-3 pb-3 pt-2 border-t border-edge/60 space-y-2" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-1.5">
                     <MoneyInput
                       className="field h-9 flex-1 min-w-0"
@@ -1069,7 +1076,11 @@ function SelectorMediosPago({ total, shift, cuentasPago, filas, onChange }) {
       </div>
 
       {filas.length > 0 && (
-        <p className={`text-sm font-semibold ${sobra > 0.01 ? 'text-ocupada' : restante > 0.01 ? 'text-amberText' : 'text-libre'}`}>
+        <p
+          className={`text-sm font-semibold ${
+            sobra > 0.01 ? 'text-ocupada' : restante > 0.01 ? 'text-warningText' : 'text-libre'
+          }`}
+        >
           {sobra > 0.01 ? `Sobran ${money(sobra)} asignados` : restante > 0.01 ? `Quedan ${money(restante)} a crédito` : 'Cubre el total'}
         </p>
       )}
@@ -1992,7 +2003,7 @@ function CompraForm({
                       <td></td>
                       <td colSpan={8} className="px-3 pb-2.5 pt-0">
                         <div className="flex items-center gap-2 flex-wrap text-xs">
-                          <Icon.alert width={13} height={13} className="text-amberText shrink-0" />
+                          <Icon.alert width={13} height={13} className="text-warningText shrink-0" />
                           <span className="text-muted">
                             Se compra por {it.insumo.unidadCompra} pero se cuenta en {it.insumo.unidadInventario}: ¿cuánto llegó en total?
                           </span>
@@ -2244,7 +2255,7 @@ function CompraDetalle({
               ? 'text-libre border-libre/40 bg-libre/10'
               : compra.estado === 'ANULADA'
                 ? 'text-muted border-edge bg-raised'
-                : 'text-amberText border-amber/40 bg-amber/10'
+                : 'text-warningText border-warning/40 bg-warning/10'
           }`}
         >
           {ESTADO_LABEL[compra.estado]}
@@ -2491,8 +2502,11 @@ export function PagoModal({ compra, onCancel, onPagado }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
-      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto" onClick={onCancel}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6 space-y-5"
+      >
         <h2 className="text-lg font-bold">Registrar pago</h2>
         <p className="text-sm text-muted">Saldo pendiente: <span className="font-semibold text-ink">{money(compra.saldoPendiente)}</span></p>
 
@@ -2503,6 +2517,7 @@ export function PagoModal({ compra, onCancel, onPagado }) {
           cuentasPago={cuentasPago}
           filas={filasPago}
           onChange={setFilasPago}
+          gridClassName="grid-cols-1 min-[720px]:grid-cols-2"
         />
 
         <PinField
@@ -2559,8 +2574,11 @@ function AnularModal({ compra, onCancel, onAnulada }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onCancel}>
-      <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto" onClick={onCancel}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:p-6 space-y-5"
+      >
         <h2 className="text-lg font-bold">Anular compra</h2>
         <p className="text-sm text-muted">
           {necesitaPin
@@ -2666,6 +2684,7 @@ function RecibirModal({ compra, onCancel, onRecibida }) {
             cuentasPago={cuentasPago}
             filas={filasPago}
             onChange={setFilasPago}
+            gridClassName="grid-cols-1 min-[720px]:grid-cols-2"
           />
         )}
 

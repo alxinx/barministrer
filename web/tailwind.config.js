@@ -1,9 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 
-// Cada token lee una CSS var "R G B" (ver :root y [data-theme="sepia"] en
-// index.css), para que un mismo nombre de color siga funcionando con
-// modificadores de opacidad (bg-amber/10, border-edge/60...) sin tocar cada
-// clase del proyecto al agregar el tema claro.
+// Cada token lee una CSS var "R G B" (ver :root y [data-theme] en index.css),
+// para que un mismo nombre de color siga funcionando con modificadores de
+// opacidad (bg-amber/10, border-edge/60...) en todos los temas.
 function conVariable(variable) {
   return ({ opacityValue }) =>
     opacityValue !== undefined ? `rgb(var(${variable}) / ${opacityValue})` : `rgb(var(${variable}))`
@@ -32,13 +31,11 @@ export default {
           limeHover: '#65A30D',
           limeDim: '#4D7C0F',
         },
-        // "night" y "amber" quedan fijos en ambos temas a proposito: night
-        // es el oscuro de contraste detras del acento (texto de boton,
-        // chips sobre fondo oscuro); amber es el relleno audaz del acento.
-        // Si cambiaran con el tema, un boton ambar con texto oscuro
-        // perderia su contraste justo en el tema donde mas se nota.
+        // night se mantiene fijo como texto de contraste sobre el acento.
         night: conVariable('--color-night'),
         amber: conVariable('--color-amber'),
+        amberHover: conVariable('--color-amber-hover'),
+        focus: conVariable('--color-focus'),
         // El resto SI cambia con el tema (ver index.css).
         // "canvas" (no "base"): Tailwind ya usa "base" como paso de su
         // escala de tamaños de letra (text-base = 1rem). Un color con ese
@@ -50,19 +47,17 @@ export default {
         edge: conVariable('--color-edge'),
         ink: conVariable('--color-ink'),
         muted: conVariable('--color-muted'),
-        // amberText: el ambar usado como texto/icono directo sobre una
-        // superficie clara. Separado de "amber" (el relleno) porque el
-        // mismo tono que se ve bien como fondo de boton no alcanza
-        // contraste 4.5:1 como texto sobre el tema sepia.
+        // amberText es el tono de acento con contraste suficiente para texto
+        // e iconos sobre superficies claras.
         amberText: conVariable('--color-amber-text'),
         amberDim: conVariable('--color-amber-dim'),
+        warning: conVariable('--color-warning'),
+        warningText: conVariable('--color-warning-text'),
         libre: conVariable('--color-libre'),
         ocupada: conVariable('--color-ocupada'),
         reservada: conVariable('--color-reservada'),
-        // El menu lateral (Shell.jsx) tiene su propio fondo, separado de
-        // "surface": en sepia se pide oscuro aunque el resto del tema sea
-        // claro, asi que no puede compartir el token que tambien pintan
-        // todas las demas tarjetas de la pantalla (ver index.css).
+        // El menu lateral tiene su propio fondo para admitir variantes con
+        // sidebar claro u oscuro sin cambiar las tarjetas.
         sidebar: conVariable('--color-sidebar'),
         sidebarRaised: conVariable('--color-sidebar-raised'),
         sidebarEdge: conVariable('--color-sidebar-edge'),

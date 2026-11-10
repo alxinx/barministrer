@@ -28,7 +28,7 @@ tenantRoutes.get('/tenant', soloAdmin, async (req, res) => {
   res.json(tenant)
 })
 
-const TEMAS = ['OSCURO', 'SEPIA']
+const TEMAS = ['OSCURO', 'SEPIA', 'CLARO_LIMA', 'OSCURO_OBSIDIANA']
 
 tenantRoutes.patch('/tenant', soloAdmin, async (req, res) => {
   const data = {}
