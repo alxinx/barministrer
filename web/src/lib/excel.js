@@ -88,6 +88,10 @@ export async function descargarLibro(workbook, nombreArchivo) {
   const a = document.createElement('a')
   a.href = url
   a.download = nombreArchivo
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  setTimeout(() => {
+    a.remove()
+    URL.revokeObjectURL(url)
+  }, 1000)
 }

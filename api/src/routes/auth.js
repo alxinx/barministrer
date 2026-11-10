@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { signToken, requireAuth } from '../middleware/auth.js'
 import { loginLimiter, pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
-import { verificarPin } from '../lib/pin.js'
+import { verificarPin, verificarPinPropio } from '../lib/pin.js'
 
 export const authRoutes = Router()
 
@@ -70,11 +70,13 @@ authRoutes.post('/login', loginLimiter, async (req, res) => {
 // aparte: pasa por el mismo pinLimiter/pinIncorrecto que esas rutas, asi que
 // cuenta contra los mismos 3 intentos / 10 minutos (ver middleware/rateLimit.js).
 authRoutes.post('/verify-pin', requireAuth, async (req, res) => {
-  const { pin } = req.body || {}
+  const { pin, soloUsuarioActual = false } = req.body || {}
   if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN' })
 
   if (await pinLimitExcedido(req, res)) return
-  const encargado = await verificarPin(req.auth.tenantId, pin)
+  const encargado = soloUsuarioActual
+    ? await verificarPinPropio(req.auth.tenantId, req.auth.userId, pin)
+    : await verificarPin(req.auth.tenantId, pin)
   if (!encargado) return pinIncorrecto(req, res)
 
   res.json({ ok: true, name: encargado.name })

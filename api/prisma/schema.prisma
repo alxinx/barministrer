@@ -301,11 +301,12 @@ enum StockMovementType {
   SALE          // se envio a la barra (pedido ACTIVE): resta al stock, puede dejarlo en negativo
   VOID_RESTORE  // se devolvio un producto ya activo: repone lo que se habia restado
   WASTE         // merma/perdida registrada a mano: resta al stock, nunca mas de lo que hay
+  ADJUSTMENT    // diferencia entre el conteo fisico y el stock calculado
 }
 
-/// Entrada de inventario: la compra por empaque (caja, canasta) se resuelve
-/// aqui con unitsPerPack x packs, nunca en el producto. qty queda en unidades
-/// ya resueltas, que es lo que de verdad suma al stock de la variante.
+/// La compra por empaque (caja, canasta) se resuelve aqui con unitsPerPack x
+/// packs, nunca en el producto. PURCHASE guarda unidades positivas; las
+/// salidas y los ajustes guardan la diferencia firmada.
 model StockMovement {
   id           String            @id @default(uuid())
   tenantId     String
@@ -449,8 +450,8 @@ model Proveedor {
 /// api/src/lib/unidades.js (gramo, kilogramo, mililitro, litro, unidad). Las
 /// dos deben ser de la misma magnitud (masa, volumen o conteo); la
 /// conversion entre ellas se calcula de ese catalogo, nunca se guarda aqui.
-/// stock sube solo por una compra recibida (ver InsumoMovement) -- nunca se
-/// escribe a mano en dos lugares.
+/// stock y costo por unidad de inventario se mantienen desde sus movimientos
+/// y los lotes de compra; una corrección nunca modifica el historial.
 model Insumo {
   id               String   @id @default(uuid())
   tenantId         String
@@ -464,13 +465,14 @@ model Insumo {
   stock            Int      @default(0)
   stockMinimo      Int?
   ubicacion        String?
-  costoCompra      Decimal  @db.Decimal(12, 2) @default(0) // costo de 1 unidadCompra
+  costoCompra      Decimal  @db.Decimal(12, 2) @default(0) // costo ponderado de 1 unidadCompra
+  costoUnidadInventario Decimal? @db.Decimal(12, 4) // costo ponderado por unidadInventario usando la cantidad real de cada lote
   // Caso especial: unidadCompra sin un tamano fijo real (unidad cuando cada
   // una pesa distinto, ej. lechugas; o paquete cuando cada paquete trae
   // distinta cantidad, ej. pan, jamon). No existe una conversion fija --
   // asi que esto es solo un ESTIMADO (promedio de unidadInventario por
-  // unidad/paquete comprado), usado para costear la receta y sugerir el
-  // total al registrar la compra. La cantidad real de cada compra se
+  // unidad/paquete comprado), usado para convertir costos manuales y sugerir
+  // el total al registrar la compra. La cantidad real de cada compra se
   // declara aparte (ver CompraItem.cantidadInventarioReal) y es lo que de
   // verdad mueve el stock -- este promedio nunca lo decide. Null para
   // insumos normales (ver sinConversionFija en api/src/lib/unidades.js).
@@ -655,12 +657,13 @@ enum InsumoMovementType {
   PURCHASE_VOID // compra anulada, resta lo que esa compra habia sumado
   SALE          // se consumio en una receta vendida (pedido ACTIVE): resta al stock
   SALE_VOID     // se devolvio un producto ya activo: repone lo que esa venta habia restado
+  ADJUSTMENT    // qty es la diferencia firmada entre conteo fisico y stock calculado
 }
 
 /// Primer movimiento real sobre Insumo.stock (antes de Compras no existia
-/// ninguno). Misma filosofia que StockMovement: append-only, qty siempre
-/// positivo, el signo lo da `type`, una correccion es un movimiento mas,
-/// nunca se edita ni se borra este.
+/// ninguno). Append-only: los movimientos normales usan qty positivo con el
+/// signo derivado de `type`; ADJUSTMENT guarda la diferencia firmada del
+/// conteo fisico. Nunca se edita ni se borra un movimiento.
 model InsumoMovement {
   id           String             @id @default(uuid())
   tenantId     String

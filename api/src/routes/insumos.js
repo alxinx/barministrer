@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { subirImagenInsumo } from '../lib/r2.js'
 import { UNIDADES, factorConversion, sinConversionFija } from '../lib/unidades.js'
+import { calcularCostoUnidadInventario } from '../lib/costeo.js'
 import { tituloInteligente } from '../lib/texto.js'
 
 export const insumoRoutes = Router()
@@ -219,6 +220,12 @@ insumoRoutes.post('/insumos', adminOnly, async (req, res) => {
       stockMinimo: stockMinimo ? Number(stockMinimo) : null,
       ubicacion: ubicacion?.trim() || null,
       costoCompra: costoCompra ?? 0,
+      costoUnidadInventario: calcularCostoUnidadInventario({
+        costoCompra,
+        unidadCompra,
+        unidadInventario,
+        cantidadPromedioPorUnidad,
+      }),
       cantidadPromedioPorUnidad: sinConversionFija(unidadCompra, unidadInventario)
         ? Number(cantidadPromedioPorUnidad)
         : null,
@@ -260,6 +267,13 @@ insumoRoutes.patch('/insumos/:id', adminOnly, async (req, res) => {
     cantidadPromedioPorUnidad !== undefined ? cantidadPromedioPorUnidad : existing.cantidadPromedioPorUnidad
   const errorPromedio = validarCantidadPromedio(efectivoInv, efectivoCompra, efectivoPromedio)
   if (errorPromedio) return res.status(400).json({ error: errorPromedio })
+  const efectivoCosto = costoCompra !== undefined ? costoCompra : existing.costoCompra
+  const costoUnidadInventario = calcularCostoUnidadInventario({
+    costoCompra: efectivoCosto,
+    unidadCompra: efectivoCompra,
+    unidadInventario: efectivoInv,
+    cantidadPromedioPorUnidad: efectivoPromedio,
+  })
 
   // Si cambia de unidades y deja de ser el caso especial, el promedio viejo
   // ya no significa nada -- se limpia solo, sin que el cliente tenga que
@@ -295,6 +309,10 @@ insumoRoutes.patch('/insumos/:id', adminOnly, async (req, res) => {
       ...(stockMinimo !== undefined && { stockMinimo: stockMinimo ? Number(stockMinimo) : null }),
       ...(ubicacion !== undefined && { ubicacion: ubicacion?.trim() || null }),
       ...(costoCompra !== undefined && { costoCompra }),
+      ...((costoCompra !== undefined ||
+        unidadCompra !== undefined ||
+        unidadInventario !== undefined ||
+        cantidadPromedioPorUnidad !== undefined) && { costoUnidadInventario }),
       ...(dataCantidadPromedio !== undefined && { cantidadPromedioPorUnidad: dataCantidadPromedio }),
       ...(proveedorId !== undefined && { proveedorId: proveedorId || null }),
       ...(active !== undefined && { active: Boolean(active) }),

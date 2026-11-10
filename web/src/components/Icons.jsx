@@ -289,6 +289,11 @@ export const Icon = {
       <circle cx="12" cy="12" r="3" />
     </svg>
   ),
+  edit: (p) => (
+    <svg {...base} {...p}>
+      <path d="m15 5 4 4M4 20l4.3-.9L19 8.4a2.1 2.1 0 0 0-3-3L5.3 16.1 4 20z" />
+    </svg>
+  ),
   building: (p) => (
     <svg {...base} {...p}>
       <path d="M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M19 21v-9a1 1 0 0 0-1-1h-4M9 7h.01M9 11h.01M9 15h.01M3 21h18" />

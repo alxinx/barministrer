@@ -8,7 +8,7 @@ import { PIN_LENGTH } from '../components/PinInput'
 // accion debe quedar deshabilitado mientras `valido` no sea true: nunca se
 // manda la accion con un PIN que el backend ya rechazo o que todavia no
 // termino de verificar.
-export function usePinVerificado() {
+export function usePinVerificado({ soloUsuarioActual = false } = {}) {
   const [pin, setPin] = useState('')
   const [verificando, setVerificando] = useState(false)
   const [valido, setValido] = useState(false)
@@ -49,7 +49,10 @@ export function usePinVerificado() {
     // intento intermedio.
     const timer = setTimeout(async () => {
       try {
-        const res = await api('/auth/verify-pin', { method: 'POST', body: { pin } })
+        const res = await api('/auth/verify-pin', {
+          method: 'POST',
+          body: { pin, soloUsuarioActual },
+        })
         if (!cancelado) {
           setValido(true)
           setNombre(res.name || '')
@@ -70,7 +73,7 @@ export function usePinVerificado() {
       cancelado = true
       clearTimeout(timer)
     }
-  }, [pin, bloqueadoHasta])
+  }, [pin, bloqueadoHasta, soloUsuarioActual])
 
   function reset() {
     setPin('')

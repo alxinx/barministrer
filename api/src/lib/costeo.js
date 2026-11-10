@@ -1,5 +1,18 @@
 import { factorConversion, sinConversionFija } from './unidades.js'
 
+export function calcularCostoUnidadInventario({
+  costoCompra,
+  unidadCompra,
+  unidadInventario,
+  cantidadPromedioPorUnidad,
+}) {
+  let factor = factorConversion(unidadCompra, unidadInventario)
+  if (factor === null && sinConversionFija(unidadCompra, unidadInventario)) {
+    factor = Number(cantidadPromedioPorUnidad) || null
+  }
+  return factor ? Number(costoCompra || 0) / factor : 0
+}
+
 // Convierte una linea de compra a unidadInventario del insumo: el caso
 // especial (sinConversionFija, ej. lechugas por unidad o pan por paquete)
 // usa el peso/cantidad REAL que se declaro al recibir (cantidadInventarioReal),
@@ -20,19 +33,15 @@ export function cantidadConvertida({ cantidad, cantidadInventarioReal, insumo })
   return Math.round(Number(cantidad) * factor)
 }
 
-// Costo ponderado = suma(restante x precio) / suma(restante), pesando solo
-// los lotes (CompraItem) que todavia tienen existencia real: cantidadRestante
-// baja a medida que una venta con receta consume ese insumo (FIFO, ver
-// consumoInsumo.js) y un lote en 0 (o de una compra ANULADA) deja de pesar
-// aqui -- asi el costo refleja lo que de verdad queda, no todo lo comprado
-// historicamente. cantidadRestante vive en unidadInventario; precioUnitario
-// vive en unidadCompra, asi que cada lote se reconvierte a su propio factor
-// (puede variar si el lote usa cantidadInventarioReal) antes de pesar, para
-// que ambos lados de la cuenta esten en la misma unidad.
+// Pesa solo los lotes con cantidadRestante. El costo por unidadInventario se
+// calcula con la cantidad real de cada lote, que puede diferir del promedio
+// usado para sugerir compras; asi una bolsa de 2 kg no hereda el costo por
+// gramo de una bolsa anterior de 500 g. Un insumo sin stock no conserva un
+// ponderado viejo.
 export async function recalcularCostoPonderadoInsumo(tx, insumoId) {
   const insumo = await tx.insumo.findUnique({
     where: { id: insumoId },
-    select: { name: true, unidadCompra: true, unidadInventario: true },
+    select: { name: true, unidadCompra: true, unidadInventario: true, stock: true },
   })
   if (!insumo) return
 
@@ -43,16 +52,29 @@ export async function recalcularCostoPonderadoInsumo(tx, insumoId) {
 
   let cantidadTotal = 0
   let valorTotal = 0
+  let cantidadInventarioTotal = 0
+  let valorInventarioTotal = 0
   for (const item of items) {
     const original = cantidadConvertida({ cantidad: item.cantidad, cantidadInventarioReal: item.cantidadInventarioReal, insumo })
     if (original <= 0) continue
     const factor = original / Number(item.cantidad) // unidadInventario por unidadCompra, segun este lote puntual
-    const restanteEnUnidadCompra = item.cantidadRestante / factor
+    const restanteInventario = Math.min(Number(item.cantidadRestante), original)
+    const restanteEnUnidadCompra = restanteInventario / factor
     cantidadTotal += restanteEnUnidadCompra
     valorTotal += restanteEnUnidadCompra * Number(item.precioUnitario)
+    cantidadInventarioTotal += restanteInventario
+    valorInventarioTotal += restanteEnUnidadCompra * Number(item.precioUnitario)
   }
-  if (cantidadTotal <= 0) return
-  await tx.insumo.update({ where: { id: insumoId }, data: { costoCompra: valorTotal / cantidadTotal } })
+  const sinExistencia = Number(insumo.stock) <= 0 || cantidadInventarioTotal <= 0
+  await tx.insumo.update({
+    where: { id: insumoId },
+    data: sinExistencia
+      ? { costoCompra: 0, costoUnidadInventario: 0 }
+      : {
+          costoCompra: valorTotal / cantidadTotal,
+          costoUnidadInventario: valorInventarioTotal / cantidadInventarioTotal,
+        },
+  })
 }
 
 // Mismo criterio para presentaciones (Variant): pesa tanto lo comprado por

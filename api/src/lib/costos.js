@@ -12,6 +12,10 @@ export function costoDeReceta(recipeItems) {
   let costo = 0
   for (const ing of recipeItems || []) {
     if (ing.insumoId) {
+      if (ing.insumo?.costoUnidadInventario != null) {
+        costo += Number(ing.insumo.costoUnidadInventario) * (ing.qty || 0)
+        continue
+      }
       // costoCompra es el costo de 1 unidadCompra; factorConversion dice
       // cuantas unidadInventario hay en esa unidadCompra, asi que dividir da
       // el costo por unidadInventario (lo que de verdad pide la receta).

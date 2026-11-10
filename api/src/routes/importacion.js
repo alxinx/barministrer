@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { requireRole } from '../middleware/auth.js'
 import { sinConversionFija } from '../lib/unidades.js'
 import { validarUnidades, validarCantidadPromedio } from './insumos.js'
+import { calcularCostoUnidadInventario } from '../lib/costeo.js'
 import { tituloInteligente } from '../lib/texto.js'
 
 export const importacionRoutes = Router()
@@ -84,6 +85,12 @@ importacionRoutes.post('/importacion/insumos', soloAdmin, async (req, res) => {
           ? Number(cantidadPromedioPorUnidad)
           : null,
         costoCompra: Number(fila.costoCompra) || 0,
+        costoUnidadInventario: calcularCostoUnidadInventario({
+          costoCompra: Number(fila.costoCompra) || 0,
+          unidadCompra,
+          unidadInventario,
+          cantidadPromedioPorUnidad,
+        }),
         proveedorId,
         codigoInterno: fila.codigoInterno ? String(fila.codigoInterno).trim() : null,
         stockMinimo: fila.stockMinimo ? Number(fila.stockMinimo) : null,

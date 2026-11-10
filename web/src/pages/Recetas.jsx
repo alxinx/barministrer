@@ -25,6 +25,7 @@ function factorConversion(unidades, unidadCompra, unidadInventario) {
   return compra.factor / inv.factor
 }
 function costoUnitario(insumo, unidades) {
+  if (insumo.costoUnidadInventario != null) return Number(insumo.costoUnidadInventario) || 0
   // Insumo sin conversion fija (se compra por unidad o por paquete sin un
   // tamano universal, ej. lechugas por unidad o pan por paquete, y se
   // cuenta en otra magnitud/cantidad): no hay conversion fija, asi que el

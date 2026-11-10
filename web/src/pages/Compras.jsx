@@ -22,9 +22,9 @@ export const ESTADO_LABEL = { BORRADOR: 'Borrador', RECIBIDA: 'Recibida', ANULAD
 export const ESTADO_PAGO_LABEL = { PENDIENTE: 'Pendiente', PARCIAL: 'Pago parcial', PAGADA: 'Pagada' }
 const FILTROS = [
   { key: 'todas', label: 'Todas' },
+  { key: 'CON_SALDO', label: 'Saldo pendiente' },
   { key: 'BORRADOR', label: 'Borrador' },
   { key: 'RECIBIDA', label: 'Recibidas' },
-  { key: 'CON_SALDO', label: 'Con saldo' },
 ]
 
 export function formatFecha(iso) {
@@ -90,13 +90,18 @@ function ListaStockBajo({ insumos, unidades, recetasPorInsumo, enLista, onToggle
       {insumos.map((i) => {
         const nRecetas = recetasPorInsumo.get(i.id) || 0
         const agregado = enLista.has(i.id)
+        const critico = i.stock <= 0
         return (
           <button
             key={i.id}
             type="button"
             onClick={() => onToggle(i.id)}
             className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${
-              agregado ? 'border-amber/50 bg-amber/10' : 'border-ocupada/30 bg-ocupada/5 hover:border-ocupada/50'
+              agregado
+                ? 'border-amber/50 bg-amber/10'
+                : critico
+                  ? 'border-ocupada/30 bg-ocupada/5 hover:border-ocupada/50'
+                  : 'border-warning/30 bg-warning/5 hover:border-warning/50'
             }`}
           >
             <span className="w-10 h-10 rounded-lg overflow-hidden shrink-0 grid place-items-center bg-canvas border border-edge">
@@ -110,16 +115,16 @@ function ListaStockBajo({ insumos, unidades, recetasPorInsumo, enLista, onToggle
               <p className="text-sm font-medium truncate">{i.name}</p>
               <p className="text-xs text-muted truncate">{i.proveedor ? `Proveedor: ${i.proveedor.name}` : 'Sin proveedor habitual'}</p>
               {nRecetas > 0 && (
-                <p className="text-xs text-ocupada font-medium mt-0.5">
-                  De esto {nRecetas === 1 ? 'depende' : 'dependen'} {nRecetas} {nRecetas === 1 ? 'receta' : 'recetas'} 😰
+                <p className={`text-xs font-medium mt-0.5 ${critico ? 'text-ocupada' : 'text-warningText'}`}>
+                  La usan {nRecetas} {nRecetas === 1 ? 'receta activa' : 'recetas activas'}
                 </p>
               )}
             </div>
             <div className="text-right shrink-0">
-              <p className="text-sm font-bold text-ocupada whitespace-nowrap">
+              <p className={`text-sm font-bold whitespace-nowrap ${critico ? 'text-ocupada' : 'text-warningText'}`}>
                 {i.stock} {nombreUnidad(i.unidadInventario, unidades)}
               </p>
-              <p className="text-[10px] text-muted">mínimo {i.stockMinimo}</p>
+              <p className="text-[10px] text-muted">{critico ? 'Crítico' : `mínimo ${i.stockMinimo}`}</p>
             </div>
             <span
               className={`w-6 h-6 rounded-full grid place-items-center shrink-0 border ${
@@ -316,23 +321,31 @@ export default function Compras() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hayMasCompras, cargandoMas, cursor])
 
-  // Mismo criterio que "Stock bajo" en Insumos.jsx: solo cuenta si el insumo
-  // declaro un minimo (stockMinimo null = nunca se configuro, no avisa).
-  const insumosStockBajo = useMemo(
-    () => insumos.filter((i) => i.active && i.stockMinimo != null && i.stock <= i.stockMinimo),
-    [insumos]
-  )
-
-  // Cuantas recetas distintas usan cada insumo -- para que la alerta de
-  // stock bajo deje claro cuales son urgentes de verdad, no solo un numero.
+  // Solo las recetas disponibles generan urgencia: el endpoint excluye las
+  // eliminadas y `available` también descarta las suspendidas o su categoría.
   const recetasPorInsumo = useMemo(() => {
     const mapa = new Map()
-    for (const receta of recetas) {
+    for (const receta of recetas.filter((pr) => pr.available)) {
       const idsUnicos = new Set((receta.recipe?.items || []).filter((it) => it.insumoId).map((it) => it.insumoId))
       for (const id of idsUnicos) mapa.set(id, (mapa.get(id) || 0) + 1)
     }
     return mapa
   }, [recetas])
+
+  // Un insumo agotado es crítico aunque no tenga mínimo configurado. Entre
+  // alertas del mismo nivel, prioriza el que afecta a más recetas activas.
+  const insumosStockBajo = useMemo(
+    () => insumos
+      .filter((i) => i.active && (i.stock <= 0 || (i.stockMinimo != null && i.stock <= i.stockMinimo)))
+      .sort((a, b) => {
+        const porCriticidad = Number(b.stock <= 0) - Number(a.stock <= 0)
+        if (porCriticidad) return porCriticidad
+        const porRecetas = (recetasPorInsumo.get(b.id) || 0) - (recetasPorInsumo.get(a.id) || 0)
+        if (porRecetas) return porRecetas
+        return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }) || a.id.localeCompare(b.id)
+      }),
+    [insumos, recetasPorInsumo]
+  )
 
   const enListaSet = useMemo(() => new Set(listaCompra.map((it) => it.insumoId)), [listaCompra])
 
@@ -407,7 +420,13 @@ export default function Compras() {
                 type="button"
                 onClick={() => setFiltro(f.key)}
                 className={`h-8 px-2.5 rounded-lg text-xs font-semibold border transition-colors ${
-                  filtro === f.key ? 'bg-amber text-night border-amber' : 'bg-raised text-muted border-edge hover:text-ink'
+                  f.key === 'CON_SALDO'
+                    ? filtro === f.key
+                      ? 'bg-ocupada text-white border-ocupada'
+                      : 'bg-ocupada/10 text-ocupada border-ocupada/30 hover:border-ocupada/50'
+                    : filtro === f.key
+                      ? 'bg-amber text-night border-amber'
+                      : 'bg-raised text-muted border-edge hover:text-ink'
                 }`}
               >
                 {f.label} <span className="opacity-70">({counts[f.key]})</span>
@@ -553,11 +572,14 @@ export default function Compras() {
               <button
                 type="button"
                 onClick={() => setVerStockBajo(true)}
-                className="xl:hidden fixed right-0 top-1/2 -translate-y-1/2 z-40 bg-ocupada text-white
-                           rounded-l-xl px-1.5 py-3 shadow-lg flex flex-col items-center gap-1"
+                aria-label={`${insumosStockBajo.length} insumos con stock bajo`}
+                className="xl:hidden alerta-stock-bajo-tab fixed right-0 top-1/2 -translate-y-1/2 z-40
+                           bg-ocupada text-white rounded-l-xl px-2.5 py-4 shadow-lg flex flex-col items-center gap-1.5"
               >
-                <Icon.alert width={16} height={16} />
-                <span className="text-[10px] font-bold">{insumosStockBajo.length}</span>
+                <span className="alerta-stock-bajo-tab__contenido">
+                  <Icon.alert width={20} height={20} />
+                  <span className="text-xs font-bold">{insumosStockBajo.length}</span>
+                </span>
               </button>
             )}
 
@@ -1088,7 +1110,102 @@ function SelectorMediosPago({
   )
 }
 
+export function NuevaCompraModal({ onClose, onCreated }) {
+  const { session } = useAuth()
+  const [catalogos, setCatalogos] = useState(null)
+  const [errorCarga, setErrorCarga] = useState('')
+
+  useEffect(() => {
+    let vigente = true
+    async function cargarCatalogos() {
+      try {
+        const [proveedores, insumos, categoriasInsumo, unidades, productos, categoriasProducto] =
+          await Promise.all([
+            api('/proveedores'),
+            api('/insumos'),
+            api('/insumo-categorias'),
+            api('/insumos/unidades'),
+            api('/products'),
+            getCategories(session?.tenant.id),
+          ])
+        if (!vigente) return
+        setCatalogos({
+          proveedores,
+          insumos,
+          categoriasInsumo,
+          unidades,
+          productosStock: productos.filter(
+            (producto) => producto.kind === 'STOCK' && producto.variants?.some((variant) => variant.active)
+          ),
+          categoriasProducto,
+        })
+      } catch (error) {
+        if (vigente) setErrorCarga(error.message || 'No se pudieron cargar los datos para registrar la compra')
+      }
+    }
+    cargarCatalogos()
+    return () => {
+      vigente = false
+    }
+  }, [session?.tenant.id])
+
+  function actualizarCatalogo(clave, valor) {
+    setCatalogos((actuales) => ({ ...actuales, [clave]: [...actuales[clave], valor] }))
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] bg-black/70 p-3 sm:p-6 flex items-center justify-center"
+      onClick={onClose}
+      role="presentation"
+    >
+      <section
+        className="card w-full max-w-6xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] overflow-hidden flex flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="nueva-compra-titulo"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="shrink-0 flex items-center justify-between gap-4 px-5 py-4 border-b border-edge">
+          <h2 id="nueva-compra-titulo" className="text-lg font-bold">Registrar compra</h2>
+          <button type="button" className="btn-ghost h-9 w-9 p-0" onClick={onClose} aria-label="Cerrar">
+            <Icon.x width={18} height={18} />
+          </button>
+        </header>
+        <div className="overflow-y-auto p-4 sm:p-6">
+          {errorCarga ? (
+            <div className="text-sm text-ocupada" role="alert">
+              {errorCarga}
+              <button type="button" className="btn-ghost ml-2" onClick={onClose}>Cerrar</button>
+            </div>
+          ) : !catalogos ? (
+            <p className="py-10 text-center text-muted">Cargando datos de compras…</p>
+          ) : (
+            <CompraForm
+              modal
+              proveedores={catalogos.proveedores}
+              insumos={catalogos.insumos}
+              productosStock={catalogos.productosStock}
+              categoriasInsumo={catalogos.categoriasInsumo}
+              categoriasProducto={catalogos.categoriasProducto}
+              unidades={catalogos.unidades}
+              onProveedorCreado={(valor) => actualizarCatalogo('proveedores', valor)}
+              onInsumoCreado={(valor) => actualizarCatalogo('insumos', valor)}
+              onCategoriaInsumoCreada={(valor) => actualizarCatalogo('categoriasInsumo', valor)}
+              onProductoCreado={(valor) => actualizarCatalogo('productosStock', valor)}
+              onCreated={onCreated}
+              onSaved={onCreated}
+              onCancel={onClose}
+            />
+          )}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function CompraForm({
+  modal = false,
   compraExistente,
   proveedores,
   insumos,
@@ -1594,7 +1711,7 @@ function CompraForm({
   }, [])
 
   return (
-    <div className="card p-5 md:p-6 space-y-6">
+    <div className={modal ? 'space-y-6' : 'card p-5 md:p-6 space-y-6'}>
       <div className="flex items-center justify-between gap-3 flex-wrap pb-4 border-b border-edge">
         <Migaja
           onCancel={onCancel}
@@ -2005,7 +2122,7 @@ function CompraForm({
                         <div className="flex items-center gap-2 flex-wrap text-xs">
                           <Icon.alert width={13} height={13} className="text-warningText shrink-0" />
                           <span className="text-muted">
-                            Se compra por {it.insumo.unidadCompra} pero se cuenta en {it.insumo.unidadInventario}: ¿cuánto llegó en total?
+                            Se compra por {it.insumo.unidadCompra} y se cuenta en {it.insumo.unidadInventario}. Ingresa la cantidad total recibida; por ejemplo, 4 paquetes de 2.000 g = 8.000 g.
                           </span>
                           <input
                             type="number"

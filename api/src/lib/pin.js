@@ -16,11 +16,8 @@ export async function verificarPin(tenantId, pin) {
   return null
 }
 
-// Para devolver un producto pasado el minuto de gracia (ver POST
-// /orders/:id/items/:itemId/void): a diferencia de verificarPin, esto NO
-// busca entre todos los encargados -- cajero y mesero confirman con su PROPIO
-// PIN, sin necesitar que un admin este presente. El admin nunca pasa por
-// aqui (nunca necesita PIN para devolver lo suyo).
+// Para operaciones que exigen el PIN personal del usuario autenticado, como
+// devoluciones y ajustes de inventario; no busca el PIN entre otros encargados.
 export async function verificarPinPropio(tenantId, userId, pin) {
   const usuario = await prisma.user.findFirst({
     where: { id: userId, tenantId, active: true, pinHash: { not: null } },

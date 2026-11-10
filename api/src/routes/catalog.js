@@ -126,6 +126,7 @@ catalogRoutes.get('/products', async (req, res) => {
                   name: true,
                   stock: true,
                   costoCompra: true,
+                  costoUnidadInventario: true,
                   unidadCompra: true,
                   unidadInventario: true,
                   cantidadPromedioPorUnidad: true,
