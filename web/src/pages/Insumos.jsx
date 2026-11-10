@@ -3,6 +3,8 @@ import { api, money } from '../lib/api'
 import { Icon } from '../components/Icons'
 import InsumoForm from '../components/InsumoForm'
 
+const CLAVE_VISTA = 'licorplus:insumosVista'
+
 export default function Insumos() {
   const [insumos, setInsumos] = useState([])
   const [categorias, setCategorias] = useState([])
@@ -11,6 +13,13 @@ export default function Insumos() {
   const [filter, setFilter] = useState('')
   const [search, setSearch] = useState('')
   const [target, setTarget] = useState(undefined) // undefined = cerrado, null = nuevo, insumo = editar
+  const [vista, setVista] = useState(() => {
+    try {
+      return localStorage.getItem(CLAVE_VISTA) === 'list' ? 'list' : 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
 
   useEffect(() => {
     load()
@@ -50,6 +59,14 @@ export default function Insumos() {
   function guardado() {
     cerrar()
     load()
+  }
+  function cambiarVista(nuevaVista) {
+    setVista(nuevaVista)
+    try {
+      localStorage.setItem(CLAVE_VISTA, nuevaVista)
+    } catch {
+      // La vista sigue funcionando aunque el navegador no permita guardar preferencias.
+    }
   }
 
   return (
@@ -100,6 +117,34 @@ export default function Insumos() {
             {c.name}
           </button>
         ))}
+        <div
+          className="ml-auto flex items-center gap-0.5 border border-edge rounded-lg p-0.5 shrink-0"
+          role="group"
+          aria-label="Forma de ver los insumos"
+        >
+          <button
+            type="button"
+            onClick={() => cambiarVista('grid')}
+            aria-label="Ver en cuadros"
+            aria-pressed={vista === 'grid'}
+            className={`w-9 h-9 rounded-md grid place-items-center ${
+              vista === 'grid' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+            }`}
+          >
+            <Icon.grid width={16} height={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => cambiarVista('list')}
+            aria-label="Ver en lista"
+            aria-pressed={vista === 'list'}
+            className={`w-9 h-9 rounded-md grid place-items-center ${
+              vista === 'list' ? 'bg-amber text-night' : 'text-muted hover:text-ink'
+            }`}
+          >
+            <Icon.list width={16} height={16} />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-8">
@@ -112,50 +157,85 @@ export default function Insumos() {
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {items.map((i) => {
-                const agotado = i.stockMinimo != null && i.stock <= i.stockMinimo
-                return (
-                  <button
-                    key={i.id}
-                    type="button"
-                    onClick={() => setTarget(i)}
-                    className="card p-3 text-left flex flex-col gap-2.5 hover:border-amber/50 transition-colors"
-                  >
-                    <div className="aspect-square rounded-xl overflow-hidden grid place-items-center text-xl font-bold text-night shrink-0 bg-raised border border-edge">
-                      {i.imageUrl ? (
-                        <img src={i.imageUrl} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <Icon.box width={24} height={24} className="text-muted" />
-                      )}
-                    </div>
+            {vista === 'grid' ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                {items.map((i) => {
+                  const agotado = i.stockMinimo != null && i.stock <= i.stockMinimo
+                  return (
+                    <button
+                      key={i.id}
+                      type="button"
+                      onClick={() => setTarget(i)}
+                      className="card p-3 text-left flex flex-col gap-2.5 hover:border-amber/50 transition-colors"
+                    >
+                      <div className="aspect-square rounded-xl overflow-hidden grid place-items-center text-xl font-bold text-night shrink-0 bg-raised border border-edge">
+                        {i.imageUrl ? (
+                          <img src={i.imageUrl} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <Icon.box width={24} height={24} className="text-muted" />
+                        )}
+                      </div>
 
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm leading-snug truncate">{i.name}</p>
-                      <p className="text-xs text-muted truncate">
-                        {i.stock} {nombreUnidad(i.unidadInventario)}
-                        {i.proveedor ? ` · ${i.proveedor.name}` : ''}
-                      </p>
-                    </div>
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm leading-snug truncate">{i.name}</p>
+                        <p className="text-xs text-muted truncate">
+                          {i.stock} {nombreUnidad(i.unidadInventario)}
+                          {i.proveedor ? ` · ${i.proveedor.name}` : ''}
+                        </p>
+                      </div>
 
-                    <div className="flex items-center justify-between gap-2 mt-auto">
-                      <span className="font-semibold text-sm">{money(i.costoCompra)}</span>
-                      <span
-                        className={`text-[10px] font-semibold px-2 py-1 rounded-pill border shrink-0 ${
-                          !i.active
-                            ? 'text-muted border-edge bg-raised'
-                            : agotado
-                              ? 'text-ocupada border-ocupada/40 bg-ocupada/10'
-                              : 'text-libre border-libre/40 bg-libre/10'
-                        }`}
-                      >
-                        {!i.active ? 'Desactivado' : agotado ? 'Stock bajo' : 'Disponible'}
-                      </span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+                      <div className="flex items-center justify-between gap-2 mt-auto">
+                        <span className="font-semibold text-sm">{money(i.costoCompra)}</span>
+                        <EstadoInsumo insumo={i} />
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="border-y border-edge overflow-x-auto">
+                <table className="w-full min-w-[680px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-muted uppercase tracking-wide">
+                      <th className="py-3 px-3 font-semibold">Insumo</th>
+                      <th className="py-3 px-3 font-semibold text-right">Stock</th>
+                      <th className="py-3 px-3 font-semibold">Proveedor</th>
+                      <th className="py-3 px-3 font-semibold text-right">Costo de compra</th>
+                      <th className="py-3 px-3 font-semibold">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((i) => (
+                      <tr key={i.id} className="border-t border-edge hover:bg-raised/50 transition-colors">
+                        <td className="py-2.5 px-3">
+                          <button
+                            type="button"
+                            onClick={() => setTarget(i)}
+                            aria-label={`Editar ${i.name}`}
+                            className="flex items-center gap-3 text-left rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber"
+                          >
+                            <span className="w-10 h-10 rounded-lg overflow-hidden grid place-items-center bg-raised border border-edge shrink-0">
+                              {i.imageUrl ? (
+                                <img src={i.imageUrl} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <Icon.box width={18} height={18} className="text-muted" />
+                              )}
+                            </span>
+                            <span className="font-medium text-ink">{i.name}</span>
+                          </button>
+                        </td>
+                        <td className="py-2.5 px-3 text-right tabular-nums">
+                          {i.stock} {nombreUnidad(i.unidadInventario)}
+                        </td>
+                        <td className="py-2.5 px-3 text-muted">{i.proveedor?.name || '—'}</td>
+                        <td className="py-2.5 px-3 text-right font-medium tabular-nums">{money(i.costoCompra)}</td>
+                        <td className="py-2.5 px-3"><EstadoInsumo insumo={i} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         ))}
 
@@ -179,5 +259,22 @@ export default function Insumos() {
         />
       )}
     </div>
+  )
+}
+
+function EstadoInsumo({ insumo }) {
+  const agotado = insumo.stockMinimo != null && insumo.stock <= insumo.stockMinimo
+  return (
+    <span
+      className={`text-[10px] font-semibold px-2 py-1 rounded-pill border shrink-0 ${
+        !insumo.active
+          ? 'text-muted border-edge bg-raised'
+          : agotado
+            ? 'text-ocupada border-ocupada/40 bg-ocupada/10'
+            : 'text-libre border-libre/40 bg-libre/10'
+      }`}
+    >
+      {!insumo.active ? 'Desactivado' : agotado ? 'Stock bajo' : 'Disponible'}
+    </span>
   )
 }

@@ -42,6 +42,7 @@ const TABS = [
   { n: 1, label: 'Información general' },
   { n: 2, label: 'Receta y costos' },
   { n: 3, label: 'Variantes y complementos' },
+  { n: 4, label: 'Indicadores' },
 ]
 
 export default function Recetas() {
@@ -248,6 +249,31 @@ function RecetaEditor({
   const esAdminReal = session?.user.role === 'ADMIN'
   const esNueva = !product
   const [tab, setTab] = useState(1)
+  const [indicadores, setIndicadores] = useState(null)
+  const [cargandoIndicadores, setCargandoIndicadores] = useState(false)
+  const [errorIndicadores, setErrorIndicadores] = useState('')
+  const [intentoIndicadores, setIntentoIndicadores] = useState(0)
+
+  useEffect(() => {
+    if (!product?.id) return undefined
+    let vigente = true
+    setIndicadores(null)
+    setCargandoIndicadores(true)
+    setErrorIndicadores('')
+    api(`/products/${product.id}/indicators`)
+      .then((data) => {
+        if (vigente) setIndicadores(data)
+      })
+      .catch((requestError) => {
+        if (vigente) setErrorIndicadores(requestError.message || 'No se pudieron cargar los indicadores')
+      })
+      .finally(() => {
+        if (vigente) setCargandoIndicadores(false)
+      })
+    return () => {
+      vigente = false
+    }
+  }, [product?.id, intentoIndicadores])
 
   const [name, setName] = useState(product?.name || '')
   const [categoryId, setCategoryId] = useState(product?.categoryId || '')
@@ -355,6 +381,7 @@ function RecetaEditor({
   const margen = precioNum - costoTotal
   const margenPct = precioNum > 0 ? (margen / precioNum) * 100 : 0
   const pctIngredientes = precioNum > 0 ? (costoTotal / precioNum) * 100 : 0
+  const maximoIndicadores = Math.max(...(indicadores?.dias || []).map((dia) => dia.porcentaje), 0)
 
   function agregarInsumo(insumo) {
     setItems((prev) => [...prev, { insumo, qty: 1 }])
@@ -592,13 +619,13 @@ function RecetaEditor({
         <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">{error}</p>
       )}
 
-      <div className="flex gap-1 border-b border-edge">
+      <div className="flex gap-1 border-b border-edge overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.n}
             type="button"
             onClick={() => setTab(t.n)}
-            className={`px-3 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+            className={`shrink-0 px-3 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${
               tab === t.n ? 'border-amber text-ink' : 'border-transparent text-muted hover:text-ink'
             }`}
           >
@@ -898,6 +925,120 @@ function RecetaEditor({
             Quitar ingredientes, adicionales con precio propio, sustituciones y grupos de selección para el
             POS se configuran aquí más adelante.
           </p>
+        </div>
+      )}
+
+      {tab === 4 && (
+        <div className="space-y-5">
+          {esNueva ? (
+            <p className="py-8 text-center text-sm text-muted">
+              Guarda la receta para consultar sus indicadores de venta.
+            </p>
+          ) : cargandoIndicadores ? (
+            <p className="py-8 text-center text-sm text-muted">Cargando indicadores…</p>
+          ) : errorIndicadores ? (
+            <div className="py-6 text-center space-y-3" role="alert">
+              <p className="text-sm text-ocupada">{errorIndicadores}</p>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => setIntentoIndicadores((intento) => intento + 1)}
+              >
+                Reintentar
+              </button>
+            </div>
+          ) : indicadores ? (
+            <section className="rounded-xl border border-edge bg-raised/40 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-bold">Mapa de rotación semanal</h3>
+                  <p className="text-xs text-muted mt-1">
+                    Ventas registradas · últimas {indicadores.semanas} semanas completas
+                  </p>
+                </div>
+                <span className="text-[10px] font-semibold rounded-full px-2.5 py-1 bg-amber/10 text-amberText">
+                  Semana consolidada
+                </span>
+              </div>
+
+              <div className="mt-5">
+                <div className="grid grid-cols-7 gap-1.5 sm:gap-2 items-end" aria-label="Distribución de ventas por día">
+                  {indicadores.dias.map((dia) => {
+                    const colores = {
+                      pico: { barra: 'bg-libre', texto: 'text-libre' },
+                      medio: { barra: 'bg-amber', texto: 'text-amberText' },
+                      valle: { barra: 'bg-muted/60', texto: 'text-muted' },
+                    }
+                    return (
+                      <div
+                        key={dia.numero}
+                        className="min-w-0 text-center"
+                        title={`${dia.nombre}: ${dia.cantidad} recetas · ${dia.porcentaje}% · ${dia.nivel}`}
+                      >
+                        <p className={`text-[10px] sm:text-xs font-bold tabular-nums ${colores[dia.nivel].texto}`}>
+                          {dia.porcentaje}%
+                        </p>
+                        <div className="h-16 mt-1 flex items-end rounded-md bg-canvas p-1">
+                          <div
+                            className={`w-full rounded-sm ${colores[dia.nivel].barra} transition-[height] duration-300`}
+                            style={{
+                              height: `${maximoIndicadores
+                                ? Math.max(5, (dia.porcentaje / maximoIndicadores) * 100)
+                                : 5}%`,
+                            }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-muted mt-1">{dia.nombre}</p>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="flex items-center justify-between gap-3 mt-4 text-xs text-muted">
+                  <span>Ventas en el periodo</span>
+                  <strong className="text-ink tabular-nums">
+                    {indicadores.total} {indicadores.total === 1 ? 'receta' : 'recetas'}
+                  </strong>
+                </div>
+              </div>
+
+              {indicadores.total > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+                  {[
+                    { nivel: 'pico', porcentaje: indicadores.porcentajePorNivel.pico },
+                    { nivel: 'medio', porcentaje: indicadores.porcentajePorNivel.medio },
+                    { nivel: 'valle', porcentaje: indicadores.porcentajePorNivel.valle },
+                  ].map(({ nivel, porcentaje }) => {
+                    const clases = {
+                      pico: 'border-libre/25 bg-libre/5 text-libre',
+                      medio: 'border-amber/25 bg-amber/5 text-amberText',
+                      valle: 'border-edge bg-canvas/50 text-muted',
+                    }
+                    return (
+                      <div key={nivel} className={`rounded-lg border p-2.5 ${clases[nivel]}`}>
+                        <p className="text-[10px] uppercase tracking-wide">
+                          {nivel === 'medio' ? 'Días rotación media' : `Días ${nivel}`}
+                        </p>
+                        <p className="font-bold tabular-nums mt-1">{porcentaje}% de las ventas</p>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className="py-4 text-center text-sm text-muted border-y border-edge mt-3">
+                  No hay ventas cerradas de esta receta en el periodo para calcular sus días pico, medios y valle.
+                </p>
+              )}
+
+              <p className="text-[11px] text-muted mt-3">
+                {indicadores.total === 0
+                  ? 'Sin rotación registrada para estimar días de cobertura.'
+                  : indicadores.recetasDisponibles == null
+                    ? 'No se puede estimar la cobertura: los ingredientes de esta receta no tienen stock unitario registrado.'
+                    : `Con el ritmo reciente, el stock permite preparar aproximadamente ${indicadores.coberturaDias} días de ventas.`}
+                {' '}Pico supera el promedio en más de una desviación estándar; valle queda más de una desviación abajo o no registra movimiento.
+              </p>
+            </section>
+          ) : null}
         </div>
       )}
 

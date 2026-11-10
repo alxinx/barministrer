@@ -7,6 +7,8 @@ import { verificarPin } from '../lib/pin.js'
 import { subirImagenProducto } from '../lib/r2.js'
 import { costoDeReceta } from '../lib/costos.js'
 import { tituloInteligente } from '../lib/texto.js'
+import { calcularRotacionSemanal, rangoSemanasCompletas } from '../lib/rotacion.js'
+import { sumarDias } from '../lib/fechas.js'
 
 export const catalogRoutes = Router()
 const adminOnly = requirePermission('cajeroEditaCatalogo')
@@ -93,6 +95,78 @@ catalogRoutes.delete('/categories/:id', adminOnly, async (req, res) => {
 
   await prisma.category.delete({ where: { id: existing.id } })
   res.status(204).end()
+})
+
+catalogRoutes.get('/products/:id/indicators', async (req, res) => {
+  const product = await prisma.product.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId, deletedAt: null },
+    select: {
+      id: true,
+      kind: true,
+      recipe: {
+        select: {
+          id: true,
+          items: {
+            where: { OR: [{ insumoId: { not: null } }, { variantId: { not: null } }] },
+            select: {
+              qty: true,
+              insumo: { select: { stock: true } },
+              variant: { select: { stock: true } },
+            },
+          },
+        },
+      },
+    },
+  })
+  if (!product || product.kind !== 'PREPARED' || !product.recipe) {
+    return res.status(404).json({ error: 'La receta no existe' })
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: req.auth.tenantId },
+    select: { timezone: true },
+  })
+  const timezone = tenant?.timezone || 'America/Bogota'
+  const rango = rangoSemanasCompletas(timezone)
+  const ingredientesConStock = product.recipe.items.filter((item) => item.qty > 0)
+  const recetasDisponibles = ingredientesConStock.length
+    ? Math.max(
+        0,
+        Math.min(
+          ...ingredientesConStock.map((item) =>
+            Math.floor(Number(item.insumo?.stock ?? item.variant?.stock ?? 0) / item.qty)
+          )
+        )
+      )
+    : null
+  const ventas = await prisma.orderItem.findMany({
+    where: {
+      tenantId: req.auth.tenantId,
+      productId: product.id,
+      status: 'ACTIVE',
+      order: {
+        tenantId: req.auth.tenantId,
+        status: 'CLOSED',
+        closedAt: { gte: rango.desde, lt: rango.hasta },
+      },
+    },
+    select: { qty: true, order: { select: { closedAt: true } } },
+  })
+  const indicadores = calcularRotacionSemanal(
+    ventas.map((venta) => ({ fecha: venta.order.closedAt, cantidad: venta.qty })),
+    timezone,
+    rango.desdeFecha,
+    rango.hastaFecha,
+    recetasDisponibles ?? 0
+  )
+
+  res.json({
+    ...indicadores,
+    recetasDisponibles,
+    coberturaDias: recetasDisponibles == null ? null : indicadores.coberturaDias,
+    periodo: { desde: rango.desdeFecha, hasta: sumarDias(rango.hastaFecha, -1) },
+    semanas: 8,
+  })
 })
 
 // --- Productos -------------------------------------------------------------
