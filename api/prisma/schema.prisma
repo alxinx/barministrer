@@ -131,6 +131,14 @@ model Tenant {
   /// todos los bares lo necesitan prendido de entrada.
   permiteEliminarProductos Boolean @default(false)
 
+  /// Resto fosil del flujo de pedido viejo (envio automatico, antes de que
+  /// se volviera pre-pedido + aprobacion fija -- ver CLAUDE.md, Operacion).
+  /// Ningun endpoint la lee. Se reintrodujo solo para no perder el valor
+  /// historico de los 2 tenants reales tras borrarse por error en un deploy
+  /// (ver backup barminister_20261111_123036.sql) -- no agregar logica
+  /// nueva sobre este campo.
+  autoEnviarPedido Boolean?
+
   users      User[]
   categories Category[]
   products   Product[]
