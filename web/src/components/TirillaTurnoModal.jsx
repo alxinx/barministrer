@@ -13,8 +13,19 @@ import { METHODS, METHOD_LABEL } from '../lib/paymentMethods'
  * fallback a window.print()). Se usa tanto recien cerrado el turno (autoPrint,
  * ver Caja.jsx) como para reimprimirlo despues desde TurnoDetalle.
  */
-export default function TirillaTurnoModal({ shift, sales, counts, egresos, totalEgresos, tenant, onClose, autoPrint = false }) {
+export default function TirillaTurnoModal({
+  shift,
+  sales,
+  counts,
+  egresos,
+  totalEgresos,
+  preparados,
+  tenant,
+  onClose,
+  autoPrint = false,
+}) {
   const mismaPersona = shift.closedBy && shift.closedBy.id === shift.openedBy.id
+  const resumenPreparados = preparados?.resumen || []
 
   function lineasTicket() {
     const l = [
@@ -47,6 +58,11 @@ export default function TirillaTurnoModal({ shift, sales, counts, egresos, total
     l.push({ raya: true })
     l.push({ cols: ['Egresos y retiros', `-${money(totalEgresos)}`], negrita: true })
     egresos.forEach((e) => l.push({ cols: [e.reason, `-${money(e.amount)}`] }))
+    if (resumenPreparados.length > 0) {
+      l.push({ raya: true })
+      l.push({ texto: 'Preparados sin recuperar', negrita: true })
+      resumenPreparados.forEach((r) => l.push({ cols: [r.nombre, `${r.qty} ${r.unidad}`] }))
+    }
     l.push({ raya: true })
     l.push({ texto: `${sales.tickets} ${sales.tickets === 1 ? 'cuenta cerrada' : 'cuentas cerradas'}`, centro: true })
     return l
@@ -141,6 +157,23 @@ export default function TirillaTurnoModal({ shift, sales, counts, egresos, total
                 </div>
               ))}
             </div>
+          )}
+
+          {resumenPreparados.length > 0 && (
+            <>
+              <div className="my-2 border-t border-dashed border-black/40" />
+              <p className="font-bold">Preparados sin recuperar</p>
+              <div className="space-y-0.5 mt-1">
+                {resumenPreparados.map((r) => (
+                  <div key={`${r.nombre}·${r.unidad}`} className="flex justify-between">
+                    <span className="truncate pr-2">{r.nombre}</span>
+                    <span className="shrink-0">
+                      {r.qty} {r.unidad}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
 
           <div className="my-2 border-t border-dashed border-black/40" />

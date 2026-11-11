@@ -20,6 +20,14 @@ export default function DevolverModal({ item, role, onCancel, onDevuelto }) {
   const dentroDeGracia = Date.now() - new Date(item.orderedAt).getTime() < GRACIA_MS
   const necesitaPin = !dentroDeGracia && role !== 'ADMIN'
   const necesitaMotivo = !dentroDeGracia
+  // Es un preparado (shot, sanduche...) cuya receta por defecto NO repone
+  // ingredientes al anular (ver Recipe.ingredientesRecuperables). Pasado el
+  // minuto de gracia (ahi ya repone solo, ver backend) se ofrece preguntarle
+  // a cocina/barra si de verdad no se habia iniciado -- el motivo y el PIN
+  // que esta pantalla ya exige para cualquier devolucion tardia son el mismo
+  // rastro de autoria que respalda esta confirmacion, no un atajo aparte.
+  const puedeConfirmarSinPreparar =
+    !dentroDeGracia && Boolean(item.productId) && !item.variantId && item.product?.recipe?.ingredientesRecuperables === false
 
   const {
     pin,
@@ -36,6 +44,9 @@ export default function DevolverModal({ item, role, onCancel, onDevuelto }) {
   // lleve de arrastre toda la ronda sin querer -- eso dejaria la linea sin
   // nada activo para seguir corrigiendo despues.
   const [qty, setQty] = useState(1)
+  // 'si' por defecto (ya se preparo, no repone nada): el silencio nunca
+  // devuelve insumo solo, hay que elegir explicitamente lo contrario.
+  const [sinPreparar, setSinPreparar] = useState('si')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -49,6 +60,7 @@ export default function DevolverModal({ item, role, onCancel, onDevuelto }) {
       const body = { qty }
       if (necesitaMotivo) body.reason = reason.trim()
       if (necesitaPin) body.pin = pin
+      if (puedeConfirmarSinPreparar) body.confirmaSinPreparar = sinPreparar === 'no'
       const updated = await api(`/orders/${item.orderId}/items/${item.id}/void`, { method: 'PATCH', body })
       onDevuelto(updated)
     } catch (err) {
@@ -116,6 +128,21 @@ export default function DevolverModal({ item, role, onCancel, onDevuelto }) {
             />
           </div>
         )}
+
+        {puedeConfirmarSinPreparar && (
+          <div>
+            <label className="label">¿Ya se empezó a preparar en cocina o barra?</label>
+            <select className="field" value={sinPreparar} onChange={(e) => setSinPreparar(e.target.value)}>
+              <option value="si">Sí, ya se preparó (no repone el insumo)</option>
+              <option value="no">No, se confirmó antes de iniciar (repone el insumo)</option>
+            </select>
+            <p className="text-xs text-muted mt-1.5">
+              Este producto normalmente no repone su insumo al devolverse. Si preguntaste y todavía no se había
+              empezado, elige la segunda opción.
+            </p>
+          </div>
+        )}
+
         {necesitaPin && (
           <PinField
             pin={pin}

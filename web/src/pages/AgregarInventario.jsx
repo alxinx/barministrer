@@ -113,6 +113,10 @@ export default function AgregarInventario() {
             detail: variant.name && variant.name !== 'Unidad' ? variant.name : '',
             categoryId: category?.id || category?.name || 'sin-categoria',
             categoryName: category?.name || 'Sin categoría',
+            // Solo para el buscador, nunca para mostrar: una subcategoria
+            // ("Michelada") tambien debe encontrarse buscando el nombre de
+            // su categoria padre ("Cerveza").
+            categoryParentName: category?.parent?.name || '',
             stock: Number(variant.stock) || 0,
             minimum: variant.stockMinimo == null ? null : Number(variant.stockMinimo),
             unit: 'un.',
@@ -199,7 +203,7 @@ export default function AgregarInventario() {
       if (categoriasActivas.size > 0 && !categoriasActivas.has(`${item.kind}:${item.categoryId}`)) return false
       return (
         !term ||
-        `${item.name} ${item.detail} ${item.categoryName} ${item.unit}`
+        `${item.name} ${item.detail} ${item.categoryName} ${item.categoryParentName || ''} ${item.unit}`
           .toLocaleLowerCase('es')
           .includes(term)
       )
@@ -844,7 +848,7 @@ function InventarioCard({ item, onKardex, onAjustar, onVerFicha }) {
           <Icon.clock width={16} height={16} />
           <Icon.chevronRight width={13} height={13} />
         </AccionIcono>
-        <AccionIcono label="Ajuste de stock (próximamente)" onClick={onAjustar}>
+        <AccionIcono label="Ajuste de stock" onClick={onAjustar}>
           <Icon.box width={16} height={16} />
         </AccionIcono>
         <AccionIcono label={`Ver ficha técnica de ${item.name}`} onClick={onVerFicha}>
@@ -880,7 +884,7 @@ function InventarioRow({ item, onKardex, onAjustar, onVerFicha }) {
             <Icon.clock width={16} height={16} />
             <Icon.chevronRight width={13} height={13} />
           </AccionIcono>
-          <AccionIcono label="Ajuste de stock (próximamente)" onClick={onAjustar}>
+          <AccionIcono label="Ajuste de stock" onClick={onAjustar}>
             <Icon.box width={16} height={16} />
           </AccionIcono>
           <AccionIcono label={`Ver ficha técnica de ${item.name}`} onClick={onVerFicha}>

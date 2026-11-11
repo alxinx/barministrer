@@ -57,6 +57,7 @@ export default function Caja() {
   const [countsDraft, setCountsDraft] = useState(null)
   const [confirmando, setConfirmando] = useState(false)
   const [closedResult, setClosedResult] = useState(null)
+  const [preparadosCierre, setPreparadosCierre] = useState(null)
   // Flujo de "cerrar turno" con cuentas todavia abiertas: primero se pregunta
   // que hacer con ellas (cobrarlas ya o dejarlas pasar), y si elige cobrarlas
   // se van mostrando una por una hasta que no quede ninguna.
@@ -169,9 +170,14 @@ export default function Caja() {
   async function cerrarTurno(counts, pin) {
     try {
       const cerrado = await api(`/shifts/${shift.id}/close`, { method: 'POST', body: { counts, pin } })
+      // Se espera antes de abrir la tirilla (que imprime sola, ver
+      // autoPrint) para que la seccion de preparados salga en esa primera
+      // impresion; si falla, la tirilla igual sale sin esa seccion.
+      const preparados = await api(`/shifts/${cerrado.id}/prepared-voids`).catch(() => null)
       setConfirmando(false)
       setShift(null)
       setClosedResult(cerrado)
+      setPreparadosCierre(preparados)
       // Un turno nuevo nunca hereda el codigo recordado del anterior: vuelve
       // a pedirse en la primera cuenta que se cierre del turno que sigue.
       olvidarCodigoRecordado()
@@ -195,6 +201,7 @@ export default function Caja() {
 
   function cerrarVoucherYSeguir() {
     setClosedResult(null)
+    setPreparadosCierre(null)
     load()
     navigate('/venta')
   }
@@ -635,6 +642,7 @@ export default function Caja() {
           counts={closedResult.counts || []}
           egresos={closedResult.expenses || []}
           totalEgresos={(closedResult.expenses || []).reduce((s, e) => s + Number(e.amount), 0)}
+          preparados={preparadosCierre}
           tenant={session?.tenant}
           autoPrint
           onClose={cerrarVoucherYSeguir}

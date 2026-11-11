@@ -43,7 +43,16 @@ export default function Productos() {
     const term = search.trim().toLowerCase()
     return products
       .filter((p) => !filter || p.categoryId === filter)
-      .filter((p) => !term || p.name.toLowerCase().includes(term) || p.category?.name.toLowerCase().includes(term))
+      .filter(
+        (p) =>
+          !term ||
+          p.name.toLowerCase().includes(term) ||
+          p.category?.name.toLowerCase().includes(term) ||
+          // Una subcategoria tambien se encuentra buscando el nombre de su
+          // categoria padre ("cerveza" debe traer lo que quedo adentro de
+          // "Michelada", una subcategoria de "Cerveza").
+          p.category?.parent?.name.toLowerCase().includes(term)
+      )
   }, [products, filter, search])
 
   // El catalogo se distribuye por categoria (2 niveles: padre > hija), en el
@@ -80,6 +89,14 @@ export default function Productos() {
     setFilter('')
     invalidateCategories()
     load()
+  }
+
+  // Categoria creada al vuelo desde dentro de ProductoForm (paso 1, "+
+  // Nueva"): se suma a la lista en memoria para que aparezca ya seleccionada
+  // sin esperar otro round-trip, mismo patron que InsumoForm/Recetas.
+  function categoriaCreadaInline(categoria) {
+    setCategories((prev) => [...prev, categoria])
+    invalidateCategories()
   }
 
   function cambiarVista(nuevaVista) {
@@ -374,8 +391,10 @@ export default function Productos() {
         <ProductoForm
           categories={categories}
           product={target}
+          products={products}
           onClose={cerrar}
           onSaved={guardado}
+          onCategoriaCreada={categoriaCreadaInline}
         />
       )}
 

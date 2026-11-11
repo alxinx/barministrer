@@ -350,6 +350,27 @@ model Recipe {
   validFrom  DateTime?
   validUntil DateTime?
 
+  // false por defecto: un preparado que ya se hizo (sanduche armado, shot
+  // servido) no puede devolverse al inventario -- sus ingredientes se
+  // quedan descontados aunque se anule el cobro. El ADMIN lo activa solo si
+  // tiene sentido fisicamente (ej. un combo sellado que nunca se abrio). El
+  // cajero nunca decide esto al momento de anular (ver POST
+  // /orders/:id/items/:itemId/void): es una regla de la receta, definida de
+  // antemano. Unica excepcion, tambien automatica: anular dentro del minuto
+  // de gracia (ver GRACIA_DEVOLUCION_MS) SI repone los ingredientes aunque
+  // esto este en false -- ahi es practicamente imposible que ya se haya
+  // preparado, a diferencia de un void mas tarde que si pide motivo/PIN.
+  ingredientesRecuperables Boolean @default(false)
+
+  // true por defecto: mantiene el principio general del dominio (nunca
+  // bloquear una venta, ver CLAUDE.md). Si el insumo real de verdad se
+  // puede agotar y vender igual no tiene sentido (ej. falta la lechuga de
+  // la hamburguesa), quien edita la receta lo desactiva para esta receta en
+  // particular -- ahi POST /orders/:id/items y POST /orders/:id/send
+  // bloquean la venta si algun ingrediente no alcanza, en vez de dejarla
+  // pasar en sobreconsumo.
+  permiteVentaSinStock Boolean @default(true)
+
   product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
   items   RecipeItem[]
 }
@@ -1078,6 +1099,16 @@ model OrderItem {
   voidedAt   DateTime?
   voidReason String?
   voidedById String?
+  /// Solo tiene sentido en un preparado anulado (productId, no variantId):
+  /// si sus ingredientes de verdad volvieron al inventario en ESTE void en
+  /// particular. Null en todo lo demas (STOCK, o nunca anulado). Se guarda
+  /// aqui -- y no se vuelve a derivar de Recipe.ingredientesRecuperables --
+  /// porque el resultado real depende del momento (ver GRACIA_DEVOLUCION_MS
+  /// y confirmaSinPreparar en POST /orders/:id/items/:itemId/void), no solo
+  /// de la receta: GET /shifts/:id/prepared-voids filtra por este campo, no
+  /// por la receta, para no mostrar como "sin recuperar" un void que si
+  /// repuso.
+  ingredientesRepuestos Boolean?
 
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)

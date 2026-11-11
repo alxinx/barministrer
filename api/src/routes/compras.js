@@ -267,7 +267,19 @@ async function resolverPagoCompra(tx, { tenantId, compraId, pago, encargadoId, s
 // del saldo pendiente, nunca contra el total original, para que la suma de
 // todas nunca pueda superarlo aunque cada una individualmente quepa.
 async function resolverPagos(tx, { tenantId, compraId, pagos, encargadoId, saldoPendiente, descripcion }) {
-  if (!pagos || pagos.length === 0) return 0
+  if (pagos == null) return 0
+  if (!Array.isArray(pagos)) throw badRequest('La lista de pagos no es válida')
+  if (pagos.length === 0) return 0
+
+  const totalPagos = pagos.reduce((suma, pago) => {
+    const monto = Number(pago?.monto)
+    if (!Number.isFinite(monto) || monto <= 0) throw badRequest('El monto del pago debe ser mayor a cero')
+    return suma + monto
+  }, 0)
+  if (totalPagos > saldoPendiente + 0.009) {
+    throw badRequest('Los pagos no pueden superar el saldo pendiente')
+  }
+
   let restante = saldoPendiente
   let total = 0
   for (const pago of pagos) {
@@ -721,6 +733,10 @@ comprasRoutes.post('/compras', async (req, res) => {
   }
   const itemsParaCrear = calculados.map(({ insumo, variant, ...it }) => it)
 
+  if (await pinLimitExcedido(req, res)) return
+  const encargado = await verificarPin(req.auth.tenantId, pin)
+  if (!encargado) return pinIncorrecto(req, res)
+
   if (accion === 'guardar') {
     try {
       const compra = await prisma.compra.create({
@@ -736,12 +752,8 @@ comprasRoutes.post('/compras', async (req, res) => {
     }
   }
 
-  // accion === 'recibir': sube stock de una y puede mover plata real -- pide
-  // PIN igual que merma y los egresos de Cajas y Bancos.
-  if (await pinLimitExcedido(req, res)) return
-  const encargado = await verificarPin(req.auth.tenantId, pin)
-  if (!encargado) return pinIncorrecto(req, res)
-
+  // accion === 'recibir': sube stock y puede mover plata real. Ambas acciones
+  // requieren PIN para dejar constancia de quién autorizó la compra.
   try {
     const resultado = await prisma.$transaction(async (tx) => {
       const compra = await tx.compra.create({

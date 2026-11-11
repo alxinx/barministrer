@@ -16,7 +16,9 @@ const puedeGestionarPrePedidos = requireRole('ADMIN', 'CAJERO') // ambos se ente
 const ITEM_INCLUDE = {
   createdBy: { select: { id: true, name: true } },
   voidedBy: { select: { id: true, name: true } },
-  product: { select: { imageUrl: true } },
+  // recipe.ingredientesRecuperables: para que DevolverModal sepa si ofrecer
+  // "¿ya se empezo a preparar?" al anular (ver POST .../void).
+  product: { select: { imageUrl: true, recipe: { select: { ingredientesRecuperables: true } } } },
 }
 const ORDER_INCLUDE = {
   items: { include: ITEM_INCLUDE, orderBy: { orderedAt: 'asc' } },
@@ -97,6 +99,38 @@ async function sumarIngredientesPorUnidad(porVariante, porInsumo, productId, can
       porInsumo.set(item.insumoId, (porInsumo.get(item.insumoId) || 0) + item.qty * cantidadVendida)
     }
   }
+}
+
+// Excepcion puntual al "nunca bloquear una venta" del resto del dominio (ver
+// CLAUDE.md): solo aplica si la receta quedo marcada con
+// permiteVentaSinStock=false (ver Recipe.permiteVentaSinStock, quien edita
+// la receta lo decide de antemano, no el cajero al momento de vender).
+// Null si alcanza o si la receta no restringe; si no alcanza, el mensaje
+// accionable con el ingrediente exacto que falta.
+async function ingredienteFaltante(productId, cantidadVendida) {
+  const recipe = await prisma.recipe.findUnique({
+    where: { productId },
+    include: {
+      items: {
+        where: { OR: [{ variantId: { not: null } }, { insumoId: { not: null } }] },
+        include: {
+          variant: { select: { name: true, stock: true, product: { select: { name: true } } } },
+          insumo: { select: { name: true, stock: true } },
+        },
+      },
+    },
+  })
+  if (!recipe || recipe.permiteVentaSinStock) return null
+
+  for (const item of recipe.items) {
+    const disponible = Number((item.variantId ? item.variant?.stock : item.insumo?.stock) ?? 0)
+    const necesita = item.qty * cantidadVendida
+    if (disponible < necesita) {
+      const nombre = item.variant ? `${item.variant.product.name} (${item.variant.name})` : item.insumo?.name
+      return `No hay suficiente ${nombre || 'un ingrediente'} para preparar este producto`
+    }
+  }
+  return null
 }
 
 // --- Mas pedidos por zona ----------------------------------------------------
@@ -358,6 +392,10 @@ orderRoutes.post('/orders/:id/items', async (req, res) => {
         include: { recipe: true },
       })
       if (!product?.recipe) return res.status(400).json({ error: 'Ese producto ya no existe' })
+      if (status === 'ACTIVE') {
+        const faltante = await ingredienteFaltante(product.id, qty)
+        if (faltante) return res.status(400).json({ error: faltante })
+      }
       data.push({
         tenantId: req.auth.tenantId,
         orderId: order.id,
@@ -431,6 +469,8 @@ orderRoutes.post('/orders/:id/send', puedeGestionarPrePedidos, async (req, res) 
     else if (it.productId) porProductoPreparado.set(it.productId, (porProductoPreparado.get(it.productId) || 0) + it.qty)
   }
   for (const [productId, qty] of porProductoPreparado) {
+    const faltante = await ingredienteFaltante(productId, qty)
+    if (faltante) return res.status(400).json({ error: faltante })
     await sumarIngredientesPorUnidad(porVariante, porInsumo, productId, qty)
   }
 
@@ -512,7 +552,7 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
   if (!item) return res.status(404).json({ error: 'Producto no encontrado en esta cuenta' })
   if (item.status === 'VOIDED') return res.status(400).json({ error: 'Ese producto ya estaba devuelto' })
 
-  const { pin, reason, qty: qtyBody } = req.body || {}
+  const { pin, reason, qty: qtyBody, confirmaSinPreparar } = req.body || {}
 
   // Si no mandan cantidad, se devuelve la linea completa (comportamiento de
   // siempre). Si mandan menos que el total, es una correccion de envio: "se
@@ -547,16 +587,54 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
   // habia restado nada (eso pasa al enviar, no al crear el pre-pedido).
   const porVariante = new Map()
   const porInsumo = new Map()
+  // Solo tiene sentido en un preparado (item.productId): null en STOCK, que
+  // siempre repone sin esta decision (ver mas abajo).
+  let ingredientesRepuestos = null
   if (item.status === 'ACTIVE') {
-    if (item.variantId) porVariante.set(item.variantId, qtyDevuelta)
-    else if (item.productId) await sumarIngredientesPorUnidad(porVariante, porInsumo, item.productId, qtyDevuelta)
+    if (item.variantId) {
+      porVariante.set(item.variantId, qtyDevuelta)
+    } else if (item.productId) {
+      // Un preparado (shot, sanduche...) solo repone sus ingredientes si la
+      // receta quedo marcada como ingredientesRecuperables (ver
+      // Recipe.ingredientesRecuperables, decision del ADMIN de antemano, no
+      // del cajero en este momento): por defecto el ingrediente ya se gasto
+      // al prepararlo y anular el cobro no lo trae de vuelta al inventario.
+      //
+      // Dos excepciones puntuales, ambas registradas (nunca silenciosas):
+      // (a) dentroDeGracia: en ese minuto es virtualmente imposible que la
+      //     barra ya haya preparado nada, repone sin pedir nada mas.
+      // (b) confirmaSinPreparar, solo fuera del minuto de gracia: quien
+      //     anula ya esta obligado a escribir un motivo (y, si no es admin,
+      //     su propio PIN) -- aqui ademas confirma de forma explicita que
+      //     pregunto en cocina/barra y todavia no se habia iniciado. Queda
+      //     su autoria en voidedById y el motivo en voidReason: es la misma
+      //     responsabilidad que ya asume al justificar cualquier devolucion
+      //     tardia, no un atajo sin rastro. Ver
+      //     Recipe.ingredientesRecuperables y GET /shifts/:id/prepared-voids,
+      //     que filtra por este resultado real, no por la receta.
+      const recipe = await prisma.recipe.findUnique({
+        where: { productId: item.productId },
+        select: { ingredientesRecuperables: true },
+      })
+      const excepcionPuntual = dentroDeGracia || (!dentroDeGracia && Boolean(confirmaSinPreparar))
+      ingredientesRepuestos = Boolean(recipe?.ingredientesRecuperables) || excepcionPuntual
+      if (ingredientesRepuestos) {
+        await sumarIngredientesPorUnidad(porVariante, porInsumo, item.productId, qtyDevuelta)
+      }
+    }
   }
   let updated
   await prisma.$transaction(async (tx) => {
     if (qtyDevuelta === item.qty) {
       updated = await tx.orderItem.update({
         where: { id: item.id },
-        data: { status: 'VOIDED', voidedAt: new Date(), voidReason: motivo, voidedById: autorId },
+        data: {
+          status: 'VOIDED',
+          voidedAt: new Date(),
+          voidReason: motivo,
+          voidedById: autorId,
+          ingredientesRepuestos,
+        },
         include: ITEM_INCLUDE,
       })
     } else {
@@ -580,6 +658,7 @@ orderRoutes.patch('/orders/:id/items/:itemId/void', async (req, res) => {
           voidedAt: new Date(),
           voidReason: motivo,
           voidedById: autorId,
+          ingredientesRepuestos,
         },
         include: ITEM_INCLUDE,
       })

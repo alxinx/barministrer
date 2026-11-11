@@ -15,6 +15,11 @@ export const UNIDADES = [
   // 1000. Solo tiene sentido como unidadCompra, nunca como unidadInventario
   // -- ver el filtro en InsumoForm.
   { codigo: 'paquete', nombre: 'Paquete', magnitud: 'conteo', factor: null },
+  // Mismo caso que "paquete": una botella de jarabe, vino de cocina o
+  // vinagre no tiene un tamano universal (puede venir de 500 ml, 750 ml, 1
+  // L...), asi que tampoco tiene un factor fijo. Solo unidadCompra, nunca
+  // unidadInventario.
+  { codigo: 'botella', nombre: 'Botella', magnitud: 'conteo', factor: null },
 ]
 
 export function buscarUnidad(codigo) {

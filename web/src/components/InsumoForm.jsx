@@ -62,15 +62,16 @@ export default function InsumoForm({
   const unidadCom = unidades.find((u) => u.codigo === unidadCompra)
   // Solo se puede elegir como unidad de compra algo de la misma magnitud que
   // la de inventario (peso con peso, volumen con volumen) -- salvo las de
-  // conteo ("Unidad", "Paquete"), que siempre se ofrecen aparte: comprar por
-  // unidad o por paquete y contar en otra magnitud/cantidad es el caso
-  // especial de abajo (ej. lechugas por unidad, pan por paquete), no una
-  // conversion fija real. "Paquete" nunca se ofrece como unidad de
-  // inventario: no tiene sentido llevar el stock en paquetes.
+  // conteo ("Unidad", "Paquete", "Botella"), que siempre se ofrecen aparte:
+  // comprar por unidad, paquete o botella y contar en otra magnitud/cantidad
+  // es el caso especial de abajo (ej. lechugas por unidad, pan por paquete,
+  // jarabe por botella), no una conversion fija real. Ninguna de esas dos
+  // se ofrece como unidad de inventario: no tiene sentido llevar el stock en
+  // paquetes o en botellas.
   const opcionesCompra = unidadInv
     ? unidades.filter((u) => u.magnitud === unidadInv.magnitud || u.magnitud === 'conteo')
     : unidades
-  const opcionesInventario = unidades.filter((u) => u.codigo !== 'paquete')
+  const opcionesInventario = unidades.filter((u) => u.codigo !== 'paquete' && u.codigo !== 'botella')
   const factor =
     unidadInv && unidadCom && unidadInv.magnitud === unidadCom.magnitud && unidadCom.factor != null && unidadInv.factor != null
       ? unidadCom.factor / unidadInv.factor

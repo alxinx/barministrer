@@ -374,6 +374,87 @@ shiftRoutes.get('/shifts/:id', async (req, res) => {
   res.json({ ...shift, sales, facturas, numero })
 })
 
+// Preparados (productos PREPARED: shot, sanduche...) anulados en el turno
+// cuyos ingredientes de verdad se quedaron descontados en ESE void en
+// particular (OrderItem.ingredientesRepuestos=false -- ver POST
+// /orders/:id/items/:itemId/void). No se filtra por la receta: un void
+// dentro del minuto de gracia, o con confirmaSinPreparar confirmado, si
+// repuso aunque la receta tenga ingredientesRecuperables=false, y no debe
+// aparecer aqui. Esto es lo que el admin necesita para saber que reponer en
+// inventario al dia siguiente (el resumen) y para auditar cada caso si algo
+// no cuadra (el detalle). Los ingredientes "por ml" (sourceProductId,
+// legado de antes de Insumo) no entran: no descuentan nada real todavia
+// (ver nota de OpenContainer en CLAUDE.md), asi que no se quedaron "sin
+// recuperar".
+shiftRoutes.get('/shifts/:id/prepared-voids', cajero, async (req, res) => {
+  const shift = await prisma.shift.findFirst({
+    where: { id: req.params.id, tenantId: req.auth.tenantId },
+    select: { id: true },
+  })
+  if (!shift) return res.status(404).json({ error: 'Turno no encontrado' })
+
+  const items = await prisma.orderItem.findMany({
+    where: {
+      tenantId: req.auth.tenantId,
+      status: 'VOIDED',
+      order: { shiftId: shift.id },
+      product: { kind: 'PREPARED' },
+      // El resultado real del void manda, no la receta (ver
+      // OrderItem.ingredientesRepuestos): un void dentro del minuto de
+      // gracia o con confirmaSinPreparar si repuso, aunque la receta diga
+      // ingredientesRecuperables=false, y no debe salir aqui como "sin
+      // recuperar".
+      ingredientesRepuestos: false,
+    },
+    include: {
+      order: { select: { table: { select: { number: true } } } },
+      product: {
+        select: {
+          recipe: {
+            select: {
+              items: {
+                where: { OR: [{ variantId: { not: null } }, { insumoId: { not: null } }] },
+                include: {
+                  variant: { select: { name: true, product: { select: { name: true } } } },
+                  insumo: { select: { name: true, unidadInventario: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    orderBy: { voidedAt: 'asc' },
+  })
+
+  const detalle = items.map((item) => ({
+    id: item.id,
+    productName: item.name,
+    tableNumber: item.order.table?.number ?? null,
+    voidedAt: item.voidedAt,
+    voidReason: item.voidReason,
+    ingredientes: (item.product?.recipe?.items || []).map((ri) => ({
+      nombre: ri.variant ? `${ri.variant.product.name} (${ri.variant.name})` : ri.insumo?.name || 'Ingrediente',
+      unidad: ri.insumo?.unidadInventario || 'un.',
+      qty: Number(ri.qty || 0) * item.qty,
+    })),
+  }))
+
+  // Resumen: total consumido por ingrediente en todo el turno, para que el
+  // admin lo reponga en un solo vistazo sin tener que sumar void por void.
+  const porIngrediente = new Map()
+  for (const d of detalle) {
+    for (const ing of d.ingredientes) {
+      const key = `${ing.nombre}·${ing.unidad}`
+      const acumulado = porIngrediente.get(key)
+      if (acumulado) acumulado.qty += ing.qty
+      else porIngrediente.set(key, { nombre: ing.nombre, unidad: ing.unidad, qty: ing.qty })
+    }
+  }
+
+  res.json({ resumen: [...porIngrediente.values()], detalle })
+})
+
 // --- Abrir --------------------------------------------------------------
 // Inicio con la base y apertura de caja son el mismo momento: no hay turno
 // sin una base inicial declarada, asi que se piden juntos.

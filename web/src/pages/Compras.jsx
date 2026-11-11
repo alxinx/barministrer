@@ -642,7 +642,7 @@ export default function Compras() {
               </div>
             )}
           </>
-        ) : (
+        ) : selectedId === 'new' ? null : (
           <>
             <button
               type="button"
@@ -657,47 +657,37 @@ export default function Compras() {
                          xl:static xl:inset-auto xl:z-auto xl:bg-transparent xl:p-0 xl:overflow-visible"
             >
               <div className="max-w-5xl mx-auto xl:max-w-none xl:mx-0">
-                {selectedId === 'new' ? (
-                  <CompraForm
-                    proveedores={proveedores}
-                    insumos={insumos}
-                    productosStock={productosStock}
-                    categoriasInsumo={categoriasInsumo}
-                    categoriasProducto={categoriasProducto}
-                    unidades={unidades}
-                    onProveedorCreado={(p) => setProveedores((prev) => [...prev, p])}
-                    onInsumoCreado={onInsumoCreado}
-                    onCategoriaInsumoCreada={onCategoriaInsumoCreada}
-                    onProductoCreado={onProductoCreado}
-                    onCreated={async (compra) => {
-                      await recargarTodo()
-                      setSelectedId(compra.id)
-                    }}
-                    onCancel={() => setSelectedId(undefined)}
-                  />
-                ) : (
-                  <CompraDetalle
-                    key={selected}
-                    id={selected}
-                    proveedores={proveedores}
-                    insumos={insumos}
-                    productosStock={productosStock}
-                    categoriasInsumo={categoriasInsumo}
-                    categoriasProducto={categoriasProducto}
-                    unidades={unidades}
-                    onProveedorCreado={(p) => setProveedores((prev) => [...prev, p])}
-                    onInsumoCreado={onInsumoCreado}
-                    onCategoriaInsumoCreada={onCategoriaInsumoCreada}
-                    onProductoCreado={onProductoCreado}
-                    onActualizada={recargarTodo}
-                    onCancel={() => setSelectedId(undefined)}
-                  />
-                )}
+                <CompraDetalle
+                  key={selected}
+                  id={selected}
+                  proveedores={proveedores}
+                  insumos={insumos}
+                  productosStock={productosStock}
+                  categoriasInsumo={categoriasInsumo}
+                  categoriasProducto={categoriasProducto}
+                  unidades={unidades}
+                  onProveedorCreado={(p) => setProveedores((prev) => [...prev, p])}
+                  onInsumoCreado={onInsumoCreado}
+                  onCategoriaInsumoCreada={onCategoriaInsumoCreada}
+                  onProductoCreado={onProductoCreado}
+                  onActualizada={recargarTodo}
+                  onCancel={() => setSelectedId(undefined)}
+                />
               </div>
             </div>
           </>
         )}
       </div>
+
+      {selectedId === 'new' && (
+        <NuevaCompraModal
+          onClose={() => setSelectedId(undefined)}
+          onCreated={async (compra) => {
+            await recargarTodo()
+            setSelectedId(compra.id)
+          }}
+        />
+      )}
 
       {verListaCompra && (
         <ListaCompraModal
@@ -979,6 +969,9 @@ function SelectorMediosPago({
     if (idx >= 0) {
       onChange(filas.filter((_, i) => i !== idx))
     } else {
+      const pagosRestantes = filas.filter((f) => f.key !== card.key)
+      const montoRestante = total - pagosRestantes.reduce((s, f) => s + (Number(f.monto) || 0), 0)
+      if (montoRestante <= 0.009) return
       onChange([
         ...filas,
         {
@@ -993,7 +986,10 @@ function SelectorMediosPago({
     }
   }
   function actualizarFila(key, patch) {
-    onChange(filas.map((f) => (f.key === key ? { ...f, ...patch } : f)))
+    const otrosPagos = filas.filter((f) => f.key !== key).reduce((s, f) => s + (Number(f.monto) || 0), 0)
+    const maximo = Math.max(total - otrosPagos, 0)
+    const monto = patch.monto === undefined ? undefined : String(Math.min(Number(patch.monto) || 0, maximo))
+    onChange(filas.map((f) => (f.key === key ? { ...f, ...patch, ...(monto !== undefined && { monto }) } : f)))
   }
 
   return (
@@ -1024,13 +1020,23 @@ function SelectorMediosPago({
           const CardIcon = Icon[card.icon]
           const fila = filas.find((f) => f.key === card.key)
           const activa = Boolean(fila)
+          const otrosPagos = filas
+            .filter((f) => f.key !== card.key)
+            .reduce((s, f) => s + (Number(f.monto) || 0), 0)
+          const deshabilitada = !activa && (total <= 0 || otrosPagos >= total - 0.009)
           const quedara = activa && card.saldo != null ? card.saldo - (Number(fila.monto) || 0) : null
           return (
             <div
               key={card.key}
               className={`rounded-xl border-2 transition-colors ${activa ? 'border-amber bg-amber/5' : 'border-edge bg-raised'}`}
             >
-              <button type="button" onClick={() => alternar(card)} className="w-full flex items-center gap-3 p-3 text-left">
+              <button
+                type="button"
+                onClick={() => alternar(card)}
+                disabled={deshabilitada}
+                title={deshabilitada ? 'El total ya está cubierto con los otros medios de pago' : undefined}
+                className="w-full flex items-center gap-3 p-3 text-left disabled:cursor-not-allowed disabled:opacity-45"
+              >
                 <span
                   className={`w-9 h-9 rounded-lg grid place-items-center shrink-0 ${
                     activa ? 'bg-amber text-night' : 'bg-canvas text-muted'
@@ -1053,11 +1059,15 @@ function SelectorMediosPago({
 
               {activa && (
                 <div className="px-3 pb-3 pt-2 border-t border-edge/60 space-y-2" onClick={(e) => e.stopPropagation()}>
+                  <label htmlFor={`pago-compra-${card.key}`} className="block text-[11px] font-semibold text-muted">
+                    Valor que sale de {card.label}
+                  </label>
                   <div className="flex items-center gap-1.5">
                     <MoneyInput
                       className="field h-9 flex-1 min-w-0"
                       value={fila.monto}
                       onChange={(v) => actualizarFila(card.key, { monto: v })}
+                      id={`pago-compra-${card.key}`}
                     />
                     <button
                       type="button"
@@ -1160,7 +1170,7 @@ export function NuevaCompraModal({ onClose, onCreated }) {
       role="presentation"
     >
       <section
-        className="card w-full max-w-6xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] overflow-hidden flex flex-col"
+        className="card w-full max-w-7xl max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden flex flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby="nueva-compra-titulo"
@@ -1172,7 +1182,7 @@ export function NuevaCompraModal({ onClose, onCreated }) {
             <Icon.x width={18} height={18} />
           </button>
         </header>
-        <div className="overflow-y-auto p-4 sm:p-6">
+        <div className="overflow-y-auto p-3 sm:p-6">
           {errorCarga ? (
             <div className="text-sm text-ocupada" role="alert">
               {errorCarga}
@@ -1267,27 +1277,30 @@ function CompraForm({
   const [matriculandoProducto, setMatriculandoProducto] = useState(null)
   const [insumosProveedor, setInsumosProveedor] = useState([])
 
-  // Recibir mercancia sube stock de una (ver api/src/routes/compras.js); dos
-  // botones al final del formulario deciden entre esa accion ('recibir') o
-  // dejarla en BORRADOR ('guardar', no mueve nada todavia). "Recibir" ademas
-  // pide confirmar con PIN en un modal aparte (ver confirmandoRecibir), nunca
-  // inline -- autorizar algo que ya mueve stock/plata merece su propio paso.
-  // Pagar ahora es el default: la mayoria de compras se liquidan al
-  // recibirlas, no al credito. filasPago soporta varios medios a la vez
-  // (ver SelectorMediosPago), cada uno con su propio monto -- lo que no se
-  // asigne a ningun medio queda como saldo pendiente (credito parcial).
+  // El pago de contado es el default; lo que no se asigne a un medio queda a
+  // crédito. La recepción y el borrador se autorizan desde la confirmación.
   const [pagarAhora, setPagarAhora] = useState(true)
   const [filasPago, setFilasPago] = useState([])
   const [cuentasPago, setCuentasPago] = useState([])
+  const [pagoInicializado, setPagoInicializado] = useState(false)
+  const [cargandoCuentasPago, setCargandoCuentasPago] = useState(true)
+  const [errorCuentasPago, setErrorCuentasPago] = useState('')
+  const [paso, setPaso] = useState(1)
+  const [accionConfirmacion, setAccionConfirmacion] = useState(null)
+  const [corrigiendoDesdeConfirmacion, setCorrigiendoDesdeConfirmacion] = useState(false)
+  const [confirmandoCambios, setConfirmandoCambios] = useState(false)
 
   const [error, setError] = useState('')
+  const [avisoValidacion, setAvisoValidacion] = useState('')
+  const proveedorSelectRef = useRef(null)
+  const proveedorNuevoRef = useRef(null)
+  const buscarItemRef = useRef(null)
+  const pagoSelectorRef = useRef(null)
+  const camposCompraRef = useRef(new Map())
+  const focoAvisoRef = useRef(null)
   const [saving, setSaving] = useState(false)
-  // "Guardar y recibir mercancía" no pide el PIN ahí mismo: primero valida
-  // que proveedor/items/pago esten completos (ver erroresParaRecibir) y solo
-  // si eso pasa abre este modal, que es el UNICO lugar donde se escribe el
-  // PIN -- separar el paso de "configurar la compra" del paso de
-  // "autorizarla" evita que alguien lo escriba de afan antes de revisar lo
-  // que esta a punto de confirmar.
+  // El PIN se pide al revisar el resumen final, tanto para recibir como para
+  // guardar un borrador, y la API lo vuelve a verificar al guardar.
   const [confirmandoRecibir, setConfirmandoRecibir] = useState(false)
   const {
     pin,
@@ -1301,7 +1314,20 @@ function CompraForm({
   } = usePinVerificado()
 
   useEffect(() => {
-    api('/compras/cuentas-pago').then(setCuentasPago).catch(() => setCuentasPago([]))
+    let vigente = true
+    api('/compras/cuentas-pago')
+      .then((cuentas) => {
+        if (vigente) setCuentasPago(cuentas)
+      })
+      .catch((err) => {
+        if (vigente) setErrorCuentasPago(err.message || 'No se pudieron cargar las cuentas de pago')
+      })
+      .finally(() => {
+        if (vigente) setCargandoCuentasPago(false)
+      })
+    return () => {
+      vigente = false
+    }
   }, [])
 
   const proveedorSeleccionado = proveedores.find((p) => p.id === proveedorId)
@@ -1347,7 +1373,12 @@ function CompraForm({
     for (const producto of productosStock) {
       for (const v of producto.variants || []) {
         if (!v.active || variantesAgregadas.has(v.id)) continue
-        if (!`${producto.name} ${v.name} ${producto.category?.name || ''}`.toLowerCase().includes(term)) continue
+        if (
+          !`${producto.name} ${v.name} ${producto.category?.name || ''} ${producto.category?.parent?.name || ''}`
+            .toLowerCase()
+            .includes(term)
+        )
+          continue
         variantesMatch.push({ insumo: null, variant: { ...v, product: producto } })
         if (variantesMatch.length >= 5) break
       }
@@ -1373,7 +1404,6 @@ function CompraForm({
   function agregarInsumo(insumo) {
     const cantidadInicial = '1'
     setItems((prev) => [
-      ...prev,
       {
         insumo,
         variant: null,
@@ -1386,12 +1416,12 @@ function CompraForm({
         cantidadInventarioReal: estimarCantidadInventarioReal(insumo, cantidadInicial),
         cantidadInventarioRealManual: false,
       },
+      ...prev,
     ])
     setBuscarInsumo('')
   }
   function agregarVariante(variant) {
     setItems((prev) => [
-      ...prev,
       {
         insumo: null,
         variant,
@@ -1404,6 +1434,7 @@ function CompraForm({
         cantidadInventarioReal: '',
         cantidadInventarioRealManual: false,
       },
+      ...prev,
     ])
     setBuscarInsumo('')
   }
@@ -1492,16 +1523,29 @@ function CompraForm({
     setItems((prev) => prev.filter((it) => claveItemCompra(it) !== clave))
   }
 
+  async function guardarProveedorNuevo() {
+    const creado = await api('/proveedores', {
+      method: 'POST',
+      body: { name: nombreProveedorNuevo.trim() },
+    })
+    onProveedorCreado(creado)
+    setProveedorId(creado.id)
+    setAgregandoProveedor(false)
+    setNombreProveedorNuevo('')
+    return creado
+  }
+
   async function crearProveedor() {
-    if (!nombreProveedorNuevo.trim()) return
+    if (!nombreProveedorNuevo.trim()) {
+      return mostrarAvisoValidacion('Escribe el nombre del proveedor', 'proveedorNuevo')
+    }
+    setSaving(true)
     try {
-      const creado = await api('/proveedores', { method: 'POST', body: { name: nombreProveedorNuevo.trim() } })
-      onProveedorCreado(creado)
-      setProveedorId(creado.id)
-      setAgregandoProveedor(false)
-      setNombreProveedorNuevo('')
+      await guardarProveedorNuevo()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -1540,8 +1584,41 @@ function CompraForm({
     (acc, it) => ({ subtotal: acc.subtotal + it.subtotal, impuesto: acc.impuesto + it.impuesto, total: acc.total + it.total }),
     { subtotal: 0, impuesto: 0, total: 0 }
   )
+  const pagoAsignado = filasPago.reduce((suma, fila) => suma + (Number(fila.monto) || 0), 0)
+  const saldoACredito = Math.max(totales.total - pagoAsignado, 0)
+
+  function registrarCampoCompra(clave) {
+    return (elemento) => {
+      if (elemento) camposCompraRef.current.set(clave, elemento)
+      else camposCompraRef.current.delete(clave)
+    }
+  }
+
+  useEffect(() => {
+    if (!esNueva || !pagarAhora || pagoInicializado || cargandoCuentasPago || totales.total <= 0) return
+    const tarjetas = tarjetasPago(shift, cuentasPago)
+    const tarjeta =
+      tarjetas.find((opcion) => opcion.metodo === 'EFECTIVO_TURNO') ||
+      tarjetas.find((opcion) => opcion.metodo === 'CUENTA_FINANCIERA') ||
+      tarjetas[0]
+    if (!tarjeta) return
+    setFilasPago([
+      {
+        key: tarjeta.key,
+        metodo: tarjeta.metodo,
+        cuentaFinancieraId: tarjeta.cuentaFinancieraId,
+        shiftId: shift?.id,
+        monto: String(totales.total),
+        nota: '',
+      },
+    ])
+    setPagoInicializado(true)
+  }, [esNueva, pagarAhora, pagoInicializado, cargandoCuentasPago, totales.total, shift, cuentasPago])
 
   function errorInfoGeneral() {
+    if (agregandoProveedor) {
+      return nombreProveedorNuevo.trim() ? '' : 'Escribe el nombre del proveedor'
+    }
     if (!proveedorId) return 'Elige un proveedor'
     return ''
   }
@@ -1570,6 +1647,52 @@ function CompraForm({
       }
     }
     return ''
+  }
+
+  function mostrarAvisoValidacion(mensaje, campo) {
+    setError('')
+    setAvisoValidacion(mensaje)
+    focoAvisoRef.current = campo || null
+  }
+
+  function notificarErrorValidacion(mensaje) {
+    mostrarAvisoValidacion(mensaje, campoDeError(mensaje))
+  }
+
+  function campoDeError(mensaje) {
+    if (/proveedor/i.test(mensaje)) return agregandoProveedor ? 'proveedorNuevo' : 'proveedor'
+    if (/insumo o producto/i.test(mensaje)) return 'buscarItem'
+    if (/medio de pago|pago "otro"|monto del pago|montos asignados|superar lo que hay que pagar/i.test(mensaje)) {
+      return 'pagos'
+    }
+    const nombre = mensaje.match(/"([^"]+)"/)?.[1]
+    const item = items.find((actual) => nombreItemCompra(actual) === nombre)
+    if (!item) return null
+    const clave = claveItemCompra(item)
+    if (/llegó en total/i.test(mensaje)) return `inventario:${clave}`
+    if (/cantidad/i.test(mensaje)) return `cantidad:${clave}`
+    if (/precio/i.test(mensaje)) return `precio:${clave}`
+    return `cantidad:${clave}`
+  }
+
+  function cerrarAvisoValidacion() {
+    setAvisoValidacion('')
+    const campo = focoAvisoRef.current
+    focoAvisoRef.current = null
+    requestAnimationFrame(() => {
+      if (campo === 'proveedor') proveedorSelectRef.current?.focus()
+      else if (campo === 'proveedorNuevo') proveedorNuevoRef.current?.focus()
+      else if (campo === 'buscarItem') buscarItemRef.current?.focus()
+      else if (campo === 'pagos') pagoSelectorRef.current?.querySelector('button:not(:disabled)')?.focus()
+      else {
+        const elemento = camposCompraRef.current.get(campo)
+        if (elemento instanceof HTMLElement && elemento.tagName !== 'INPUT') {
+          elemento.querySelector('input')?.focus()
+        } else {
+          elemento?.focus()
+        }
+      }
+    })
   }
   // Todo lo que "Guardar y recibir mercancía" necesita tener en orden ANTES
   // de dejar abrir el modal de confirmación -- el PIN se revisa aparte, ya
@@ -1606,23 +1729,25 @@ function CompraForm({
       })),
       accion,
     }
+    if (esNueva) body.pin = pin
     if (accion === 'recibir') {
-      body.pin = pin
       if (pagarAhora && filasPago.length > 0) body.pagos = filasParaBody(filasPago)
     }
     return body
   }
 
   async function guardarBorrador() {
+    if (esNueva && !pinValido) return setError('Escribe y verifica el código del empleado')
     const errInfo = errorInfoGeneral()
-    if (errInfo) return setError(errInfo)
+    if (errInfo) return notificarErrorValidacion(errInfo)
     const errI = errorItems()
-    if (errI) return setError(errI)
+    if (errI) return notificarErrorValidacion(errI)
     setError('')
     setSaving(true)
     try {
       if (esNueva) {
         const creada = await api('/compras', { method: 'POST', body: construirBody('guardar') })
+        setConfirmandoRecibir(false)
         onCreated(creada)
       } else {
         const guardada = await api(`/compras/${compraExistente.id}`, {
@@ -1651,7 +1776,7 @@ function CompraForm({
   // medios de pago) ya paso por erroresParaRecibir antes de que el modal
   // pudiera abrirse -- lo unico que falta resolver aqui es el PIN.
   async function recibirCompra() {
-    if (!pinValido) return setError('Escribe el PIN del encargado')
+    if (!pinValido) return setError('Escribe y verifica el código del empleado')
     setError('')
     setSaving(true)
     try {
@@ -1662,6 +1787,7 @@ function CompraForm({
             body: { pin, pagos: construirBody('recibir').pagos },
           })
       setConfirmandoRecibir(false)
+      setAccionConfirmacion(null)
       ;(onCreated || onSaved)(recibida)
     } catch (err) {
       setError(err.message)
@@ -1672,14 +1798,73 @@ function CompraForm({
 
   function abrirConfirmarRecibir() {
     const err = erroresParaRecibir()
-    if (err) return setError(err)
+    if (err) return notificarErrorValidacion(err)
     setError('')
+    setAccionConfirmacion('recibir')
     setConfirmandoRecibir(true)
   }
   function cancelarConfirmarRecibir() {
     setConfirmandoRecibir(false)
+    setAccionConfirmacion(null)
     setError('')
     resetPin()
+  }
+
+  async function continuarAlPago() {
+    const err = errorInfoGeneral() || errorItems()
+    if (err) return notificarErrorValidacion(err)
+    if (corrigiendoDesdeConfirmacion) {
+      const errorConfirmacion = validarAccionConfirmada(accionConfirmacion)
+      if (errorConfirmacion) return notificarErrorValidacion(errorConfirmacion)
+    }
+
+    if (agregandoProveedor) {
+      setSaving(true)
+      try {
+        await guardarProveedorNuevo()
+      } catch (errorProveedor) {
+        setError(errorProveedor.message)
+        return
+      } finally {
+        setSaving(false)
+      }
+    }
+
+    setError('')
+    if (corrigiendoDesdeConfirmacion) {
+      setConfirmandoCambios(true)
+      return
+    }
+    setPaso(2)
+  }
+
+  function validarAccionConfirmada(accion) {
+    return accion === 'recibir'
+      ? erroresParaRecibir()
+      : errorInfoGeneral() || errorItems()
+  }
+
+  function abrirConfirmacion(accion) {
+    const err = validarAccionConfirmada(accion)
+    if (err) return notificarErrorValidacion(err)
+    setError('')
+    setAccionConfirmacion(accion)
+    setConfirmandoRecibir(true)
+  }
+
+  function corregirDesdeResumen(destino) {
+    setConfirmandoRecibir(false)
+    setPaso(destino)
+    setCorrigiendoDesdeConfirmacion(true)
+    setError('')
+    resetPin()
+  }
+
+  function confirmarCorrecciones() {
+    setConfirmandoCambios(false)
+    setCorrigiendoDesdeConfirmacion(false)
+    setPaso(2)
+    setConfirmandoRecibir(true)
   }
 
   function limpiarCampos() {
@@ -1695,6 +1880,13 @@ function CompraForm({
     setAumentarStock(true)
     setPagarAhora(true)
     setFilasPago([])
+    setPagoInicializado(false)
+    setPaso(1)
+    setAccionConfirmacion(null)
+    setCorrigiendoDesdeConfirmacion(false)
+    setConfirmandoCambios(false)
+    setConfirmandoRecibir(false)
+    setAvisoValidacion('')
     resetPin()
     setError('')
   }
@@ -1712,6 +1904,39 @@ function CompraForm({
 
   return (
     <div className={modal ? 'space-y-6' : 'card p-5 md:p-6 space-y-6'}>
+      {esNueva && (
+        <div className="grid grid-cols-2 gap-3" aria-label="Pasos para registrar la compra">
+          {[
+            { numero: 1, titulo: 'Proveedor, factura e ítems' },
+            { numero: 2, titulo: 'Pago y confirmación' },
+          ].map((etapa) => (
+            <div
+              key={etapa.numero}
+              aria-current={paso === etapa.numero ? 'step' : undefined}
+              className={`flex items-center gap-3 rounded-xl border px-3 py-3 ${
+                paso === etapa.numero ? 'border-amber/50 bg-amber/10 text-ink' : 'border-edge bg-raised text-muted'
+              }`}
+            >
+              <span
+                className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold ${
+                  paso === etapa.numero ? 'bg-amber text-night' : 'bg-canvas text-muted'
+                }`}
+              >
+                {etapa.numero}
+              </span>
+              <span className="text-xs font-semibold sm:text-sm">{etapa.titulo}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+          {error}
+        </p>
+      )}
+
+      <div className={esNueva && paso !== 1 ? 'hidden' : 'space-y-6'}>
       <div className="flex items-center justify-between gap-3 flex-wrap pb-4 border-b border-edge">
         <Migaja
           onCancel={onCancel}
@@ -1733,10 +1958,6 @@ function CompraForm({
         </div>
       </div>
 
-      {error && (
-        <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">{error}</p>
-      )}
-
       <div className="pb-6 border-b border-edge">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-1">
           <h3 className="text-sm font-bold tracking-wide uppercase flex items-center gap-2">
@@ -1752,13 +1973,14 @@ function CompraForm({
             {agregandoProveedor ? (
               <div className="flex gap-2">
                 <input
+                  ref={proveedorNuevoRef}
                   className="field flex-1"
                   placeholder="Nombre del proveedor"
                   value={nombreProveedorNuevo}
                   onChange={(e) => setNombreProveedorNuevo(e.target.value)}
                   autoFocus
                 />
-                <button type="button" onClick={crearProveedor} className="btn-primary h-10 px-3 text-xs whitespace-nowrap">
+                <button type="button" onClick={crearProveedor} disabled={saving} className="btn-primary h-10 px-3 text-xs whitespace-nowrap">
                   Crear
                 </button>
                 <button type="button" onClick={() => setAgregandoProveedor(false)} className="btn-ghost h-10 px-3">
@@ -1767,7 +1989,12 @@ function CompraForm({
               </div>
             ) : (
               <div className="flex gap-2">
-                <select className="field flex-1" value={proveedorId} onChange={(e) => setProveedorId(e.target.value)}>
+                <select
+                  ref={proveedorSelectRef}
+                  className="field flex-1"
+                  value={proveedorId}
+                  onChange={(e) => setProveedorId(e.target.value)}
+                >
                   <option value="" disabled hidden>
                     Elige un proveedor
                   </option>
@@ -1900,6 +2127,7 @@ function CompraForm({
             <Icon.search />
           </span>
           <input
+            ref={buscarItemRef}
             className="field pl-10"
             placeholder="Buscar insumo o producto para agregar…"
             value={buscarInsumo}
@@ -1989,7 +2217,7 @@ function CompraForm({
             onClose={() => setMatriculandoProducto(null)}
             onSaved={(creado) => {
               onProductoCreado(creado)
-              for (const v of creado.variants || []) {
+              for (const v of [...(creado.variants || [])].reverse()) {
                 agregarVariante({ ...v, product: { id: creado.id, name: creado.name } })
               }
               setMatriculandoProducto(null)
@@ -2043,6 +2271,7 @@ function CompraForm({
                           −
                         </button>
                         <input
+                          ref={registrarCampoCompra(`cantidad:${clave}`)}
                           type="number"
                           min="0"
                           step={it.insumo ? '0.001' : '1'}
@@ -2078,13 +2307,17 @@ function CompraForm({
                           Total
                         </button>
                       </div>
-                      <MoneyInput
-                        className="field h-8 w-28"
-                        value={it.costoModo === 'global' ? it.costoGlobal : it.precioUnitario}
-                        onChange={(v) =>
-                          it.costoModo === 'global' ? actualizarCostoGlobal(clave, v) : actualizarItem(clave, 'precioUnitario', v)
-                        }
-                      />
+                      <div ref={registrarCampoCompra(`precio:${clave}`)}>
+                        <MoneyInput
+                          className="field h-8 w-28"
+                          value={it.costoModo === 'global' ? it.costoGlobal : it.precioUnitario}
+                          onChange={(v) =>
+                            it.costoModo === 'global'
+                              ? actualizarCostoGlobal(clave, v)
+                              : actualizarItem(clave, 'precioUnitario', v)
+                          }
+                        />
+                      </div>
                       {it.costoModo === 'global' && (
                         <p className="text-[10px] text-muted mt-0.5">{money(Number(it.precioUnitario) || 0)} c/u</p>
                       )}
@@ -2099,6 +2332,7 @@ function CompraForm({
                     <td className="py-2 px-3">
                       <div className="relative w-16">
                         <input
+                          ref={registrarCampoCompra(`inventario:${clave}`)}
                           type="number"
                           min="0"
                           max="100"
@@ -2171,8 +2405,142 @@ function CompraForm({
           />
         </div>
       </div>
+      </div>
 
-      <div className="pt-6 border-t border-edge space-y-4">
+      {esNueva && paso === 2 && (
+        <div className="space-y-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap border-b border-edge pb-4">
+            <div>
+              <h3 className="text-base font-bold">Pago y confirmación</h3>
+              <p className="mt-1 text-xs text-muted">Puedes dividir el pago entre contado y saldo a crédito.</p>
+            </div>
+            <button type="button" onClick={() => corregirDesdeResumen(1)} className="btn-ghost h-9 px-3 text-xs">
+              <Icon.edit width={14} height={14} /> Corregir proveedor o ítems
+            </button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-edge bg-raised p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Proveedor y documento</p>
+              <p className="mt-1 text-sm font-semibold">{proveedorSeleccionado?.name || 'Sin proveedor'}</p>
+              <p className="text-xs text-muted">
+                Factura {numeroDocumento.trim() || 'sin número'} · {formatFecha(fecha)}
+              </p>
+              {facturaNombre && <p className="mt-1 truncate text-xs text-muted">Adjunto: {facturaNombre}</p>}
+            </div>
+            <div className="rounded-xl border border-edge bg-raised p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Total de la compra</p>
+              <p className="mt-1 text-xl font-bold tabular-nums">{money(totales.total)}</p>
+              <p className="text-xs text-muted">{items.length} ítem{items.length === 1 ? '' : 's'} · stock al recibir</p>
+            </div>
+          </div>
+
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+            <section className="overflow-hidden rounded-xl border border-edge">
+              <div className="flex items-center justify-between gap-3 bg-raised px-3 py-2.5">
+                <p className="text-xs font-bold">Productos e insumos de esta factura</p>
+                <button type="button" onClick={() => corregirDesdeResumen(1)} className="text-xs font-semibold text-amberText hover:underline">
+                  Editar
+                </button>
+              </div>
+              <div className="max-h-[min(34rem,55vh)] divide-y divide-edge overflow-y-auto">
+                {itemsCalculados.map((item) => (
+                  <div key={claveItemCompra(item)} className="flex items-center justify-between gap-4 px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{nombreItemCompra(item)}</p>
+                      <p className="text-xs text-muted">Cantidad: {item.cantidad}</p>
+                    </div>
+                    <p className="shrink-0 font-semibold tabular-nums">{money(item.total)}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+          <section ref={pagoSelectorRef} className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-bold">¿Cómo se paga esta compra?</h4>
+                <p className="mt-1 text-xs text-muted">Por defecto queda contado; cualquier saldo sin asignar será crédito.</p>
+              </div>
+              {pagarAhora ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPagarAhora(false)
+                    setFilasPago([])
+                    setPagoInicializado(false)
+                  }}
+                  className="btn-ghost h-9 px-3 text-xs"
+                >
+                  Dejar todo a crédito
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPagarAhora(true)
+                    setPagoInicializado(false)
+                  }}
+                  className="btn-ghost h-9 px-3 text-xs"
+                >
+                  Agregar pago de contado
+                </button>
+              )}
+            </div>
+
+            {errorCuentasPago && (
+              <p role="alert" className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warningText">
+                {errorCuentasPago}. Elige otro medio disponible o deja la compra a crédito.
+              </p>
+            )}
+
+            {pagarAhora ? (
+              <SelectorMediosPago
+                total={totales.total}
+                shift={shift}
+                cuentasPago={cuentasPago}
+                filas={filasPago}
+                onChange={setFilasPago}
+                gridClassName="grid-cols-1 xl:grid-cols-2"
+              />
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold">Todo el valor queda a crédito</p>
+                  <p className="text-xs text-muted">No se registra ningún desembolso al recibir.</p>
+                </div>
+                <p className="shrink-0 text-sm font-bold tabular-nums">{money(totales.total)}</p>
+              </div>
+            )}
+
+          <div className="grid grid-cols-1 gap-3 rounded-xl border border-edge bg-raised p-4 sm:grid-cols-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Total factura</p>
+              <p className="mt-1 text-base font-bold tabular-nums">{money(totales.total)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Pago asignado</p>
+              <p className="mt-1 text-base font-bold tabular-nums">{money(pagarAhora ? pagoAsignado : 0)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Saldo a crédito</p>
+              <p className={`mt-1 text-base font-bold tabular-nums ${saldoACredito > 0 ? 'text-warningText' : 'text-libre'}`}>
+                {money(pagarAhora ? saldoACredito : totales.total)}
+              </p>
+            </div>
+          </div>
+          </section>
+          </div>
+
+          {corrigiendoDesdeConfirmacion && (
+            <div className="rounded-xl border border-amber/40 bg-amber/10 px-3 py-2 text-sm text-amberText">
+              Termina de revisar los pagos. Después te preguntaremos si confirmas los cambios.
+            </div>
+          )}
+        </div>
+      )}
+
+      {!esNueva && <div className="pt-6 border-t border-edge space-y-4">
         <h3 className="text-sm font-bold tracking-wide uppercase flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-amber inline-block" />
           3. Pago y confirmación
@@ -2209,19 +2577,58 @@ function CompraForm({
             </p>
           </div>
         )}
-      </div>
+      </div>}
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={guardarBorrador} disabled={saving} className="btn-ghost">
-          {saving ? 'Guardando…' : 'Guardar borrador'}
-        </button>
-        <button type="button" onClick={abrirConfirmarRecibir} disabled={saving} className="btn-primary">
-          <Icon.check width={16} height={16} />
-          Guardar y recibir mercancía
-        </button>
-      </div>
+      {esNueva ? (
+        <div className="flex flex-wrap justify-between gap-3 border-t border-edge pt-4">
+          {paso === 1 ? (
+            <>
+              <button type="button" onClick={onCancel} className="btn-ghost">
+                Cancelar
+              </button>
+              <button type="button" onClick={continuarAlPago} disabled={saving || subiendoFactura} className="btn-primary">
+                {corrigiendoDesdeConfirmacion ? 'Terminar correcciones' : 'Continuar al pago'}
+                {!corrigiendoDesdeConfirmacion && <Icon.chevronRight width={15} height={15} />}
+              </button>
+            </>
+          ) : corrigiendoDesdeConfirmacion ? (
+            <>
+              <button type="button" onClick={() => corregirDesdeResumen(1)} className="btn-ghost">
+                Corregir proveedor o ítems
+              </button>
+              <button type="button" onClick={continuarAlPago} disabled={saving} className="btn-primary">
+                Terminar correcciones
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={() => setPaso(1)} className="btn-ghost">
+                <Icon.chevronLeft width={15} height={15} /> Volver
+              </button>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => abrirConfirmacion('guardar')} disabled={saving} className="btn-ghost">
+                  Guardar borrador
+                </button>
+                <button type="button" onClick={() => abrirConfirmacion('recibir')} disabled={saving} className="btn-primary">
+                  <Icon.check width={16} height={16} /> Confirmar y recibir mercancía
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="flex justify-end gap-3 pt-2">
+          <button type="button" onClick={guardarBorrador} disabled={saving} className="btn-ghost">
+            {saving ? 'Guardando…' : 'Guardar borrador'}
+          </button>
+          <button type="button" onClick={abrirConfirmarRecibir} disabled={saving} className="btn-primary">
+            <Icon.check width={16} height={16} />
+            Guardar y recibir mercancía
+          </button>
+        </div>
+      )}
 
-      {confirmandoRecibir && (
+      {confirmandoRecibir && !esNueva && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={cancelarConfirmarRecibir}>
           <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm p-5 space-y-4">
             <h2 className="text-lg font-bold">Confirmar recepción</h2>
@@ -2252,6 +2659,189 @@ function CompraForm({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {confirmandoRecibir && esNueva && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-black/75 p-2 sm:p-5"
+          onClick={cancelarConfirmarRecibir}
+          role="presentation"
+        >
+          <section
+            onClick={(event) => event.stopPropagation()}
+            className="card my-auto flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden border-t-4 border-t-libre"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirmar-compra-titulo"
+          >
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-edge px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h2 id="confirmar-compra-titulo" className="text-lg font-bold sm:text-xl">
+                  {accionConfirmacion === 'guardar' ? 'Confirmación del borrador' : 'Confirmar pago y recepción'}
+                </h2>
+                <p className="mt-1 truncate text-sm text-muted">
+                  {proveedorSeleccionado?.name || 'Proveedor'} · Factura {numeroDocumento.trim() || 'sin número'}
+                </p>
+              </div>
+              <button type="button" onClick={cancelarConfirmarRecibir} className="btn-ghost h-9 w-9 shrink-0 p-0" aria-label="Cerrar confirmación">
+                <Icon.x width={17} height={17} />
+              </button>
+            </header>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+              <div className="grid gap-3 rounded-xl border border-edge bg-raised p-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Total factura</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums">{money(totales.total)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Pago asignado</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums">{money(pagarAhora ? pagoAsignado : 0)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted">Saldo a crédito</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-warningText">
+                    {money(pagarAhora ? saldoACredito : totales.total)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-[1.2fr_1fr]">
+                <section className="overflow-hidden rounded-xl border border-edge">
+                  <div className="flex items-center justify-between gap-2 bg-raised px-3 py-2">
+                    <h3 className="text-xs font-bold">Ítems de la compra ({items.length})</h3>
+                    <button type="button" onClick={() => corregirDesdeResumen(1)} className="text-xs font-semibold text-amberText hover:underline">
+                      Corregir
+                    </button>
+                  </div>
+                  <div className="max-h-36 divide-y divide-edge overflow-y-auto">
+                    {itemsCalculados.map((item) => (
+                      <div key={claveItemCompra(item)} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{nombreItemCompra(item)}</p>
+                          <p className="text-xs text-muted">Cantidad: {item.cantidad}</p>
+                        </div>
+                        <p className="shrink-0 font-semibold tabular-nums">{money(item.total)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="space-y-2 rounded-xl border border-edge p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-bold">Formas de pago</h3>
+                    <button type="button" onClick={() => corregirDesdeResumen(2)} className="text-xs font-semibold text-amberText hover:underline">
+                      Corregir
+                    </button>
+                  </div>
+                  {pagarAhora && filasPago.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {filasPago.map((fila) => {
+                        const tarjeta = tarjetasPago(shift, cuentasPago).find((opcion) => opcion.key === fila.key)
+                        return (
+                          <div key={fila.key} className="flex justify-between gap-3 text-xs">
+                            <span className="min-w-0 truncate text-muted">{tarjeta?.label || fila.metodo}</span>
+                            <span className="shrink-0 font-semibold tabular-nums">{money(Number(fila.monto) || 0)}</span>
+                          </div>
+                        )
+                      })}
+                      <div className="flex justify-between gap-3 border-t border-edge pt-2 text-xs">
+                        <span className="text-muted">Saldo pendiente</span>
+                        <span className="font-semibold tabular-nums">{money(saldoACredito)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-warningText">No se desembolsa dinero; el total queda a crédito.</p>
+                  )}
+                  {fechaVencimiento && (
+                    <p className="pt-1 text-xs text-muted">Vence: {formatFecha(fechaVencimiento)}</p>
+                  )}
+                </section>
+              </div>
+
+              {accionConfirmacion === 'guardar' && (
+                <p className="rounded-xl border border-edge bg-raised px-3 py-2 text-xs text-muted">
+                  Guardar como borrador no mueve inventario ni registra pagos. Los pagos solo se aplican al recibir la mercancía.
+                </p>
+              )}
+
+              <div className="rounded-xl border border-edge bg-raised p-3 sm:p-4">
+                <PinField
+                  pin={pin}
+                  onChange={setPin}
+                  verificando={verificandoPin}
+                  error={pinError}
+                  bloqueado={pinBloqueado}
+                  segundosRestantes={pinSegundosRestantes}
+                  label="Código de empleado responsable"
+                  autoFocus
+                />
+              </div>
+
+              {error && <p role="alert" className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">{error}</p>}
+            </div>
+
+            <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-edge px-4 py-3 sm:px-6">
+              <button type="button" onClick={cancelarConfirmarRecibir} className="btn-ghost">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={accionConfirmacion === 'guardar' ? guardarBorrador : recibirCompra}
+                disabled={!pinValido || saving}
+                className="btn-primary min-w-56 justify-center"
+              >
+                {saving ? 'Guardando…' : accionConfirmacion === 'guardar' ? 'Guardar borrador' : 'Confirmar y recibir'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {confirmandoCambios && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-4" role="presentation">
+          <section className="card w-full max-w-md space-y-4 p-5" role="dialog" aria-modal="true" aria-labelledby="confirmar-cambios-compra">
+            <h2 id="confirmar-cambios-compra" className="text-lg font-bold">¿Estás seguro de estos cambios?</h2>
+            <p className="text-sm text-muted">
+              Volverás al resumen de la compra con los datos corregidos. No se guardará ni recibirá nada hasta que confirmes con el código de empleado.
+            </p>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setConfirmandoCambios(false)} className="btn-ghost">
+                Seguir corrigiendo
+              </button>
+              <button type="button" onClick={confirmarCorrecciones} className="btn-primary">
+                Sí, continuar
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {avisoValidacion && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4" role="presentation">
+          <section
+            className="card w-full max-w-md space-y-4 p-5"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="aviso-validacion-compra"
+            aria-describedby="aviso-validacion-compra-mensaje"
+          >
+            <div className="flex items-start gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-warning/15 text-warningText">
+                <Icon.alert width={18} height={18} />
+              </span>
+              <div>
+                <h2 id="aviso-validacion-compra" className="text-base font-bold">Revisa la compra</h2>
+                <p id="aviso-validacion-compra-mensaje" className="mt-1 text-sm text-muted">{avisoValidacion}</p>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button type="button" onClick={cerrarAvisoValidacion} className="btn-primary min-w-28 justify-center">
+                Entendido
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </div>

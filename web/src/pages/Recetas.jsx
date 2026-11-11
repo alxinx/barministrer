@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { api, money } from '../lib/api'
 import { getCategories, invalidateCategories } from '../lib/categoriesStore'
 import { categoryTree, flattenCategories } from '../lib/categories'
@@ -47,13 +48,28 @@ const TABS = [
 
 export default function Recetas() {
   const { session } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
   const [insumos, setInsumos] = useState([])
   const [categoriasInsumo, setCategoriasInsumo] = useState([])
   const [unidades, setUnidades] = useState([])
   const [search, setSearch] = useState('')
-  const [selectedId, setSelectedId] = useState(undefined) // undefined = nada, 'new' = creando, id = editando
+  // ProductoForm (en /productos) manda aqui cuando el operador marca "es una
+  // receta" en vez de un producto real: se captura UNA sola vez con el
+  // inicializador perezoso (no en cada render) y el state de la navegacion se
+  // limpia enseguida, para que volver a "Nueva receta" despues no reaplique
+  // este mismo precargado.
+  const [prefillReceta] = useState(() => location.state?.prefillReceta || null)
+  const [selectedId, setSelectedId] = useState(() => (location.state?.prefillReceta ? 'new' : undefined))
+
+  useEffect(() => {
+    if (location.state?.prefillReceta) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     load()
@@ -78,7 +94,13 @@ export default function Recetas() {
     const term = search.trim().toLowerCase()
     return products
       .filter((p) => p.kind === 'PREPARED')
-      .filter((p) => !term || p.name.toLowerCase().includes(term) || p.category?.name.toLowerCase().includes(term))
+      .filter(
+        (p) =>
+          !term ||
+          p.name.toLowerCase().includes(term) ||
+          p.category?.name.toLowerCase().includes(term) ||
+          p.category?.parent?.name.toLowerCase().includes(term)
+      )
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [products, search])
 
@@ -212,6 +234,7 @@ export default function Recetas() {
                 <RecetaEditor
                   key={selectedId}
                   product={selected}
+                  prefill={selectedId === 'new' ? prefillReceta : null}
                   categories={categories}
                   insumos={insumos}
                   categoriasInsumo={categoriasInsumo}
@@ -234,6 +257,7 @@ export default function Recetas() {
 
 function RecetaEditor({
   product,
+  prefill,
   categories,
   insumos,
   categoriasInsumo,
@@ -275,11 +299,19 @@ function RecetaEditor({
     }
   }, [product?.id, intentoIndicadores])
 
-  const [name, setName] = useState(product?.name || '')
-  const [categoryId, setCategoryId] = useState(product?.categoryId || '')
+  const [name, setName] = useState(product?.name || prefill?.name || '')
+  const [categoryId, setCategoryId] = useState(product?.categoryId || prefill?.categoryId || '')
   const [description, setDescription] = useState(product?.description || '')
   const [price, setPrice] = useState(product?.recipe?.price || '')
-  const [imageUrl, setImageUrl] = useState(product?.imageUrl || '')
+  const [imageUrl, setImageUrl] = useState(product?.imageUrl || prefill?.imageUrl || '')
+  const [ingredientesRecuperables, setIngredientesRecuperables] = useState(
+    Boolean(product?.recipe?.ingredientesRecuperables)
+  )
+  // true por defecto (ver Recipe.permiteVentaSinStock): mantiene el "nunca
+  // bloquear una venta" del resto del dominio salvo que se apague aqui.
+  const [permiteVentaSinStock, setPermiteVentaSinStock] = useState(
+    product?.recipe?.permiteVentaSinStock ?? true
+  )
   const [subiendoImagen, setSubiendoImagen] = useState(false)
 
   const [items, setItems] = useState(
@@ -343,6 +375,20 @@ function RecetaEditor({
         despues: money(Number(price) || 0),
       })
     }
+    if (ingredientesRecuperables !== Boolean(product.recipe?.ingredientesRecuperables)) {
+      lista.push({
+        campo: 'Ingredientes recuperables al anular',
+        antes: Boolean(product.recipe?.ingredientesRecuperables) ? 'Sí' : 'No',
+        despues: ingredientesRecuperables ? 'Sí' : 'No',
+      })
+    }
+    if (permiteVentaSinStock !== (product.recipe?.permiteVentaSinStock ?? true)) {
+      lista.push({
+        campo: 'Permitir vender sin stock de insumo',
+        antes: (product.recipe?.permiteVentaSinStock ?? true) ? 'Sí' : 'No',
+        despues: permiteVentaSinStock ? 'Sí' : 'No',
+      })
+    }
 
     const originales = (product.recipe?.items || []).filter((i) => i.insumoId)
     const porIdOriginal = new Map(originales.map((i) => [i.insumoId, Number(i.qty)]))
@@ -365,7 +411,19 @@ function RecetaEditor({
       }
     }
     return lista
-  }, [esNueva, product, name, categoryId, description, imageUrl, price, items, options])
+  }, [
+    esNueva,
+    product,
+    name,
+    categoryId,
+    description,
+    imageUrl,
+    price,
+    ingredientesRecuperables,
+    permiteVentaSinStock,
+    items,
+    options,
+  ])
 
   const hayCambios = esNueva || cambios.length > 0
 
@@ -501,6 +559,11 @@ function RecetaEditor({
       recipe: {
         price: Number(price),
         items: items.map((it) => ({ insumoId: it.insumo.id, qty: Number(it.qty) })),
+        // Solo el ADMIN real manda este campo (ver backend): un cajero con
+        // cajeroEditaCatalogo delegado puede crear/editar la receta igual,
+        // pero nunca decide si sus ingredientes se recuperan al anular.
+        ...(esAdminReal && { ingredientesRecuperables }),
+        permiteVentaSinStock,
       },
       pin,
     }
@@ -684,6 +747,59 @@ function RecetaEditor({
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Una breve descripción…"
                 />
+              </div>
+
+              {esAdminReal && (
+                <div className="flex items-center justify-between bg-raised border border-edge rounded-xl p-3 gap-3">
+                  <div>
+                    <p className="text-sm font-medium">¿Los ingredientes se pueden recuperar si se devuelve este producto?</p>
+                    <p className="text-xs text-muted mt-0.5">
+                      Actívalo solo si el producto puede volver al inventario sin haberse preparado (ej. combo
+                      sellado). Para comidas y bebidas preparadas, déjalo desactivado.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIngredientesRecuperables((v) => !v)}
+                    aria-pressed={ingredientesRecuperables}
+                    aria-label="¿Los ingredientes se pueden recuperar si se devuelve este producto?"
+                    className={`h-7 w-12 rounded-pill relative transition-colors shrink-0 ${
+                      ingredientesRecuperables ? 'bg-amber' : 'bg-raised border border-edge'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
+                        ingredientesRecuperables ? 'translate-x-5 bg-night' : 'bg-muted'
+                      }`}
+                    />
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between bg-raised border border-edge rounded-xl p-3 gap-3">
+                <div>
+                  <p className="text-sm font-medium">Permitir vender sin stock de insumo</p>
+                  <p className="text-xs text-muted mt-0.5">
+                    Activado (recomendado): se puede seguir vendiendo aunque falte algún ingrediente, igual que el
+                    resto del catálogo. Desactívalo solo si de verdad no se puede preparar sin ese insumo real —
+                    ahí la venta se bloquea si no alcanza.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPermiteVentaSinStock((v) => !v)}
+                  aria-pressed={permiteVentaSinStock}
+                  aria-label="Permitir vender sin stock de insumo"
+                  className={`h-7 w-12 rounded-pill relative transition-colors shrink-0 ${
+                    permiteVentaSinStock ? 'bg-amber' : 'bg-raised border border-edge'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full transition-transform ${
+                      permiteVentaSinStock ? 'translate-x-5 bg-night' : 'bg-muted'
+                    }`}
+                  />
+                </button>
               </div>
 
               {!esNueva && esAdminReal && (

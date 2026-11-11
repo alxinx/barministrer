@@ -4,7 +4,7 @@ import { requireRole } from '../middleware/auth.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { pinLimitExcedido, pinIncorrecto } from '../middleware/rateLimit.js'
 import { verificarPinPropio } from '../lib/pin.js'
-import { recalcularCostoPonderadoInsumo, recalcularCostoPonderadoVariant } from '../lib/costeo.js'
+import { recalcularCostoPonderadoInsumo } from '../lib/costeo.js'
 import { avisarTenant } from '../lib/realtime.js'
 import { calcularRotacionSemanal, rangoSemanasCompletas } from '../lib/rotacion.js'
 
@@ -279,22 +279,6 @@ async function validarPinDeAjuste(req, res, pin) {
   return true
 }
 
-// Entradas recientes, para ver que se agrego sin tener que ir variante por
-// variante. Solo entradas (PURCHASE); el stock mismo sigue siendo el numero
-// en Variant, esto es el rastro de como llego ahi.
-inventoryRoutes.get('/inventory/movements', adminOnly, async (req, res) => {
-  const movements = await prisma.stockMovement.findMany({
-    where: { tenantId: req.auth.tenantId },
-    include: {
-      variant: { select: { id: true, name: true, product: { select: { id: true, name: true } } } },
-      createdBy: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-  })
-  res.json(movements)
-})
-
 inventoryRoutes.get('/inventory/kardex/variant/:id', adminOnly, async (req, res) => {
   const limit = req.query.limit == null ? KARDEX_PAGE_SIZE : Number(req.query.limit)
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -485,49 +469,6 @@ inventoryRoutes.post('/inventory/adjustments/insumo/:id', soloAdminReal, async (
 
   avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
   res.status(201).json(resultado)
-})
-
-// Compra por empaque (caja, canasta) se resuelve aqui con unitsPerPack x
-// packs, nunca en el producto: qty es lo que de verdad entra al stock.
-inventoryRoutes.post('/inventory/movements', adminOnly, async (req, res) => {
-  const { variantId, qty, unitsPerPack, packs, cost, note } = req.body || {}
-
-  const variant = await prisma.variant.findFirst({
-    where: { id: variantId, product: { tenantId: req.auth.tenantId } },
-  })
-  if (!variant) return res.status(400).json({ error: 'Esa presentación no existe' })
-
-  const unidades = Number(qty) || 0
-  if (unidades <= 0) return res.status(400).json({ error: 'La cantidad que entra debe ser mayor a cero' })
-
-  const costoIngresado = cost !== undefined && cost !== null && cost !== '' ? Number(cost) : null
-
-  const movement = await prisma.$transaction(async (tx) => {
-    const creado = await tx.stockMovement.create({
-      data: {
-        tenantId: req.auth.tenantId,
-        variantId: variant.id,
-        qty: unidades,
-        unitsPerPack: unitsPerPack ? Number(unitsPerPack) : null,
-        packs: packs ? Number(packs) : null,
-        cost: costoIngresado,
-        note: note?.trim() || null,
-        createdById: req.auth.userId,
-      },
-      include: {
-        variant: { select: { id: true, name: true, product: { select: { id: true, name: true } } } },
-        createdBy: { select: { id: true, name: true } },
-      },
-    })
-    await tx.variant.update({ where: { id: variant.id }, data: { stock: { increment: unidades } } })
-    // Solo recalcula si esta entrada trajo costo: una entrada sin costo (ej.
-    // ajuste de conteo) no debe mover el promedio ponderado para nada.
-    if (costoIngresado !== null) await recalcularCostoPonderadoVariant(tx, variant.id)
-    return creado
-  })
-
-  avisarTenant(req.auth.tenantId, 'inventario:actualizado', {})
-  res.status(201).json(movement)
 })
 
 // Merma/perdida manual: solo el admin real (no delegable, ni con

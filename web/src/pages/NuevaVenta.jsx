@@ -36,7 +36,6 @@ export default function NuevaVenta() {
   const { shift, setShift } = useShift() // compartido con Caja: un solo fetch por sesion
   const [avisoVisto, setAvisoVisto] = useState(false)
   const [abriendoTurno, setAbriendoTurno] = useState(false)
-  const [enviando, setEnviando] = useState(false)
   const [cerrando, setCerrando] = useState(false)
   const [devolviendo, setDevolviendo] = useState(null) // item a devolver
   const [eliminandoPrePedido, setEliminandoPrePedido] = useState(null) // item PENDING a quitar, a confirmar
@@ -218,7 +217,11 @@ export default function NuevaVenta() {
     return products
       .filter((p) => p.available && (p.kind === 'PREPARED' ? p.recipe : p.variants.some((v) => v.active)))
       .filter(
-        (p) => !term || p.name.toLowerCase().includes(term) || p.category?.name.toLowerCase().includes(term)
+        (p) =>
+          !term ||
+          p.name.toLowerCase().includes(term) ||
+          p.category?.name.toLowerCase().includes(term) ||
+          p.category?.parent?.name.toLowerCase().includes(term)
       )
       .sort((a, b) => (rango.get(a.id) ?? Infinity) - (rango.get(b.id) ?? Infinity))
       .slice(0, 8)
@@ -347,7 +350,6 @@ export default function NuevaVenta() {
     const mesaId = tableRef.current.id
     colaAgregarRef.current = colaAgregarRef.current.then(async () => {
       if (tableRef.current?.id !== mesaId) return // cambio de mesa mientras esperaba su turno en la cola
-      setEnviando(true)
       setError('')
       try {
         let actual = ordenRef.current
@@ -364,8 +366,6 @@ export default function NuevaVenta() {
         recargarZonas()
       } catch (err) {
         show(err)
-      } finally {
-        setEnviando(false)
       }
     })
   }
@@ -1086,15 +1086,23 @@ export default function NuevaVenta() {
                 // stock real por ingrediente.
                 const quedanReceta = p.kind === 'PREPARED' ? unidadesDisponibles(p.recipe?.items) : null
                 const agotado = (v && v.stock <= 0) || (quedanReceta !== null && quedanReceta <= 0)
+                // Excepcion puntual al "nunca bloquear": solo si esta receta
+                // quedo marcada con permiteVentaSinStock=false (ver Recetas >
+                // "Permitir vender sin stock de insumo"). El backend tambien
+                // lo valida (ver POST /orders/:id/items); esto solo evita el
+                // viaje al servidor para avisarlo.
+                const bloqueado = agotado && p.kind === 'PREPARED' && p.recipe?.permiteVentaSinStock === false
                 return (
                   <button
                     key={p.id}
-                    onClick={(e) => agregarProducto(p, e.currentTarget)}
+                    onClick={(e) => !bloqueado && agregarProducto(p, e.currentTarget)}
+                    disabled={bloqueado}
+                    title={bloqueado ? 'No hay stock suficiente para preparar este producto' : undefined}
                     style={{ borderColor: agotado ? undefined : p.category.color }}
                     className={`grupo-cenefa flex items-center gap-2.5 text-left p-2.5 rounded-xl border
                                hover:bg-surface transition-colors ${
                                  agotado ? 'bg-ocupada/10 border-ocupada' : 'bg-raised'
-                               }`}
+                               } ${bloqueado ? 'opacity-50 cursor-not-allowed hover:bg-ocupada/10' : ''}`}
                   >
                     <span
                       className="w-10 h-10 rounded-lg grid place-items-center shrink-0 overflow-hidden"
@@ -1114,7 +1122,7 @@ export default function NuevaVenta() {
                         {p.kind === 'PREPARED' ? (p.recipe?.items?.some((i) => i.ml) ? 'Shot' : 'Receta') : v.name}
                         {v?.volumeMl ? ` · ${v.volumeMl} ml` : ''}
                         {agotado ? (
-                          <span className="text-ocupada font-semibold"> · Agotado</span>
+                          <span className="text-ocupada font-semibold"> · {bloqueado ? 'Sin stock' : 'Agotado'}</span>
                         ) : quedanReceta !== null ? (
                           <span className={quedanReceta <= 3 ? 'text-warningText font-semibold' : ''}>
                             {' '}

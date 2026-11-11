@@ -183,11 +183,25 @@ catalogRoutes.get('/products', async (req, res) => {
         OR: [
           { name: { contains: String(search) } },
           { category: { name: { contains: String(search) } } },
+          // Una subcategoria ("Michelada" dentro de "Cerveza") tambien debe
+          // encontrarse buscando el nombre de su categoria padre: el
+          // operador piensa en "cerveza", no en el nombre exacto de la
+          // subcategoria donde quedo el producto.
+          { category: { parent: { name: { contains: String(search) } } } },
         ],
       }),
     },
     include: {
-      category: { select: { id: true, name: true, color: true, allowsPour: true, active: true } },
+      category: {
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          allowsPour: true,
+          active: true,
+          parent: { select: { name: true } },
+        },
+      },
       variants: { orderBy: { sortOrder: 'asc' } },
       recipe: {
         include: {
@@ -298,6 +312,19 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
   })
   if (!category) return res.status(400).json({ error: 'La categoria no existe' })
 
+  // Un producto y una receta comparten el mismo catalogo (ver /productos, que
+  // los lista juntos por categoria): el nombre no se puede repetir entre
+  // ellos, sin importar mayus/minusculas ni espacios de mas. tituloInteligente
+  // ya normaliza eso antes de guardar, asi que comparar contra el mismo
+  // resultado alcanza.
+  const nombreNormalizado = tituloInteligente(name.trim())
+  const duplicado = await prisma.product.findFirst({
+    where: { tenantId: req.auth.tenantId, deletedAt: null, name: nombreNormalizado },
+  })
+  if (duplicado) {
+    return res.status(400).json({ error: `Ya existe un producto llamado "${nombreNormalizado}"` })
+  }
+
   if (kind === 'PREPARED') {
     // El precio de venta de una receta es su unico precio (Recipe.price): no
     // hay un Product.price aparte que se pueda desincronizar. Los
@@ -308,6 +335,17 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
     }
     const error = await validarIngredientes(req.auth.tenantId, recipe.items)
     if (error) return res.status(400).json({ error })
+
+    // Si los ingredientes de esta receta se pueden recuperar al anular (ver
+    // POST /orders/:id/items/:itemId/void) es una decision de inventario mas
+    // sensible que el resto de la receta -- solo el ADMIN real la toca, ni
+    // siquiera un cajero con cajeroEditaCatalogo delegado (a diferencia del
+    // resto de este formulario, que si es delegable).
+    if (recipe.ingredientesRecuperables !== undefined && req.auth.role !== 'ADMIN') {
+      return res
+        .status(403)
+        .json({ error: 'Solo un administrador puede definir si los ingredientes de esta receta se pueden recuperar' })
+    }
 
     // Cualquier cambio a una receta (crearla, editar ingredientes, precio,
     // etc.) pide PIN de un encargado -- decision de Alejo (nov-2026): la
@@ -329,6 +367,10 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
         recipe: {
           create: {
             price: recipe.price,
+            ingredientesRecuperables: Boolean(recipe.ingredientesRecuperables),
+            ...(recipe.permiteVentaSinStock !== undefined && {
+              permiteVentaSinStock: Boolean(recipe.permiteVentaSinStock),
+            }),
             items: { create: (recipe.items || []).map(datosIngrediente) },
           },
         },
@@ -349,17 +391,18 @@ catalogRoutes.post('/products', adminOnly, async (req, res) => {
     return res.status(400).json({ error: 'El stock inicial debe ser un número entero igual o mayor a cero' })
   }
   const tieneStockInicial = stocksIniciales.some((stock) => stock > 0)
-  let responsableStockInicialId = null
-  if (tieneStockInicial) {
-    if (req.auth.role !== 'ADMIN') {
-      return res.status(403).json({ error: 'Solo un administrador puede registrar el stock inicial del producto' })
-    }
-    if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN del encargado para registrar el stock inicial' })
-    if (await pinLimitExcedido(req, res)) return
-    const encargado = await verificarPin(req.auth.tenantId, pin)
-    if (!encargado) return pinIncorrecto(req, res)
-    responsableStockInicialId = encargado.id
+  if (tieneStockInicial && req.auth.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'Solo un administrador puede registrar el stock inicial del producto' })
   }
+
+  // Crear cualquier producto pide confirmar con el PIN de un encargado
+  // (decision de Alejo) -- la ruta ya exige cajeroEditaCatalogo, esto solo
+  // identifica quien lo autorizo, igual que ya pasa al crear una receta.
+  if (!pin?.toString().trim()) return res.status(400).json({ error: 'Escribe el PIN del encargado para crear el producto' })
+  if (await pinLimitExcedido(req, res)) return
+  const encargado = await verificarPin(req.auth.tenantId, pin)
+  if (!encargado) return pinIncorrecto(req, res)
+  const responsableStockInicialId = tieneStockInicial ? encargado.id : null
 
   // Si la categoria permite venta por ml, cada presentacion debe declarar su
   // volumen: sin eso el sistema no sabe cuantos shots salen al abrirla.
@@ -419,6 +462,17 @@ catalogRoutes.patch('/products/:id', adminOnly, async (req, res) => {
   })
   if (!existing) return res.status(404).json({ error: 'Producto no encontrado' })
 
+  if (name !== undefined) {
+    const nombreNormalizado = tituloInteligente(name.trim())
+    if (!nombreNormalizado) return res.status(400).json({ error: 'El producto necesita un nombre' })
+    const duplicado = await prisma.product.findFirst({
+      where: { tenantId: req.auth.tenantId, deletedAt: null, name: nombreNormalizado, NOT: { id: existing.id } },
+    })
+    if (duplicado) {
+      return res.status(400).json({ error: `Ya existe un producto llamado "${nombreNormalizado}"` })
+    }
+  }
+
   // Cualquier cambio a una receta -- ingredientes, precio, o solo el nombre/
   // categoria desde /productos (ver ProductoForm.jsx > "este producto tiene
   // receta") -- pide PIN. Mismo criterio que crearla (ver POST /products).
@@ -433,6 +487,14 @@ catalogRoutes.patch('/products/:id', adminOnly, async (req, res) => {
     if (existing.kind !== 'PREPARED') {
       return res.status(400).json({ error: 'Solo una receta tiene ingredientes para editar' })
     }
+    // Igual que al crearla (ver POST /products): cambiar si los ingredientes
+    // se pueden recuperar al anular es solo del ADMIN real, ni siquiera con
+    // cajeroEditaCatalogo delegado.
+    if (recipe.ingredientesRecuperables !== undefined && req.auth.role !== 'ADMIN') {
+      return res
+        .status(403)
+        .json({ error: 'Solo un administrador puede definir si los ingredientes de esta receta se pueden recuperar' })
+    }
     // recipe.items solo se toca si de verdad viene en el body: la pestaña de
     // "Informacion general" guarda nombre/categoria/precio sin mandar items,
     // y si aqui se reemplazara igual (deleteMany + create []) borraria la
@@ -446,11 +508,32 @@ catalogRoutes.patch('/products/:id', adminOnly, async (req, res) => {
         where: { id: existing.recipe.id },
         data: {
           ...(recipe.price !== undefined && { price: recipe.price }),
+          ...(recipe.ingredientesRecuperables !== undefined && {
+            ingredientesRecuperables: Boolean(recipe.ingredientesRecuperables),
+          }),
+          ...(recipe.permiteVentaSinStock !== undefined && {
+            permiteVentaSinStock: Boolean(recipe.permiteVentaSinStock),
+          }),
           items: { create: recipe.items.map(datosIngrediente) },
         },
       })
-    } else if (recipe.price !== undefined) {
-      await prisma.recipe.update({ where: { id: existing.recipe.id }, data: { price: recipe.price } })
+    } else if (
+      recipe.price !== undefined ||
+      recipe.ingredientesRecuperables !== undefined ||
+      recipe.permiteVentaSinStock !== undefined
+    ) {
+      await prisma.recipe.update({
+        where: { id: existing.recipe.id },
+        data: {
+          ...(recipe.price !== undefined && { price: recipe.price }),
+          ...(recipe.ingredientesRecuperables !== undefined && {
+            ingredientesRecuperables: Boolean(recipe.ingredientesRecuperables),
+          }),
+          ...(recipe.permiteVentaSinStock !== undefined && {
+            permiteVentaSinStock: Boolean(recipe.permiteVentaSinStock),
+          }),
+        },
+      })
     }
   }
 

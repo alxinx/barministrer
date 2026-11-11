@@ -14,6 +14,7 @@ export default function TurnoDetalle() {
   const navigate = useNavigate()
   const { session } = useAuth()
   const [shift, setShift] = useState(undefined) // undefined = cargando, null = no encontrado
+  const [preparados, setPreparados] = useState(null) // { resumen, detalle } o null mientras carga
   const [factura, setFactura] = useState(null)
   const [egresoTicket, setEgresoTicket] = useState(null)
   const [mostrarTirilla, setMostrarTirilla] = useState(false)
@@ -25,6 +26,12 @@ export default function TurnoDetalle() {
       .catch((err) => {
         setShift(null)
         setError(err.message)
+      })
+    api(`/shifts/${id}/prepared-voids`)
+      .then(setPreparados)
+      .catch(() => {
+        // Si falla, la tarjeta de preparados simplemente no aparece: no vale
+        // la pena tapar el resto del turno (cuadre, ventas) por esto.
       })
   }, [id])
 
@@ -184,6 +191,8 @@ export default function TurnoDetalle() {
         <EgresosCard egresos={egresos} totalEgresos={totalEgresos} shiftId={shift.id} onVerTicket={setEgresoTicket} />
       </div>
 
+      {preparados && <PreparadosCard preparados={preparados} />}
+
       {factura && (
         <ReciboModal
           order={factura}
@@ -210,6 +219,7 @@ export default function TurnoDetalle() {
           counts={counts}
           egresos={egresos}
           totalEgresos={totalEgresos}
+          preparados={preparados}
           tenant={session?.tenant}
           onClose={() => setMostrarTirilla(false)}
         />
@@ -460,6 +470,71 @@ function EgresosCard({ egresos, totalEgresos, shiftId, onVerTicket }) {
           Registrado
         </span>
       </div>
+    </section>
+  )
+}
+
+// Preparados (PREPARED con Recipe.ingredientesRecuperables=false) anulados
+// durante el turno: su cobro se devolvio pero los ingredientes se quedaron
+// descontados (ver POST /orders/:id/items/:itemId/void). El resumen es lo
+// que el admin repone en inventario al dia siguiente; el detalle es para
+// auditar cada caso si algo no cuadra.
+function PreparadosCard({ preparados }) {
+  const { resumen, detalle } = preparados
+  return (
+    <section className="card p-5 space-y-4">
+      <div>
+        <h2 className="font-semibold">Preparados sin recuperar</h2>
+        <p className="text-xs text-muted mt-0.5">
+          Ingredientes que se quedaron descontados al anular un preparado durante el turno.
+        </p>
+      </div>
+
+      {detalle.length === 0 ? (
+        <p className="text-sm text-muted text-center py-6 border border-dashed border-edge rounded-xl">
+          Sin preparados no recuperables en este turno.
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-sm min-w-[320px]">
+              <thead>
+                <tr className="text-[11px] text-muted border-b border-edge uppercase tracking-wide">
+                  <th className="px-1 py-2 text-left font-semibold">Ingrediente</th>
+                  <th className="px-3 py-2 text-right font-semibold">Cantidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resumen.map((r) => (
+                  <tr key={`${r.nombre}·${r.unidad}`} className="border-b border-edge/60 last:border-0">
+                    <td className="px-1 py-2.5">{r.nombre}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold text-ocupada">
+                      {r.qty} {r.unidad}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-2.5 pt-1">
+            <p className="text-[11px] font-semibold text-muted uppercase tracking-wide">Detalle de cada anulación</p>
+            {detalle.map((d) => (
+              <div key={d.id} className="bg-raised border border-edge rounded-xl p-3 space-y-1">
+                <p className="text-sm font-medium">
+                  {d.productName}
+                  {d.tableNumber != null && ` · Mesa ${String(d.tableNumber).padStart(2, '0')}`}
+                  <span className="text-xs text-muted font-normal"> · {formatHora(d.voidedAt)}</span>
+                </p>
+                <p className="text-xs text-muted">Motivo: {d.voidReason || 'Sin motivo'}</p>
+                <p className="text-xs text-muted">
+                  Ingredientes descontados: {d.ingredientes.map((i) => `${i.nombre} × ${i.qty}`).join(', ') || '—'}
+                </p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   )
 }
