@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { enviarCorreo } from '../lib/ses.js'
+import { renderCorreoCodigoHtml, renderCorreoCodigoTexto } from '../lib/correoCodigo.js'
 
 // Rutas publicas del instalador/agente de sincronizacion offline (ver
 // contexto-sincronizacion-offline.md). No usan requireAuth ni
@@ -70,7 +71,8 @@ agentRoutes.post('/activar', async (req, res) => {
     await enviarCorreo({
       to: adminPrincipal.email,
       subject: 'Código para activar la sincronización offline',
-      text: `Tu código de verificación es ${codigo}. Vence en 10 minutos. Si no reconoces esta solicitud, ignora este correo.`,
+      text: renderCorreoCodigoTexto({ codigo, minutos: 10 }),
+      html: renderCorreoCodigoHtml({ codigo, minutos: 10 }),
     })
   } catch (err) {
     return res.status(502).json({ error: 'No se pudo enviar el código por correo. Intenta de nuevo en un momento.' })

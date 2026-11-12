@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.agents/
+.claude/
 .env
 *.log
 *.md
@@ -10,3 +12,7 @@ taller/
 design-profile/
 api/test/
 CONTEXTO-PROYECTO.md
+
+# Asistente de activacion (Tauri): aun no se decide comitearlo, no es
+# parte del deploy normal.
+/agent/

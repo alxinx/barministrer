@@ -10,7 +10,7 @@ const client = new SESv2Client({ region: process.env.AWS_REGION })
 // contexto-sincronizacion-offline.md). SES_FROM_EMAIL debe ser una
 // identidad verificada en SES -- si la cuenta sigue en modo sandbox,
 // tambien el destinatario tiene que estar verificado.
-export async function enviarCorreo({ to, subject, text }) {
+export async function enviarCorreo({ to, subject, text, html }) {
   await client.send(
     new SendEmailCommand({
       FromEmailAddress: process.env.SES_FROM_EMAIL,
@@ -18,7 +18,10 @@ export async function enviarCorreo({ to, subject, text }) {
       Content: {
         Simple: {
           Subject: { Data: subject, Charset: 'UTF-8' },
-          Body: { Text: { Data: text, Charset: 'UTF-8' } },
+          Body: {
+            Text: { Data: text, Charset: 'UTF-8' },
+            ...(html && { Html: { Data: html, Charset: 'UTF-8' } }),
+          },
         },
       },
     })
