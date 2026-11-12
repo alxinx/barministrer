@@ -17,6 +17,7 @@ import { insumoRoutes } from './routes/insumos.js'
 import { comprasRoutes } from './routes/compras.js'
 import { importacionRoutes } from './routes/importacion.js'
 import { platformAuthRoutes, platformRoutes } from './routes/platform.js'
+import { agentRoutes } from './routes/agent.js'
 import { requireAuth, requirePlatformAuth } from './middleware/auth.js'
 import { apiLimiter } from './middleware/rateLimit.js'
 import { initRealtime } from './lib/realtime.js'
@@ -30,7 +31,18 @@ const app = express()
 // sirven el frontend (el propio deploy + localhost en dev), no a internet
 // entero. CORS_ORIGIN es una lista separada por comas.
 const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((o) => o.trim())
-app.use(cors({ origin: corsOrigins }))
+
+// /api/agent es el agente de escritorio de sincronizacion offline (ver
+// contexto-sincronizacion-offline.md), no una pagina web -- su seguridad
+// vive en el propio token/codigo de verificacion, no en el origen de la
+// peticion (que en produccion ademas no es un origen http normal, sino el
+// esquema propio del webview de Tauri). El resto de la API sigue
+// restringido a los origenes reales del frontend.
+app.use(
+  cors((req, callback) => {
+    callback(null, { origin: req.path.startsWith('/api/agent') ? true : corsOrigins })
+  })
+)
 app.use(express.json({ limit: '2mb' }))
 
 app.get('/health', (_req, res) => res.json({ ok: true }))
@@ -44,6 +56,12 @@ app.use('/api', apiLimiter)
 // Lleva su propio auth porque PlatformAdmin vive fuera del grafo de tenant.
 app.use('/api/platform/auth', platformAuthRoutes)
 app.use('/api/platform', requirePlatformAuth, platformRoutes)
+
+// Agente de sincronizacion offline: autentica con su propio token, no con
+// una sesion de usuario ni de plataforma (ver agent.js y
+// contexto-sincronizacion-offline.md) -- por eso va sin requireAuth, igual
+// que /api/auth de abajo.
+app.use('/api/agent', agentRoutes)
 
 app.use('/api/auth', authRoutes)
 app.use('/api', requireAuth, catalogRoutes)

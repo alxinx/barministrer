@@ -139,6 +139,12 @@ model Tenant {
   /// nueva sobre este campo.
   autoEnviarPedido Boolean?
 
+  /// Add-on de pago: agente local que permite seguir vendiendo si se cae el
+  /// internet del bar por completo (ver contexto-sincronizacion-offline.md).
+  /// Solo plataforma lo prende/apaga, igual que los modulos de arriba --
+  /// sin esto en true no se puede generar ningun AgentToken.
+  syncOfflineHabilitado Boolean @default(false)
+
   users      User[]
   categories Category[]
   products   Product[]
@@ -164,6 +170,53 @@ model Tenant {
   compraPagos            CompraPago[]
   insumoMovements        InsumoMovement[]
   listaCompra            ListaCompraItem[]
+  agentTokens            AgentToken[]
+}
+
+enum AgentTokenStatus {
+  DISPONIBLE // generado, ningun equipo lo ha reclamado todavia
+  ACTIVO     // reclamado por un equipo, operando
+  REVOCADO   // revocado a mano desde plataforma (ej. cambio de equipo, perdido/robado)
+  BLOQUEADO  // agoto los 5 intentos acumulados del codigo de verificacion (ver doc)
+}
+
+/// Credencial del agente de sincronizacion offline -- ver
+/// contexto-sincronizacion-offline.md. NO es un JWT de sesion: vive mucho
+/// mas tiempo y esta atada a un solo equipo, nunca a un usuario logueado.
+/// Solo plataforma genera y revoca; el ADMIN del bar no tiene acceso a
+/// esto, ni siquiera para ver el valor -- para cambiar de equipo el bar
+/// debe contactar a servicio al cliente.
+model AgentToken {
+  id             String           @id @default(uuid())
+  tenantId       String
+  /// Nunca se guarda en texto plano. A diferencia de passwordHash/pinHash
+  /// (bcrypt, para secretos de baja entropia como una clave humana), este
+  /// token nace como 32 bytes aleatorios -- ya es imposible de adivinar,
+  /// asi que no necesita el costo deliberado de bcrypt, y en cambio SI
+  /// necesita poder buscarse por valor exacto (SHA-256 + @unique) para que
+  /// POST /api/agent/activar encuentre el registro por lo que pega el
+  /// instalador, sin comparar contra todos los existentes uno por uno.
+  tokenHash      String           @unique
+  status         AgentTokenStatus @default(DISPONIBLE)
+  /// Lo que el agente reporta de si mismo al reclamar el token (hostname,
+  /// SO) -- solo informativo, nunca se usa para autenticar.
+  deviceLabel    String?
+  /// Codigo de 5 digitos mandado al primer ADMIN activo del tenant (ver
+  /// POST /api/agent/activar). Este si usa bcrypt -- es de baja entropia
+  /// (100.000 combinaciones), la proteccion real es el limite de intentos
+  /// de abajo, no la lentitud del hash.
+  verificationCodeHash      String?
+  verificationCodeExpiresAt DateTime?
+  /// Acumulado, nunca se reinicia al pedir un codigo nuevo -- a los 5
+  /// intentos fallidos el token pasa a BLOQUEADO y hay que generar uno
+  /// nuevo (ver doc, "la gente es muy paciente cuando quiere hacer daño").
+  failedAttempts Int              @default(0)
+  createdAt      DateTime         @default(now())
+  claimedAt      DateTime?
+  revokedAt      DateTime?
+  lastContactAt  DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 enum Role {

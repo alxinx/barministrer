@@ -8,6 +8,13 @@ const PERIODO_LABEL = { MENSUAL: 'Mensual', TRIMESTRAL: 'Trimestral', SEMESTRAL:
 
 const ROLE_LABEL = { ADMIN: 'Administrador', CAJERO: 'Cajero', MESERO: 'Mesero' }
 
+const AGENT_TOKEN_LABEL = {
+  DISPONIBLE: 'Generado, sin reclamar todavía',
+  ACTIVO: 'Activo en un equipo',
+  REVOCADO: 'Revocado',
+  BLOQUEADO: 'Bloqueado por intentos fallidos',
+}
+
 function formatFecha(iso) {
   return new Date(iso).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
 }
@@ -110,6 +117,15 @@ export default function TenantDetalle() {
   const [productosEliminados, setProductosEliminados] = useState([])
   const [restaurandoId, setRestaurandoId] = useState(null)
   const [restaurado, setRestaurado] = useState('')
+
+  // Sincronizacion offline (ver contexto-sincronizacion-offline.md). El
+  // token en texto plano solo existe en el momento de generarlo -- una vez
+  // se recarga la pagina, se pierde para siempre (ni siquiera plataforma
+  // puede volver a verlo, solo queda el hash).
+  const [generandoToken, setGenerandoToken] = useState(false)
+  const [revocandoToken, setRevocandoToken] = useState(false)
+  const [tokenGenerado, setTokenGenerado] = useState('')
+  const [errorToken, setErrorToken] = useState('')
 
   async function cargar() {
     try {
@@ -236,6 +252,37 @@ export default function TenantDetalle() {
       setError(err.message)
     } finally {
       setTogglingModulo(false)
+    }
+  }
+
+  // Un token nuevo revoca el anterior de una (ver backend) -- nunca dos
+  // equipos vigentes a la vez para el mismo tenant.
+  async function generarToken() {
+    setGenerandoToken(true)
+    setErrorToken('')
+    setTokenGenerado('')
+    try {
+      const { token: nuevo, agentToken } = await platformApi(`/tenants/${id}/agent-token`, { method: 'POST' })
+      setTokenGenerado(nuevo)
+      setTenant((t) => ({ ...t, agentToken }))
+    } catch (err) {
+      setErrorToken(err.message)
+    } finally {
+      setGenerandoToken(false)
+    }
+  }
+
+  async function revocarToken() {
+    setRevocandoToken(true)
+    setErrorToken('')
+    try {
+      const { agentToken } = await platformApi(`/tenants/${id}/agent-token/revocar`, { method: 'POST' })
+      setTenant((t) => ({ ...t, agentToken }))
+      setTokenGenerado('')
+    } catch (err) {
+      setErrorToken(err.message)
+    } finally {
+      setRevocandoToken(false)
     }
   }
 
@@ -526,6 +573,90 @@ export default function TenantDetalle() {
               {tenant.permiteEliminarProductos ? 'Activado' : 'Desactivado'}
             </button>
           </div>
+        </div>
+
+        <div className="card p-5 mt-8">
+          <h2 className="font-semibold mb-1">Sincronización offline</h2>
+          <p className="text-sm text-muted mb-4">
+            Agente local que permite seguir vendiendo si se cae el internet del bar por completo (ver
+            contexto-sincronizacion-offline.md). Solo plataforma genera y revoca el token — para cambiar de
+            equipo, el bar debe contactar a servicio al cliente.
+          </p>
+
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium">Habilitada para este bar</p>
+              <p className="text-xs text-muted mt-0.5">Add-on de pago — sin esto activo no se puede generar ningún token</p>
+            </div>
+            <button
+              type="button"
+              className={tenant.syncOfflineHabilitado ? 'btn-primary' : 'btn-ghost'}
+              onClick={() => toggleModulo('syncOfflineHabilitado')}
+              disabled={togglingModulo}
+            >
+              {tenant.syncOfflineHabilitado ? 'Activado' : 'Desactivado'}
+            </button>
+          </div>
+
+          {tenant.syncOfflineHabilitado && (
+            <div className="border-t border-edge mt-2 pt-4 space-y-3">
+              {errorToken && (
+                <p className="text-sm text-ocupada border border-ocupada/30 bg-ocupada/10 rounded-xl px-3 py-2.5">
+                  {errorToken}
+                </p>
+              )}
+
+              {tokenGenerado && (
+                <div className="border border-libre/30 bg-libre/10 rounded-xl p-3 space-y-1.5">
+                  <p className="text-sm font-medium">Token generado — cópialo ahora, no se vuelve a mostrar</p>
+                  <p className="font-mono text-xs break-all bg-raised rounded-lg px-2 py-1.5">{tokenGenerado}</p>
+                </div>
+              )}
+
+              {tenant.agentToken ? (
+                <div className="text-sm space-y-1">
+                  <p>
+                    Estado: <span className="font-medium">{AGENT_TOKEN_LABEL[tenant.agentToken.status]}</span>
+                  </p>
+                  {tenant.agentToken.claimedAt && (
+                    <p className="text-xs text-muted">Reclamado el {formatFecha(tenant.agentToken.claimedAt)}</p>
+                  )}
+                  {tenant.agentToken.deviceLabel && (
+                    <p className="text-xs text-muted">Equipo: {tenant.agentToken.deviceLabel}</p>
+                  )}
+                  {tenant.agentToken.lastContactAt && (
+                    <p className="text-xs text-muted">Último contacto: {formatFecha(tenant.agentToken.lastContactAt)}</p>
+                  )}
+                  {tenant.agentToken.failedAttempts > 0 && (
+                    <p className="text-xs text-muted">Intentos fallidos del código: {tenant.agentToken.failedAttempts}/5</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted">Este bar todavía no tiene ningún token generado.</p>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={generarToken}
+                  disabled={generandoToken || revocandoToken}
+                >
+                  {generandoToken ? 'Generando…' : 'Generar nuevo token'}
+                </button>
+                {tenant.agentToken && ['DISPONIBLE', 'ACTIVO'].includes(tenant.agentToken.status) && (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={revocarToken}
+                    disabled={generandoToken || revocandoToken}
+                  >
+                    {revocandoToken ? 'Revocando…' : 'Revocar'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {productosEliminados.length > 0 && (

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { signToken, signPlatformToken, requirePlatformAuth } from '../middleware/auth.js'
@@ -17,6 +18,21 @@ const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 function adminPublic(a) {
   return { id: a.id, name: a.name, email: a.email }
+}
+
+// tokenHash nunca sale de aqui -- ver AgentToken en schema.prisma.
+function agentTokenPublic(t) {
+  if (!t) return null
+  return {
+    id: t.id,
+    status: t.status,
+    deviceLabel: t.deviceLabel,
+    failedAttempts: t.failedAttempts,
+    createdAt: t.createdAt,
+    claimedAt: t.claimedAt,
+    revokedAt: t.revokedAt,
+    lastContactAt: t.lastContactAt,
+  }
 }
 
 platformAuthRoutes.post('/login', loginLimiter, async (req, res) => {
@@ -135,13 +151,14 @@ platformRoutes.get('/tenants/:id', requirePlatformAuth, async (req, res) => {
   })
   if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
 
-  const [users, userCount, pedidosRecientes] = await Promise.all([
+  const [users, userCount, pedidosRecientes, agentToken] = await Promise.all([
     prisma.user.findMany({ where: { tenantId: tenant.id }, orderBy: { createdAt: 'asc' } }),
     prisma.user.count({ where: { tenantId: tenant.id } }),
     prisma.order.findMany({
       where: { tenantId: tenant.id, openedAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
       select: { openedAt: true },
     }),
+    prisma.agentToken.findFirst({ where: { tenantId: tenant.id }, orderBy: { createdAt: 'desc' } }),
   ])
 
   const diasActivosSemana = new Set(pedidosRecientes.map((o) => o.openedAt.toISOString().slice(0, 10))).size
@@ -163,6 +180,8 @@ platformRoutes.get('/tenants/:id', requirePlatformAuth, async (req, res) => {
     moduloCajasBancos: tenant.moduloCajasBancos,
     moduloCompras: tenant.moduloCompras,
     permiteEliminarProductos: tenant.permiteEliminarProductos,
+    syncOfflineHabilitado: tenant.syncOfflineHabilitado,
+    agentToken: agentTokenPublic(agentToken),
     userCount,
     diasActivosSemana,
     users: usersConPin,
@@ -179,7 +198,8 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
   if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
 
-  const { name, rentalPlanId, active, moduloCajasBancos, moduloCompras, permiteEliminarProductos } = req.body || {}
+  const { name, rentalPlanId, active, moduloCajasBancos, moduloCompras, permiteEliminarProductos, syncOfflineHabilitado } =
+    req.body || {}
   const data = {}
 
   if (name !== undefined) {
@@ -199,6 +219,7 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
   if (moduloCajasBancos !== undefined) data.moduloCajasBancos = Boolean(moduloCajasBancos)
   if (moduloCompras !== undefined) data.moduloCompras = Boolean(moduloCompras)
   if (permiteEliminarProductos !== undefined) data.permiteEliminarProductos = Boolean(permiteEliminarProductos)
+  if (syncOfflineHabilitado !== undefined) data.syncOfflineHabilitado = Boolean(syncOfflineHabilitado)
 
   const updated = await prisma.tenant.update({ where: { id: tenant.id }, data, include: { rentalPlan: true } })
   if (active === false && tenant.active) desconectarTenant(tenant.id)
@@ -219,7 +240,59 @@ platformRoutes.patch('/tenants/:id', requirePlatformAuth, async (req, res) => {
     moduloCajasBancos: updated.moduloCajasBancos,
     moduloCompras: updated.moduloCompras,
     permiteEliminarProductos: updated.permiteEliminarProductos,
+    syncOfflineHabilitado: updated.syncOfflineHabilitado,
   })
+})
+
+// Genera un token nuevo para el agente de sincronizacion offline (ver
+// contexto-sincronizacion-offline.md). Revoca cualquier token anterior sin
+// revocar (DISPONIBLE o ACTIVO) -- nunca dos equipos vigentes a la vez para
+// el mismo tenant, es la premisa de "un solo escritor" de todo el diseño.
+// El valor en texto plano solo se devuelve en ESTA respuesta; de ahi en
+// adelante solo queda el hash, igual que una clave o un PIN.
+platformRoutes.post('/tenants/:id/agent-token', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+  if (!tenant.syncOfflineHabilitado) {
+    return res.status(400).json({ error: 'Primero activa la sincronización offline para este bar' })
+  }
+
+  // SHA-256, no bcrypt: el token ya nace como 32 bytes aleatorios (alta
+  // entropia), y necesita poder buscarse por valor exacto cuando el agente
+  // lo pega en POST /api/agent/activar (ver AgentToken.tokenHash en schema.prisma).
+  const plain = crypto.randomBytes(32).toString('hex')
+  const tokenHash = crypto.createHash('sha256').update(plain).digest('hex')
+
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.agentToken.updateMany({
+      where: { tenantId: tenant.id, status: { in: ['DISPONIBLE', 'ACTIVO'] } },
+      data: { status: 'REVOCADO', revokedAt: new Date() },
+    })
+    return tx.agentToken.create({ data: { tenantId: tenant.id, tokenHash } })
+  })
+
+  res.json({ token: plain, agentToken: agentTokenPublic(created) })
+})
+
+// Revoca a mano el token vigente (ej. el equipo se perdio, se robo, o el
+// bar necesita cambiar de equipo -- ver doc: eso solo lo hace plataforma,
+// nunca el ADMIN del bar). Surte efecto la proxima vez que el agente
+// intente hablar con la nube, no instantaneo si esta desconectado.
+platformRoutes.post('/tenants/:id/agent-token/revocar', requirePlatformAuth, async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } })
+  if (!tenant) return res.status(404).json({ error: 'Bar no encontrado' })
+
+  const actual = await prisma.agentToken.findFirst({
+    where: { tenantId: tenant.id, status: { in: ['DISPONIBLE', 'ACTIVO'] } },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!actual) return res.status(400).json({ error: 'No hay ningún token activo para revocar' })
+
+  const revoked = await prisma.agentToken.update({
+    where: { id: actual.id },
+    data: { status: 'REVOCADO', revokedAt: new Date() },
+  })
+  res.json({ agentToken: agentTokenPublic(revoked) })
 })
 
 // Papelera de productos: solo plataforma la ve, ni siquiera el ADMIN del
