@@ -12,6 +12,25 @@ import { renderCorreoCodigoHtml, renderCorreoCodigoTexto } from '../lib/correoCo
 // aplica por estar montadas bajo /api (ver server.js).
 export const agentRoutes = Router()
 
+// Middleware interno para las rutas autenticadas del agente (heartbeat, sync).
+// El token se pasa en Authorization: Bearer <token_plano>; se hashea aqui
+// igual que en /activar para buscar el registro. Solo pasa si esta ACTIVO.
+async function agentAuth(req, res, next) {
+  const auth = req.headers.authorization || ''
+  const plain = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null
+  if (!plain) return res.status(401).json({ error: 'Token requerido' })
+
+  const agentToken = await prisma.agentToken.findUnique({
+    where: { tokenHash: hashToken(plain) },
+  })
+  if (!agentToken || agentToken.status !== 'ACTIVO') {
+    return res.status(401).json({ error: 'Token inválido o revocado' })
+  }
+
+  req.agentToken = agentToken
+  next()
+}
+
 const CODIGO_TTL_MS = 10 * 60 * 1000 // 10 minutos
 const MAX_INTENTOS = 5
 
@@ -131,4 +150,74 @@ agentRoutes.post('/confirmar', async (req, res) => {
   })
 
   res.json({ ok: true, tenantId: agentToken.tenantId })
+})
+
+// Latido: el daemon llama esto periodicamente para actualizar lastContactAt.
+// Si el token fue revocado, el agentAuth ya rechaza antes de llegar aqui.
+agentRoutes.post('/heartbeat', agentAuth, async (req, res) => {
+  await prisma.agentToken.update({
+    where: { id: req.agentToken.id },
+    data: { lastContactAt: new Date() },
+  })
+  res.json({ ok: true })
+})
+
+// Sincronizacion completa del tenant: devuelve todo lo que el daemon necesita
+// para operar offline. Es una foto completa (no diferencial por ahora); el
+// daemon la llama al activarse y cada vez que reconecta.
+// Se excluyen tablas de modulos opcionales (cajas/bancos, compras) y de
+// plataforma -- el daemon no los necesita para la operacion de venta.
+agentRoutes.get('/sync', agentAuth, async (req, res) => {
+  const tenantId = req.agentToken.tenantId
+
+  await prisma.agentToken.update({
+    where: { id: req.agentToken.id },
+    data: { lastContactAt: new Date() },
+  })
+
+  const [tenant, users, categories, products, zones, tables, elements, customers, shifts, orders, orderItems] =
+    await Promise.all([
+      prisma.tenant.findUnique({ where: { id: tenantId } }),
+
+      // passwordHash incluido: el daemon necesita autenticar usuarios offline.
+      // El SQLite va cifrado con SQLCipher (ver doc), asi que el riesgo
+      // es equivalente al de tener acceso fisico al equipo.
+      prisma.user.findMany({
+        where: { tenantId },
+        select: {
+          id: true, tenantId: true, name: true, email: true,
+          passwordHash: true, pinHash: true, role: true, active: true,
+        },
+      }),
+
+      prisma.category.findMany({ where: { tenantId } }),
+
+      // Productos con variantes y receta anidadas para aplanarlos en SQLite.
+      prisma.product.findMany({
+        where: { tenantId, deletedAt: null },
+        include: {
+          variants: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
+          recipe: { include: { items: true } },
+        },
+      }),
+
+      prisma.zone.findMany({ where: { tenantId } }),
+      prisma.barTable.findMany({ where: { tenantId } }),
+      prisma.layoutElement.findMany({ where: { tenantId } }),
+      prisma.customer.findMany({ where: { tenantId } }),
+
+      // Solo el turno abierto -- el daemon no puede abrir/cerrar turnos.
+      prisma.shift.findMany({ where: { tenantId, status: 'OPEN' } }),
+
+      // Cuentas abiertas al momento del sync: el daemon las retoma.
+      prisma.order.findMany({ where: { tenantId, status: 'OPEN' } }),
+
+      // Items de cuentas abiertas (todos los estados, no solo ACTIVE, para
+      // mostrar el historial completo de la mesa -- igual que hace el frontend).
+      prisma.orderItem.findMany({
+        where: { tenantId, order: { status: 'OPEN' } },
+      }),
+    ])
+
+  res.json({ tenant, users, categories, products, zones, tables, elements, customers, shifts, orders, orderItems })
 })
