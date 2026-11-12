@@ -54,6 +54,21 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (res.status === 204) return null
 
   const data = await res.json().catch(() => ({}))
+
+  // 202 con queued:true viene del agente offline cuando encoló la mutación.
+  // Se trata como un error para que el caller no use datos inexistentes
+  // (ej. data.id undefined), pero con err.queued=true para que la UI pueda
+  // mostrar un aviso ambar en vez de rojo — la operación SÍ fue guardada.
+  if (res.status === 202 && data?.queued) {
+    const err = new Error(
+      data.message || 'Sin conexión. La operación fue guardada y se enviará al reconectar.',
+    )
+    err.queued = true
+    err.offline = true
+    err.status = 202
+    throw err
+  }
+
   if (!res.ok) {
     // El status y el resto del body (ej. segundosRestantes del bloqueo de
     // PIN) viajan con el error para quien los necesite distinguir de un

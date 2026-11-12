@@ -365,7 +365,10 @@ export default function NuevaVenta() {
         setTimeout(() => setJustSent(false), 1300)
         recargarZonas()
       } catch (err) {
-        show(err)
+        // err.queued = true: el agente offline encoló la operación, no es un
+        // fallo real — se muestra en ámbar (notify) en vez de rojo (show).
+        if (err.queued) notify(err.message)
+        else show(err)
       }
     })
   }
@@ -380,7 +383,8 @@ export default function NuevaVenta() {
       setOrder(actualizada)
       recargarZonas()
     } catch (err) {
-      show(err)
+      if (err.queued) notify(err.message)
+      else show(err)
     } finally {
       setEnviandoPrePedido(false)
     }
@@ -402,7 +406,8 @@ export default function NuevaVenta() {
       setOrder(actualizada)
       setEliminandoPrePedido(null)
     } catch (err) {
-      show(err)
+      if (err.queued) notify(err.message)
+      else show(err)
     } finally {
       setBorrandoPrePedido(false)
     }
@@ -432,7 +437,9 @@ export default function NuevaVenta() {
         if (tableRef.current?.id !== tableIdAlAbrir) return
         setOrder(nueva)
       } catch (err) {
-        return show(err)
+        if (err.queued) notify(err.message)
+        else show(err)
+        return
       }
     }
     setVinculando(true)
@@ -460,7 +467,8 @@ export default function NuevaVenta() {
       recargarZonas()
       setTable((prev) => (prev?.id === t.id ? { ...prev, status } : prev))
     } catch (err) {
-      show(err)
+      if (err.queued) notify(err.message)
+      else show(err)
     }
   }
 

@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from './Icons'
 import { useAuth } from '../context/AuthContext'
 import SimuladorImpresora from './SimuladorImpresora'
+import SyncBadge from './SyncBadge'
 
 // Items sin `to`: todavia no tienen pantalla propia (ver CLAUDE.md / lo
 // acordado con Alejo nov-2026). Quedan visibles pero deshabilitados en vez de
@@ -131,7 +132,8 @@ export default function Shell({ children }) {
         >
           <Icon.menu width={22} height={22} />
         </button>
-        <span className="font-bold truncate">{session?.tenant.name || 'Barminister'}</span>
+        <span className="font-bold truncate flex-1">{session?.tenant.name || 'Barminister'}</span>
+        <SyncBadge />
       </header>
 
       {/* Fondo oscuro detras del panel flotante: un clic afuera lo cierra. */}
@@ -277,6 +279,9 @@ export default function Shell({ children }) {
         </nav>
 
         <div className={`p-2 border-t border-sidebarEdge ${colapsado ? '' : 'nav:p-3'}`}>
+          <div className={colapsado ? 'hidden' : 'hidden nav:flex justify-center pb-2'}>
+            <SyncBadge />
+          </div>
           <div
             className={`flex flex-col items-center gap-2 px-1 py-2 ${
               colapsado ? '' : 'nav:flex-row nav:gap-3 nav:px-2'
