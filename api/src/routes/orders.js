@@ -167,6 +167,12 @@ orderRoutes.patch('/orders/:id/customer', async (req, res) => {
   }
 
   await prisma.order.update({ where: { id: order.id }, data: { customerId: customerId || null } })
+
+  // El plano pinta el nombre del cliente sobre la mesa (ver /zones): sin
+  // este aviso, otras pantallas no se enteran hasta el proximo evento que
+  // ya estuviera por su cuenta refrescando el plano.
+  avisarTenant(req.auth.tenantId, 'mesas:actualizadas', {})
+
   const actualizada = await prisma.order.findFirst({ where: { id: order.id }, include: ORDER_INCLUDE })
   res.json({ ...actualizada, total: total(actualizada) })
 })

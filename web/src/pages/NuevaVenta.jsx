@@ -448,6 +448,10 @@ export default function NuevaVenta() {
   function manejarVinculado(actualizada) {
     setOrder(actualizada)
     setVinculando(false)
+    // El plano pinta el nombre del cliente desde zones.tables, no desde
+    // `order`: sin esto quedaba desactualizado hasta el proximo evento que
+    // disparara recargarZonas (otro pedido, por ejemplo).
+    recargarZonas()
   }
 
   // Saltar desde la cola de pre-pedidos directo a la mesa que lo mando,
@@ -874,6 +878,21 @@ export default function NuevaVenta() {
               <div className="min-w-0">
                 <h2 className="font-semibold flex items-center gap-2 truncate">
                   Cuenta de la mesa
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      abrirVincular()
+                    }}
+                    title={order?.customer ? 'Cambiar cliente de la mesa' : 'Asignar cliente a la mesa'}
+                    className="relative inline-flex items-center justify-center w-6 h-6 rounded-full
+                               bg-amber/15 text-amberText hover:bg-amber/25 transition-colors shrink-0"
+                  >
+                    <Icon.users width={13} height={13} />
+                    <span className="absolute -right-1 -bottom-1 w-3.5 h-3.5 rounded-full bg-amber text-night grid place-items-center">
+                      <Icon.plus width={8} height={8} strokeWidth={2.4} />
+                    </span>
+                  </button>
                   {justSent && (
                     <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-libre/15 animate-check-pop shrink-0">
                       <svg viewBox="0 0 24 24" className="w-3 h-3">

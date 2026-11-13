@@ -5,6 +5,7 @@ dist/
 .env
 *.log
 *.md
+*.zip
 .DS_Store
 .env.prod
 backups/
@@ -16,3 +17,4 @@ CONTEXTO-PROYECTO.md
 # Asistente de activacion (Tauri): aun no se decide comitearlo, no es
 # parte del deploy normal.
 /agent/
+/aws/

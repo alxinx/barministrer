@@ -130,6 +130,7 @@ async function construirPlantilla({ categoriasInsumo, categoriasProducto, provee
       ['unidad', 'unidad'],
       ['paquete', 'unidad'],
       ['botella', 'unidad'],
+      ['caja', 'unidad'],
     ],
     ['Código', 'Magnitud']
   )

@@ -724,12 +724,24 @@ export default function FloorPlan({
 // contorno del grupo. z-30 para quedar por encima de las mesas vecinas (una
 // mesa alta puede meterse debajo del borde de arriba si no).
 function ClienteTag({ left, top, nombre }) {
+  // Relleno solido de amber + texto night (el mismo par que usan los botones
+  // primarios), no night de fondo con amberText encima: amberText se oscurece
+  // a proposito en los temas claros para leerse sobre superficies claras
+  // (ver index.css), asi que sobre un fondo night casi negro quedaba un
+  // texto oscuro sobre fondo oscuro, casi ilegible en sepia/lima.
+  //
+  // El tablero tiene overflow-hidden (ver "board" mas abajo), y esta
+  // etiqueta se dibuja ARRIBA de la mesa con translate-y-full: una mesa en
+  // la primera fila (gridY 0, top casi 0%) la empujaba por fuera del borde
+  // superior y quedaba invisible. clamp() reserva un margen minimo en px
+  // (no solo en %, que en la fila 0 vale practicamente 0) para que la
+  // etiqueta nunca se salga del tablero por arriba ni por los costados.
   return (
     <div
       className="absolute z-30 -translate-x-1/2 -translate-y-full -mt-1.5 px-2.5 py-1 rounded-lg
-                 bg-night border border-amber/60 text-amberText text-[11px] font-semibold
+                 bg-amber text-night text-[11px] font-semibold shadow-md
                  whitespace-nowrap pointer-events-none"
-      style={{ left: `${left}%`, top: `${top}%` }}
+      style={{ left: `clamp(90px, ${left}%, calc(100% - 90px))`, top: `max(32px, ${top}%)` }}
     >
       {nombre}
     </div>

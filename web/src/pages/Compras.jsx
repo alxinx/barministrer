@@ -1282,7 +1282,6 @@ function CompraForm({
   const [pagarAhora, setPagarAhora] = useState(true)
   const [filasPago, setFilasPago] = useState([])
   const [cuentasPago, setCuentasPago] = useState([])
-  const [pagoInicializado, setPagoInicializado] = useState(false)
   const [cargandoCuentasPago, setCargandoCuentasPago] = useState(true)
   const [errorCuentasPago, setErrorCuentasPago] = useState('')
   const [paso, setPaso] = useState(1)
@@ -1594,27 +1593,6 @@ function CompraForm({
     }
   }
 
-  useEffect(() => {
-    if (!esNueva || !pagarAhora || pagoInicializado || cargandoCuentasPago || totales.total <= 0) return
-    const tarjetas = tarjetasPago(shift, cuentasPago)
-    const tarjeta =
-      tarjetas.find((opcion) => opcion.metodo === 'EFECTIVO_TURNO') ||
-      tarjetas.find((opcion) => opcion.metodo === 'CUENTA_FINANCIERA') ||
-      tarjetas[0]
-    if (!tarjeta) return
-    setFilasPago([
-      {
-        key: tarjeta.key,
-        metodo: tarjeta.metodo,
-        cuentaFinancieraId: tarjeta.cuentaFinancieraId,
-        shiftId: shift?.id,
-        monto: String(totales.total),
-        nota: '',
-      },
-    ])
-    setPagoInicializado(true)
-  }, [esNueva, pagarAhora, pagoInicializado, cargandoCuentasPago, totales.total, shift, cuentasPago])
-
   function errorInfoGeneral() {
     if (agregandoProveedor) {
       return nombreProveedorNuevo.trim() ? '' : 'Escribe el nombre del proveedor'
@@ -1880,7 +1858,6 @@ function CompraForm({
     setAumentarStock(true)
     setPagarAhora(true)
     setFilasPago([])
-    setPagoInicializado(false)
     setPaso(1)
     setAccionConfirmacion(null)
     setCorrigiendoDesdeConfirmacion(false)
@@ -2460,7 +2437,7 @@ function CompraForm({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h4 className="text-sm font-bold">¿Cómo se paga esta compra?</h4>
-                <p className="mt-1 text-xs text-muted">Por defecto queda contado; cualquier saldo sin asignar será crédito.</p>
+                <p className="mt-1 text-xs text-muted">Elige uno o más medios de pago, o deja todo a crédito.</p>
               </div>
               {pagarAhora ? (
                 <button
@@ -2468,21 +2445,13 @@ function CompraForm({
                   onClick={() => {
                     setPagarAhora(false)
                     setFilasPago([])
-                    setPagoInicializado(false)
                   }}
                   className="btn-ghost h-9 px-3 text-xs"
                 >
                   Dejar todo a crédito
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPagarAhora(true)
-                    setPagoInicializado(false)
-                  }}
-                  className="btn-ghost h-9 px-3 text-xs"
-                >
+                <button type="button" onClick={() => setPagarAhora(true)} className="btn-ghost h-9 px-3 text-xs">
                   Agregar pago de contado
                 </button>
               )}

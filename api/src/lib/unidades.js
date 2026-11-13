@@ -20,6 +20,10 @@ export const UNIDADES = [
   // L...), asi que tampoco tiene un factor fijo. Solo unidadCompra, nunca
   // unidadInventario.
   { codigo: 'botella', nombre: 'Botella', magnitud: 'conteo', factor: null },
+  // Mismo caso que "paquete" y "botella": una caja de cerveza o de gaseosa
+  // no tiene un tamano universal (puede traer 12, 24, 30 unidades), asi que
+  // tampoco tiene un factor fijo. Solo unidadCompra, nunca unidadInventario.
+  { codigo: 'caja', nombre: 'Caja', magnitud: 'conteo', factor: null },
 ]
 
 export function buscarUnidad(codigo) {
