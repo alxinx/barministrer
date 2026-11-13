@@ -1,0 +1,9 @@
+[Unit]
+Description=Backup diario de la base de datos de Barminister a R2
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/barministrer/backup-diario.sh
+User=root

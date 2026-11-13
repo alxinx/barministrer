@@ -48,6 +48,9 @@ export default function Panel() {
             <Link to="/plataforma/tarifas" className="btn-ghost">
               Tarifas de renta
             </Link>
+            <Link to="/plataforma/backups" className="btn-ghost">
+              Backups
+            </Link>
             <button type="button" className="btn-primary" onClick={() => setCreando(true)}>
               <Icon.plus width={16} height={16} />
               Nuevo bar

@@ -1,0 +1,9 @@
+[Unit]
+Description=Corre el backup diario de Barminister a las 2am hora de Colombia (07:00 UTC, el servidor esta en UTC)
+
+[Timer]
+OnCalendar=*-*-* 07:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

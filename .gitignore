@@ -18,3 +18,5 @@ CONTEXTO-PROYECTO.md
 # parte del deploy normal.
 /agent/
 /aws/
+/ops/.*
+

@@ -36,6 +36,7 @@ const CajasBancos = lazy(() => import('./pages/CajasBancos'))
 const PlataformaLogin = lazy(() => import('./pages/plataforma/Login'))
 const PlataformaPanel = lazy(() => import('./pages/plataforma/Panel'))
 const PlataformaTarifas = lazy(() => import('./pages/plataforma/Tarifas'))
+const PlataformaBackups = lazy(() => import('./pages/plataforma/Backups'))
 const PlataformaTenantDetalle = lazy(() => import('./pages/plataforma/TenantDetalle'))
 
 function Cargando() {
@@ -224,6 +225,14 @@ export default function App() {
                         element={
                           <PlataformaProtegida>
                             <PlataformaTarifas />
+                          </PlataformaProtegida>
+                        }
+                      />
+                      <Route
+                        path="backups"
+                        element={
+                          <PlataformaProtegida>
+                            <PlataformaBackups />
                           </PlataformaProtegida>
                         }
                       />

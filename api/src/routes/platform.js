@@ -6,6 +6,7 @@ import { signToken, signPlatformToken, requirePlatformAuth } from '../middleware
 import { loginLimiter, pinLimiter, estadoPin, bloquearPinManual } from '../middleware/rateLimit.js'
 import { avisarTenant, desconectarTenant, desconectarUsuario } from '../lib/realtime.js'
 import { formatearTodo, formatearMovimientos, previsualizarFormateoProductos, ejecutarFormateoProductos } from '../lib/formateoTenant.js'
+import { crearBackupAhora, listarBackups } from '../lib/backups.js'
 
 export const platformAuthRoutes = Router()
 export const platformRoutes = Router()
@@ -550,4 +551,25 @@ platformRoutes.patch('/rental-plans/:id', requirePlatformAuth, async (req, res) 
 
   const updated = await prisma.rentalPlan.update({ where: { id: plan.id }, data })
   res.json(updated)
+})
+
+// Backups de la base (ver api/src/lib/backups.js y despliegue.md, seccion
+// "Backup diario"): manuales (este endpoint) y automaticos (el timer del
+// servidor) terminan en el mismo bucket/prefijo, asi que salen juntos en
+// una sola lista -- no hay una tabla propia en la base, el bucket R2 ES la
+// fuente de verdad.
+platformRoutes.get('/backups', async (req, res) => {
+  try {
+    res.json(await listarBackups())
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo cargar la lista de backups: ' + err.message })
+  }
+})
+
+platformRoutes.post('/backups', async (req, res) => {
+  try {
+    res.json(await crearBackupAhora())
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo generar el backup: ' + err.message })
+  }
 })
